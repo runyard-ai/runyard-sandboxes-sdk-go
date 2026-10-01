@@ -49,6 +49,11 @@ import (
 // Client talks to one daemon.
 type Client struct {
 	api *genv1.ClientWithResponses
+	// What a WebSocket is dialled with, which the generated client does not
+	// make: the terminal.
+	baseURL    string
+	httpClient *http.Client
+	key        string
 	// WaitTimeout bounds Create's wait for a machine to answer. Zero uses three
 	// minutes, which is a large image on a cold cache.
 	WaitTimeout time.Duration
@@ -86,15 +91,14 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	for _, opt := range opts {
 		opt(settings)
 	}
-	clientOpts := []genv1.ClientOption{}
-	if settings.httpClient != nil {
-		clientOpts = append(clientOpts, genv1.WithHTTPClient(settings.httpClient))
-	} else {
+	httpClient := settings.httpClient
+	if httpClient == nil {
 		// No client-level timeout by default: this API streams — a followed
 		// log, a tar going in, a command with a deadline of its own — and one
 		// here would cut them. What bounds a call is the call's own context.
-		clientOpts = append(clientOpts, genv1.WithHTTPClient(&http.Client{}))
+		httpClient = &http.Client{}
 	}
+	clientOpts := []genv1.ClientOption{genv1.WithHTTPClient(httpClient)}
 	if settings.key != "" {
 		key := settings.key
 		clientOpts = append(clientOpts, genv1.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
@@ -103,8 +107,9 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		}))
 	}
 	// NewClient's error is its options', and none of these can fail.
-	api, _ := genv1.NewClientWithResponses(strings.TrimSuffix(baseURL, "/"), clientOpts...)
-	return &Client{api: api}, nil
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	api, _ := genv1.NewClientWithResponses(baseURL, clientOpts...)
+	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key}, nil
 }
 
 // API is the generated client this one is built on, for every operation the

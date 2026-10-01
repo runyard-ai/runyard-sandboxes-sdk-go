@@ -32,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
 )
@@ -104,6 +105,7 @@ type Daemon struct {
 	brokers []genv1.Broker
 	boot    func(genv1.SandboxSpec) Outcome
 	run     func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult
+	tty     func(context.Context, genv1.SandboxID, *Terminal) int
 	network bool
 	now     func() time.Time
 	created chan genv1.SandboxID
@@ -119,6 +121,12 @@ type Daemon struct {
 	calls        map[string]int
 	intercepts   map[string][]Interceptor
 	interceptAll map[string]Interceptor
+	// terminals is every terminal open, which the daemon's end hangs up.
+	terminals map[*websocket.Conn]struct{}
+
+	// serving is every terminal's handler, which outlives the request it
+	// was once: a WebSocket's connection is the handler's, not the server's.
+	serving sync.WaitGroup
 }
 
 type sandbox struct {
@@ -158,6 +166,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 		calls:        map[string]int{},
 		intercepts:   map[string][]Interceptor{},
 		interceptAll: map[string]Interceptor{},
+		terminals:    map[*websocket.Conn]struct{}{},
 		now:          time.Now,
 	}
 	for _, opt := range opts {
@@ -167,6 +176,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 	// Streams that follow a sandbox hold their connections open; closing the
 	// clients' side first is what lets Close return rather than wait on them.
 	tb.Cleanup(func() {
+		d.hangUpTerminals()
 		server.CloseClientConnections()
 		server.Close()
 	})
@@ -203,6 +213,7 @@ func (d *Daemon) routes() http.Handler {
 	handle("DELETE /v1/sandboxes/{id}", "deleteSandbox", d.deleteSandbox)
 	handle("GET /v1/sandboxes/{id}/events", "streamSandboxEvents", d.streamEvents)
 	handle("GET /v1/sandboxes/{id}/console", "getSandboxConsole", d.console)
+	handle("GET /v1/sandboxes/{id}/terminal", "openTerminal", d.openTerminal)
 	handle("POST /v1/sandboxes/{id}/commands", "runCommand", d.runCommand)
 	handle("GET /v1/sandboxes/{id}/files", "readFile", d.readFile)
 	handle("PUT /v1/sandboxes/{id}/files", "writeFile", d.writeFile)

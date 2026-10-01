@@ -55,8 +55,8 @@ func main() {
 `Run` takes the command already split: `Run(ctx, "sh", "-c", "…")` when you
 want a shell. A non-zero exit code is in `result.ExitCode`, not an error.
 
-The SDK covers what most programs need: sandboxes, commands, files, egress
-rules, tunnels and volumes. Everything else in the API is on `client.API()`,
+The SDK covers what most programs need: sandboxes, commands, terminals,
+files, egress rules, tunnels and volumes. Everything else in the API is on `client.API()`,
 the client generated from the OpenAPI document, on the same address and key.
 
 ## Examples
@@ -70,6 +70,7 @@ the fake daemon:
 | [`examples/egress`](examples/egress) | A sandbox's egress rules at work: what they allow is reached, the rest is refused, while they change. |
 | [`examples/claude`](examples/claude) | The Claude CLI in a sandbox, with the API key held outside it by a broker. |
 | [`examples/claude-chat`](examples/claude-chat) | A conversation with Claude where each turn is a new sandbox on the last one's volume. |
+| [`examples/ryclaude`](examples/ryclaude) | Claude Code in your terminal, running in a sandbox: the screen and keys are yours, and everything it does is the sandbox's. |
 
 ```sh
 go run github.com/runyard-ai/runyard-sandboxes-sdk-go/examples/hello@latest \

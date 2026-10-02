@@ -47,6 +47,9 @@ type Outcome struct {
 	Error string
 	// Console is what its serial port says.
 	Console string
+	// Progress is what the daemon says it is doing on the way there: an
+	// image pulled, a disk made.
+	Progress []string
 }
 
 // Interceptor answers an operation in place of the daemon, once. serve is the
@@ -64,7 +67,8 @@ type Delete struct {
 type Option func(*Daemon)
 
 // WithKey makes every request carry `Authorization: Bearer key`, as a real
-// daemon does, and answers 401 to one that does not.
+// daemon does, and answers 401 to one that does not — or a key the daemon
+// minted itself from an approval, until it is revoked or expires.
 func WithKey(key string) Option { return func(d *Daemon) { d.key = key } }
 
 // WithBrokers declares shared brokers on the host, by name.
@@ -107,6 +111,7 @@ type Daemon struct {
 	run     func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult
 	tty     func(context.Context, genv1.SandboxID, *Terminal) int
 	network bool
+	google  bool
 	now     func() time.Time
 	created chan genv1.SandboxID
 
@@ -121,6 +126,10 @@ type Daemon struct {
 	calls        map[string]int
 	intercepts   map[string][]Interceptor
 	interceptAll map[string]Interceptor
+	// approvals are the keys somebody approved and nobody has redeemed, by
+	// their code; minted the keys redeemed and not revoked since.
+	approvals map[string]approval
+	minted    []genv1.KeyCreated
 	// terminals is every terminal open, which the daemon's end hangs up.
 	terminals map[*websocket.Conn]struct{}
 
@@ -166,6 +175,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 		calls:        map[string]int{},
 		intercepts:   map[string][]Interceptor{},
 		interceptAll: map[string]Interceptor{},
+		approvals:    map[string]approval{},
 		terminals:    map[*websocket.Conn]struct{}{},
 		now:          time.Now,
 	}
@@ -186,7 +196,8 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 
 func (d *Daemon) routes() http.Handler {
 	mux := http.NewServeMux()
-	handle := func(pattern, operation string, serve http.HandlerFunc) {
+	// open is a route the contract asks no key for; handle one it does.
+	open := func(pattern, operation string, serve http.HandlerFunc) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			d.mu.Lock()
 			d.calls[operation]++
@@ -198,11 +209,14 @@ func (d *Daemon) routes() http.Handler {
 			}
 			d.mu.Unlock()
 			if intercept != nil {
-				intercept(w, r, d.authorized(serve))
+				intercept(w, r, serve)
 				return
 			}
-			d.authorized(serve)(w, r)
+			serve(w, r)
 		})
+	}
+	handle := func(pattern, operation string, serve http.HandlerFunc) {
+		open(pattern, operation, d.authorized(serve))
 	}
 	handle("GET /v1/info", "getInfo", d.getInfo)
 	handle("GET /v1/counts", "getCounts", d.getCounts)
@@ -240,12 +254,17 @@ func (d *Daemon) routes() http.Handler {
 	handle("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
 	handle("GET /v1/volumes", "listVolumes", d.listVolumes)
 	handle("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
+	open("GET /v1/auth", "getAuth", d.getAuth)
+	handle("GET /v1/me", "getMe", d.getMe)
+	open("POST /v1/keys/authorizations/redeem", "redeemKeyAuthorization", d.redeemKeyAuthorization)
+	handle("DELETE /v1/keys/{key}", "revokeKey", d.revokeKey)
 	return mux
 }
 
 func (d *Daemon) authorized(serve http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if d.key != "" && r.Header.Get("Authorization") != "Bearer "+d.key {
+		authorization := r.Header.Get("Authorization")
+		if d.key != "" && authorization != "Bearer "+d.key && !d.mintedKey(authorization) {
 			refuse(w, http.StatusUnauthorized, genv1.ErrorCodeUnauthorized, "no key, or one this daemon will not accept")
 			return
 		}
@@ -533,6 +552,9 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		outcome = d.boot(spec)
 	}
 	s.console = outcome.Console
+	for _, message := range outcome.Progress {
+		d.publish(s, genv1.SandboxEvent{Type: genv1.SandboxEventTypeProgress, Message: &message})
+	}
 	switch outcome.State {
 	case genv1.SandboxStateCreating:
 	case "":

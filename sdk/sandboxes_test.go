@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,13 +42,13 @@ type slowDaemon struct {
 	queries atomic.Int32
 }
 
-func newSlowDaemon(t *testing.T, cut int32) (*slowDaemon, *Client) {
+func newSlowDaemon(t *testing.T, cut int32, opts ...Option) (*slowDaemon, *Client) {
 	t.Helper()
 	d := &slowDaemon{id: "0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53", ready: make(chan struct{}), following: make(chan struct{}, 16)}
 	d.cut.Store(cut)
 	server := httptest.NewServer(d)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, WithKey("k"))
+	client, err := New(server.URL, append([]Option{WithKey("k")}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +157,64 @@ func TestCreateFollowsTheEventsAgainWhenTheyEndEarly(t *testing.T) {
 	}
 	if got := daemon.queries.Load(); got != 3 {
 		t.Fatalf("the sandbox was asked about %d times, want once after each of the three follows", got)
+	}
+}
+
+// What the daemon says a sandbox is doing on the way is passed on while
+// Create waits, in order, and once: a stream that was cut and followed again
+// says it all again, and none of that is told twice.
+func TestCreateTellsWhatTheDaemonSaysItIsDoingOnce(t *testing.T) {
+	for _, cut := range []int32{0, 2} {
+		var told []string
+		daemon, client := newSlowDaemon(t, cut, WithProgress(func(message string) { told = append(told, message) }))
+		done := create(t, client)
+		for range cut + 1 {
+			<-daemon.following
+		}
+		daemon.makeReady()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(told, []string{"forking a disk"}) {
+			t.Errorf("cut %d times: told %q", cut, told)
+		}
+	}
+}
+
+// Every progress the daemon gives is told, in the order it gave it, and
+// nothing else is: not a state, not an error's sentence.
+func TestCreateTellsEveryProgressInOrderAndNothingElse(t *testing.T) {
+	said := []string{"pulling example", "layer 1 of 2 (10MB)", "layer 2 of 2 (3MB)", "booting"}
+	var told []string
+	d := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
+		return fakedaemon.Outcome{Progress: said}
+	}))
+	client, err := New(d.URL, WithKey("k"), WithProgress(func(message string) { told = append(told, message) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Create(t.Context(), "", Spec{Image: "example"}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(told, said) {
+		t.Errorf("told %q", told)
+	}
+
+	// One that fails says why in an error, which is Create's to return and
+	// not progress.
+	told = nil
+	failing := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
+		return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "no such image", Progress: []string{"pulling example"}}
+	}))
+	client, err = New(failing.URL, WithKey("k"), WithProgress(func(message string) { told = append(told, message) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Create(t.Context(), "", Spec{Image: "example"}); err == nil || !strings.Contains(err.Error(), "no such image") {
+		t.Fatalf("Create: %v", err)
+	}
+	if !slices.Equal(told, []string{"pulling example"}) {
+		t.Errorf("of one that failed, told %q", told)
 	}
 }
 

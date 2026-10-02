@@ -54,6 +54,8 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	key        string
+	// What is told of a sandbox on its way to ready: WithProgress.
+	progress func(message string)
 	// WaitTimeout bounds Create's wait for a machine to answer. Zero uses three
 	// minutes, which is a large image on a cold cache.
 	WaitTimeout time.Duration
@@ -65,6 +67,7 @@ type Option func(*options)
 type options struct {
 	httpClient *http.Client
 	key        string
+	progress   func(message string)
 }
 
 // WithKey attaches the API key every request carries.
@@ -76,6 +79,16 @@ func WithKey(key string) Option {
 // proxy or instrumentation.
 func WithHTTPClient(client *http.Client) Option {
 	return func(o *options) { o.httpClient = client }
+}
+
+// WithProgress is told what the daemon says a sandbox is doing while Create
+// waits for it to be ready — the image being pulled, layer by layer, its disk
+// made, the machine booting — as the daemon words it, each thing once and in
+// order. It is how a program says something through a first create from an
+// image, which takes as long as the image takes to pull. It is called on the
+// goroutine that called Create.
+func WithProgress(told func(message string)) Option {
+	return func(o *options) { o.progress = told }
 }
 
 // New points a client at a daemon.
@@ -109,7 +122,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	// NewClient's error is its options', and none of these can fail.
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	api, _ := genv1.NewClientWithResponses(baseURL, clientOpts...)
-	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key}, nil
+	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key, progress: settings.progress}, nil
 }
 
 // API is the generated client this one is built on, for every operation the
@@ -272,8 +285,11 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 	waiting, cancel := context.WithTimeout(ctx, c.waitTimeout())
 	defer cancel()
 	pause := backoff{first: 50 * time.Millisecond, most: 2 * time.Second}
+	// The last event told of: a stream followed again starts over, and what
+	// it already said is not said twice.
+	var told int64
 	for {
-		c.untilSettled(waiting, id)
+		told = c.untilSettled(waiting, id, told)
 		// Asked in ctx rather than waiting: one that has run out is still
 		// told what the sandbox is, to say what it was still.
 		res, err := c.api.GetSandboxWithResponse(ctx, id)
@@ -318,21 +334,31 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 // untilSettled follows a sandbox's events until one says it has reached a
 // state waiting will not change, or until they cannot be followed. It says
 // nothing about which: the state is read after, from the sandbox itself.
-func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID) {
+//
+// What the daemon says the sandbox is doing on the way is passed on
+// (WithProgress), past the event told is the sequence of: it returns the
+// sequence of the last one it passed on, or told.
+func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID, told int64) int64 {
 	follow := genv1.FollowQuery(true)
 	res, err := c.api.StreamSandboxEvents(ctx, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
 	if err != nil {
-		return
+		return told
 	}
 	defer closeBody(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return
+		return told
 	}
 	decoder := json.NewDecoder(res.Body)
 	for {
 		var event genv1.SandboxEvent
 		if err := decoder.Decode(&event); err != nil {
-			return
+			return told
+		}
+		if event.Type == genv1.SandboxEventTypeProgress && event.Message != nil && event.Seq > told {
+			told = event.Seq
+			if c.progress != nil {
+				c.progress(*event.Message)
+			}
 		}
 		if event.State == nil {
 			continue
@@ -340,7 +366,7 @@ func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID) {
 		switch *event.State {
 		case genv1.SandboxStateReady, genv1.SandboxStateFailed, genv1.SandboxStateGone, genv1.SandboxStateStopped,
 			genv1.SandboxStatePaused:
-			return
+			return told
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
 		}
 	}

@@ -65,6 +65,12 @@ const (
 	ImageStateReady   ImageState = "ready"
 )
 
+// Defines values for KeyReach.
+const (
+	KeyReachAll KeyReach = "all"
+	KeyReachOwn KeyReach = "own"
+)
+
 // Defines values for MeVia.
 const (
 	ViaKey     MeVia = "key"
@@ -208,7 +214,7 @@ type Broker struct {
 	// Name Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
 	Name BrokerName `json:"name"`
 
-	// Sandboxes How many sandboxes on this host are given it right now.
+	// Sandboxes How many sandboxes on this host are given it right now. Left out for a key that acts only on its `own` sandboxes.
 	Sandboxes *int   `json:"sandboxes,omitempty"`
 	Url       string `json:"url"`
 }
@@ -287,6 +293,18 @@ type Connection struct {
 	State *string `json:"state,omitempty"`
 }
 
+// Creator Who made a sandbox or a volume: the person, and the key when the call carried one. Written down when it is made and never changed, so it still names a key that has since been revoked.
+type Creator struct {
+	// KeyId The key the call carried. Absent when it was a console session. It is what a key that acts only on its `own` sandboxes is matched against.
+	KeyId *string `json:"keyId,omitempty"`
+
+	// KeyName That key's name when it made this, for a person reading it: the key may be gone by now, and its id alone says nothing to them.
+	KeyName *string `json:"keyName,omitempty"`
+
+	// User The person who was signed in to the console, or the owner of the key the call carried.
+	User openapi_types.Email `json:"user"`
+}
+
 // DirListing defines model for DirListing.
 type DirListing struct {
 	Entries []struct {
@@ -340,6 +358,18 @@ type DiskSpec struct {
 	// another sandbox holds — running, stopped or failed — is a `409`
 	// `volume_in_use`, and the next one can have it once that one is
 	// dropped.
+	//
+	// **A key that acts only on its `own` sandboxes names a volume it
+	// made, or a name no volume has.** Any other is a `403` — one
+	// answer, whether that volume is held or free and whatever image it
+	// was laid over, because those are somebody else's to know.
+	//
+	// **A volume such a key laid down is attached by that key alone.**
+	// Named by anybody else — another key, whatever it acts on, or a
+	// person in the console — it is a `403`, saying whose it is to a
+	// caller that may read that: what it holds is a filesystem that key
+	// chose, and booting it is running what that key put there. Delete
+	// the volume to have its name.
 	//
 	// **A volume belongs to the image it was first laid over**, by
 	// digest: what it holds is changes to THAT filesystem — a package
@@ -637,7 +667,7 @@ type HostCommitments struct {
 	Volumes int `json:"volumes"`
 }
 
-// HostCounts Each is what its own list would hold, filters left off: every sandbox `GET /v1/sandboxes` lists, every tunnel `GET /v1/tunnels` does, and so on. Absent is a count this key may not read.
+// HostCounts Each is what its own list would hold, filters left off: every sandbox `GET /v1/sandboxes` lists, every tunnel `GET /v1/tunnels` does, and so on. Absent is a count this key may not read. For a key that acts only on its `own` sandboxes the sandboxes, tunnels and volumes are its own, as those lists are, and the images and shared brokers are the host's, as theirs are.
 type HostCounts struct {
 	// Brokers The host's shared brokers, as `GET /v1/brokers` lists them.
 	Brokers   *int `json:"brokers,omitempty"`
@@ -655,7 +685,7 @@ type HostInfo struct {
 
 	// Capabilities What this host can do, so a caller finds out before a spec is refused rather than after.
 	Capabilities struct {
-		// BrokersReachPrivate Whether a ONE-OFF broker may be dialled to a loopback, link-local or private address. False unless the operator said otherwise, and then such a broker is refused when it connects rather than when it is declared — resolution happens then, and an address checked earlier would be one a DNS answer could change underneath the check.
+		// BrokersReachPrivate Whether a ONE-OFF broker may be dialled to a loopback, link-local or private address. False unless the operator said otherwise, and then such a broker is refused when it connects rather than when it is declared — resolution happens then, and an address checked earlier would be one a DNS answer could change underneath the check. Whatever this says, a one-off broker is never dialled to the address of a sandbox on this host: no sandbox reaches another.
 		BrokersReachPrivate *bool `json:"brokersReachPrivate,omitempty"`
 		MaxSandboxes        *int  `json:"maxSandboxes,omitempty"`
 
@@ -859,7 +889,7 @@ type Image struct {
 	// Ref The reference this was pulled from, as asked for.
 	Ref string `json:"ref"`
 
-	// Sandboxes How many sandboxes are booted from it right now. What makes the `409` on `DELETE` predictable rather than a surprise.
+	// Sandboxes How many sandboxes are booted from it right now. What makes the `409` on `DELETE` predictable rather than a surprise. Left out for a key that acts only on its `own` sandboxes, whose `409` says that the image is in use and not by how many.
 	Sandboxes *int `json:"sandboxes,omitempty"`
 
 	// Size The built rootfs, in bytes.
@@ -929,8 +959,108 @@ type Key struct {
 	Name       string     `json:"name"`
 
 	// Owner Who it belongs to. It does what its scopes say and its owner may still do, whichever is less, and nothing once its owner is not let in any more.
-	Owner  openapi_types.Email `json:"owner"`
-	Scopes []Scope             `json:"scopes"`
+	Owner openapi_types.Email `json:"owner"`
+
+	// Sandboxes | reach | which sandboxes and volumes the key acts on |
+	// |---|---|
+	// | `all` | every one on this host |
+	// | `own` | those this very key made, and no others |
+	//
+	// Scopes say what a key may do; this says to what. A key with `exec`
+	// and `all` runs commands in every sandbox on the host, which is more
+	// than a program that makes its own sandboxes needs and exactly what
+	// somebody who steals its key wants.
+	//
+	// **`own` is the key's, not its owner's.** Two keys of one person each
+	// see what they made and nothing of the other's, and what a person made
+	// in the console is no key's. A console session is a person, and is
+	// never narrowed this way.
+	//
+	// To an `own` key:
+	//
+	// - **A sandbox that is not its own is one that does not exist.** Every
+	//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
+	//   body, for somebody else's sandbox and for an id nothing has — before
+	//   anything else about the request is looked at, so no other answer
+	//   tells the two apart.
+	// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+	//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
+	// - **A volume is its own when a sandbox it made first laid it down**
+	//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
+	//   own or a name no volume has; any other is a `403`, which says
+	//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
+	//   not its own answers as for a name no volume has.
+	// - **And a volume it laid down is its alone to attach.** No other
+	//   caller boots a sandbox from it — not another key, not one that
+	//   acts on `all`, not a person in the console: each is a `403`. What
+	//   is on it is a root filesystem the key chose, and a sandbox somebody
+	//   else booted from it would run that key's code as theirs. Whoever
+	//   could drop it still can, which is how its name is had again.
+	// - **What speaks for the whole host is refused**, `403`: what the host
+	//   has been using and has promised (`GET /v1/host/…`), and declaring
+	//   or withdrawing a shared broker, which moves every sandbox given it.
+	// - **How many sandboxes use an image or a shared broker is left out**:
+	//   most of them are not its own.
+	//
+	// Images, the shared brokers as a list, the host's description and the
+	// keys themselves are not sandboxes, and an `own` key reads and changes
+	// them as its scopes say. So `keys.admin` on one lists and revokes the
+	// keys its owner may — its owner's, and everybody's when its owner is
+	// an administrator — exactly as a key that acts on `all` does. What it
+	// cannot do is mint one that reaches further than itself.
+	Sandboxes KeyReach `json:"sandboxes"`
+	Scopes    []Scope  `json:"scopes"`
+}
+
+// KeyAuthorization An approval waiting to be redeemed.
+type KeyAuthorization struct {
+	// Code What `POST /v1/keys/authorizations/redeem` trades for the key, with the verifier: 32 random bytes in base64url. **This is the only time it exists outside the caller**; what is stored is a SHA-256 of it.
+	Code string `json:"code"`
+
+	// ExpiresAt When the code stops working, five minutes after it was given.
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// KeyAuthorizationRedemption defines model for KeyAuthorizationRedemption.
+type KeyAuthorizationRedemption struct {
+	// Code The code the approval gave, as it was given.
+	Code string `json:"code"`
+
+	// CodeVerifier What the program made before it asked, and has shown nobody since: RFC 7636's `code_verifier`, 43 to 128 unreserved characters. Its SHA-256, in base64url without padding, is the `codeChallenge` the approval was given. Anything else redeems nothing, though its hash is the challenge, and spends the code as a wrong verifier does: a challenge made from something short enough to guess is not one a key is handed over for.
+	CodeVerifier string `json:"codeVerifier"`
+}
+
+// KeyAuthorizationRequest A key a person approves for a program, as `KeyRequest` describes one, and what the code for it is bound to. It has no `owner`: the key is its approver's.
+type KeyAuthorizationRequest struct {
+	// CodeChallenge The SHA-256 of the `codeVerifier` the redeem will show, in base64url without padding: RFC 7636's `S256`, and the only method there is here. Exactly the 43 characters 32 bytes make. `plain` is not offered, since it would make the challenge — which the browser's address carried — the verifier.
+	CodeChallenge string `json:"codeChallenge"`
+
+	// ExpiresAt When the KEY expires — not the code, which lasts five minutes. Required, and within ten years, as `KeyRequest.expiresAt`.
+	ExpiresAt time.Time `json:"expiresAt"`
+
+	// Name What the key is called, as `KeyRequest.name`: what its owner will read in a list one day, deciding whether it should still exist. From the console's page it is what the program asking called itself (`client`). Text a person can read, as `KeyRequest.name` is, and bounded in length here, since this one is written by a link.
+	Name string `json:"name"`
+
+	// RedirectUri Where the page will take the browser with the code. Left out when
+	// the page shows the code for the person to paste instead.
+	//
+	// `http://127.0.0.1:<port>/…`, `http://localhost:<port>/…` or
+	// `http://[::1]:<port>/…` and nothing else, as it is written: the
+	// scheme in small letters, that host spelled that way, a port
+	// written as a number is (`49152`, not `049152`) that is neither 0
+	// nor 80, no user or password, no fragment, no space or backslash.
+	// Port 80 is refused because a browser leaves it out of an address
+	// that names it, and what the page read would not be what was
+	// written. Loopback is the machine
+	// the browser is on, which is the one the program asking runs on,
+	// and plain HTTP is all a program listening there for a moment can
+	// serve. It is checked and not kept: the code goes to whoever
+	// redeems it with the verifier, wherever the browser took it.
+	RedirectUri *string `json:"redirectUri,omitempty"`
+
+	// Sandboxes Which sandboxes the key acts on. `all`, when left out, as for `KeyRequest`.
+	Sandboxes *KeyReach `json:"sandboxes,omitempty"`
+	Scopes    []Scope   `json:"scopes"`
 }
 
 // KeyCreated defines model for KeyCreated.
@@ -944,8 +1074,57 @@ type KeyCreated struct {
 	Name       string     `json:"name"`
 
 	// Owner Who it belongs to. It does what its scopes say and its owner may still do, whichever is less, and nothing once its owner is not let in any more.
-	Owner  openapi_types.Email `json:"owner"`
-	Scopes []Scope             `json:"scopes"`
+	Owner openapi_types.Email `json:"owner"`
+
+	// Sandboxes | reach | which sandboxes and volumes the key acts on |
+	// |---|---|
+	// | `all` | every one on this host |
+	// | `own` | those this very key made, and no others |
+	//
+	// Scopes say what a key may do; this says to what. A key with `exec`
+	// and `all` runs commands in every sandbox on the host, which is more
+	// than a program that makes its own sandboxes needs and exactly what
+	// somebody who steals its key wants.
+	//
+	// **`own` is the key's, not its owner's.** Two keys of one person each
+	// see what they made and nothing of the other's, and what a person made
+	// in the console is no key's. A console session is a person, and is
+	// never narrowed this way.
+	//
+	// To an `own` key:
+	//
+	// - **A sandbox that is not its own is one that does not exist.** Every
+	//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
+	//   body, for somebody else's sandbox and for an id nothing has — before
+	//   anything else about the request is looked at, so no other answer
+	//   tells the two apart.
+	// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+	//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
+	// - **A volume is its own when a sandbox it made first laid it down**
+	//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
+	//   own or a name no volume has; any other is a `403`, which says
+	//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
+	//   not its own answers as for a name no volume has.
+	// - **And a volume it laid down is its alone to attach.** No other
+	//   caller boots a sandbox from it — not another key, not one that
+	//   acts on `all`, not a person in the console: each is a `403`. What
+	//   is on it is a root filesystem the key chose, and a sandbox somebody
+	//   else booted from it would run that key's code as theirs. Whoever
+	//   could drop it still can, which is how its name is had again.
+	// - **What speaks for the whole host is refused**, `403`: what the host
+	//   has been using and has promised (`GET /v1/host/…`), and declaring
+	//   or withdrawing a shared broker, which moves every sandbox given it.
+	// - **How many sandboxes use an image or a shared broker is left out**:
+	//   most of them are not its own.
+	//
+	// Images, the shared brokers as a list, the host's description and the
+	// keys themselves are not sandboxes, and an `own` key reads and changes
+	// them as its scopes say. So `keys.admin` on one lists and revokes the
+	// keys its owner may — its owner's, and everybody's when its owner is
+	// an administrator — exactly as a key that acts on `all` does. What it
+	// cannot do is mint one that reaches further than itself.
+	Sandboxes KeyReach `json:"sandboxes"`
+	Scopes    []Scope  `json:"scopes"`
 
 	// Secret The whole key, `rysk_<id>_<secret>`. **This is the only time it exists outside the caller.**
 	Secret string `json:"secret"`
@@ -959,17 +1138,73 @@ type KeyPage struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
+// KeyReach | reach | which sandboxes and volumes the key acts on |
+// |---|---|
+// | `all` | every one on this host |
+// | `own` | those this very key made, and no others |
+//
+// Scopes say what a key may do; this says to what. A key with `exec`
+// and `all` runs commands in every sandbox on the host, which is more
+// than a program that makes its own sandboxes needs and exactly what
+// somebody who steals its key wants.
+//
+// **`own` is the key's, not its owner's.** Two keys of one person each
+// see what they made and nothing of the other's, and what a person made
+// in the console is no key's. A console session is a person, and is
+// never narrowed this way.
+//
+// To an `own` key:
+//
+//   - **A sandbox that is not its own is one that does not exist.** Every
+//     route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
+//     body, for somebody else's sandbox and for an id nothing has — before
+//     anything else about the request is looked at, so no other answer
+//     tells the two apart.
+//   - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+//     and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
+//   - **A volume is its own when a sandbox it made first laid it down**
+//     (`Volume.createdBy`). A sandbox it makes may name a volume of its
+//     own or a name no volume has; any other is a `403`, which says
+//     nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
+//     not its own answers as for a name no volume has.
+//   - **And a volume it laid down is its alone to attach.** No other
+//     caller boots a sandbox from it — not another key, not one that
+//     acts on `all`, not a person in the console: each is a `403`. What
+//     is on it is a root filesystem the key chose, and a sandbox somebody
+//     else booted from it would run that key's code as theirs. Whoever
+//     could drop it still can, which is how its name is had again.
+//   - **What speaks for the whole host is refused**, `403`: what the host
+//     has been using and has promised (`GET /v1/host/…`), and declaring
+//     or withdrawing a shared broker, which moves every sandbox given it.
+//   - **How many sandboxes use an image or a shared broker is left out**:
+//     most of them are not its own.
+//
+// Images, the shared brokers as a list, the host's description and the
+// keys themselves are not sandboxes, and an `own` key reads and changes
+// them as its scopes say. So `keys.admin` on one lists and revokes the
+// keys its owner may — its owner's, and everybody's when its owner is
+// an administrator — exactly as a key that acts on `all` does. What it
+// cannot do is mint one that reaches further than itself.
+type KeyReach string
+
 // KeyRequest defines model for KeyRequest.
 type KeyRequest struct {
-	// ExpiresAt Required, and bounded by this host's ceiling.
+	// ExpiresAt Required, in the future, and at most ten years (3650 days) from now: a key that outlives anybody's memory of it is one nobody revokes. Answered, like every time of a key's, in UTC.
 	ExpiresAt time.Time `json:"expiresAt"`
 
 	// Name What this key is for, for whoever decides one day whether it should still exist. Required, because an unnamed key is one nobody can revoke with confidence.
+	//
+	// Text a person can read as it is written: not blank, and with no control or formatting character (Unicode `Cc` and `Cf` — a NUL, a newline, the marks that reverse the direction text reads in or take no width) and no line or paragraph separator. A name is shown in every list of keys, and those are how one is made to read as something it is not.
 	Name string `json:"name"`
 
 	// Owner Whose it is. The caller, when left out; only an administrator may name somebody else.
-	Owner  *openapi_types.Email `json:"owner,omitempty"`
-	Scopes []Scope              `json:"scopes"`
+	Owner *openapi_types.Email `json:"owner,omitempty"`
+
+	// Sandboxes Which sandboxes it acts on. `all`, when left out. A caller that is itself a key acting only on its `own` may ask for nothing wider.
+	Sandboxes *KeyReach `json:"sandboxes,omitempty"`
+
+	// Scopes At least one. A scope named twice is held once.
+	Scopes []Scope `json:"scopes"`
 }
 
 // KillConnections Which connections to kill: those that match everything given. At least a `destination` or a `source` — a body that names neither would kill everything the sandbox has open, and that is asked for by naming it rather than by leaving something out.
@@ -994,6 +1229,55 @@ type Me struct {
 	Key *struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
+
+		// Sandboxes | reach | which sandboxes and volumes the key acts on |
+		// |---|---|
+		// | `all` | every one on this host |
+		// | `own` | those this very key made, and no others |
+		//
+		// Scopes say what a key may do; this says to what. A key with `exec`
+		// and `all` runs commands in every sandbox on the host, which is more
+		// than a program that makes its own sandboxes needs and exactly what
+		// somebody who steals its key wants.
+		//
+		// **`own` is the key's, not its owner's.** Two keys of one person each
+		// see what they made and nothing of the other's, and what a person made
+		// in the console is no key's. A console session is a person, and is
+		// never narrowed this way.
+		//
+		// To an `own` key:
+		//
+		// - **A sandbox that is not its own is one that does not exist.** Every
+		//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
+		//   body, for somebody else's sandbox and for an id nothing has — before
+		//   anything else about the request is looked at, so no other answer
+		//   tells the two apart.
+		// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+		//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
+		// - **A volume is its own when a sandbox it made first laid it down**
+		//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
+		//   own or a name no volume has; any other is a `403`, which says
+		//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
+		//   not its own answers as for a name no volume has.
+		// - **And a volume it laid down is its alone to attach.** No other
+		//   caller boots a sandbox from it — not another key, not one that
+		//   acts on `all`, not a person in the console: each is a `403`. What
+		//   is on it is a root filesystem the key chose, and a sandbox somebody
+		//   else booted from it would run that key's code as theirs. Whoever
+		//   could drop it still can, which is how its name is had again.
+		// - **What speaks for the whole host is refused**, `403`: what the host
+		//   has been using and has promised (`GET /v1/host/…`), and declaring
+		//   or withdrawing a shared broker, which moves every sandbox given it.
+		// - **How many sandboxes use an image or a shared broker is left out**:
+		//   most of them are not its own.
+		//
+		// Images, the shared brokers as a list, the host's description and the
+		// keys themselves are not sandboxes, and an `own` key reads and changes
+		// them as its scopes say. So `keys.admin` on one lists and revokes the
+		// keys its owner may — its owner's, and everybody's when its owner is
+		// an administrator — exactly as a key that acts on `all` does. What it
+		// cannot do is mint one that reaches further than itself.
+		Sandboxes KeyReach `json:"sandboxes"`
 	} `json:"key,omitempty"`
 
 	// Name The name Google gave, when the person has signed in.
@@ -1132,6 +1416,9 @@ type Sandbox struct {
 	// Brokers The brokered upstreams this sandbox was given, and the loopback port each one is carried on inside the machine.
 	Brokers   *[]SandboxBroker `json:"brokers,omitempty"`
 	CreatedAt time.Time        `json:"createdAt"`
+
+	// CreatedBy Who made it. Absent on a sandbox made before this was recorded, which is then nobody's: a key that acts only on its `own` sandboxes does not see it.
+	CreatedBy *Creator `json:"createdBy,omitempty"`
 
 	// Disk What the disk actually turned out to be.
 	Disk *struct {
@@ -1925,6 +2212,9 @@ type Volume struct {
 	Bytes     int64     `json:"bytes"`
 	CreatedAt time.Time `json:"createdAt"`
 
+	// CreatedBy Who made the sandbox that first laid it down, which is whose it is: a sandbox made later that names it does not change this. Absent on a volume made before this was recorded. When it is a key that acts only on its `own` sandboxes (`KeyReach`), only that key attaches the volume.
+	CreatedBy *Creator `json:"createdBy,omitempty"`
+
 	// Digest The manifest digest of the image it was first laid over, which every sandbox that names it must be booted from.
 	Digest string `json:"digest"`
 
@@ -2031,7 +2321,7 @@ type GetConsoleParams struct {
 
 // BeginGoogleSignInParams defines parameters for BeginGoogleSignIn.
 type BeginGoogleSignInParams struct {
-	// ReturnTo The console page to come back to, as a path: `/console` or under it. Anything else — another host, another path on this one — is refused, since a sign-in that redirects wherever its link says is how a phishing page ends up behind a real login.
+	// ReturnTo The console page to come back to, as a path: `/console` or under it, with its query when it has one, which comes back as it was sent. Anything else — another host, another path on this one — is refused, since a sign-in that redirects wherever its link says is how a phishing page ends up behind a real login.
 	ReturnTo *string `form:"returnTo,omitempty" json:"returnTo,omitempty"`
 }
 
@@ -2267,6 +2557,12 @@ type PullImageJSONRequestBody = ImageRequest
 
 // CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
 type CreateKeyJSONRequestBody = KeyRequest
+
+// AuthorizeKeyJSONRequestBody defines body for AuthorizeKey for application/json ContentType.
+type AuthorizeKeyJSONRequestBody = KeyAuthorizationRequest
+
+// RedeemKeyAuthorizationJSONRequestBody defines body for RedeemKeyAuthorization for application/json ContentType.
+type RedeemKeyAuthorizationJSONRequestBody = KeyAuthorizationRedemption
 
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
@@ -2519,6 +2815,16 @@ type ClientInterface interface {
 	CreateKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	CreateKey(ctx context.Context, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AuthorizeKeyWithBody request with any body
+	AuthorizeKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AuthorizeKey(ctx context.Context, body AuthorizeKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemKeyAuthorizationWithBody request with any body
+	RedeemKeyAuthorizationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RedeemKeyAuthorization(ctx context.Context, body RedeemKeyAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeKey request
 	RevokeKey(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3061,6 +3367,54 @@ func (c *Client) CreateKeyWithBody(ctx context.Context, contentType string, body
 
 func (c *Client) CreateKey(ctx context.Context, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AuthorizeKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeKeyRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AuthorizeKey(ctx context.Context, body AuthorizeKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthorizeKeyRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RedeemKeyAuthorizationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemKeyAuthorizationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RedeemKeyAuthorization(ctx context.Context, body RedeemKeyAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemKeyAuthorizationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4920,6 +5274,86 @@ func NewCreateKeyRequestWithBody(server string, contentType string, body io.Read
 	}
 
 	operationPath := fmt.Sprintf("/v1/keys")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAuthorizeKeyRequest calls the generic AuthorizeKey builder with application/json body
+func NewAuthorizeKeyRequest(server string, body AuthorizeKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAuthorizeKeyRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAuthorizeKeyRequestWithBody generates requests for AuthorizeKey with any type of body
+func NewAuthorizeKeyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/keys/authorizations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemKeyAuthorizationRequest calls the generic RedeemKeyAuthorization builder with application/json body
+func NewRedeemKeyAuthorizationRequest(server string, body RedeemKeyAuthorizationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemKeyAuthorizationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemKeyAuthorizationRequestWithBody generates requests for RedeemKeyAuthorization with any type of body
+func NewRedeemKeyAuthorizationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/keys/authorizations/redeem")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8092,6 +8526,16 @@ type ClientWithResponsesInterface interface {
 
 	CreateKeyWithResponse(ctx context.Context, body CreateKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateKeyResponse, error)
 
+	// AuthorizeKeyWithBodyWithResponse request with any body
+	AuthorizeKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeKeyResponse, error)
+
+	AuthorizeKeyWithResponse(ctx context.Context, body AuthorizeKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeKeyResponse, error)
+
+	// RedeemKeyAuthorizationWithBodyWithResponse request with any body
+	RedeemKeyAuthorizationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemKeyAuthorizationResponse, error)
+
+	RedeemKeyAuthorizationWithResponse(ctx context.Context, body RedeemKeyAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemKeyAuthorizationResponse, error)
+
 	// RevokeKeyWithResponse request
 	RevokeKeyWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*RevokeKeyResponse, error)
 
@@ -8904,11 +9348,61 @@ func (r CreateKeyResponse) StatusCode() int {
 	return 0
 }
 
+type AuthorizeKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *KeyAuthorization
+	JSON400      *Error
+	JSON401      *Unauthorized
+	JSON403      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthorizeKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthorizeKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RedeemKeyAuthorizationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *KeyCreated
+	JSON400      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemKeyAuthorizationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemKeyAuthorizationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type RevokeKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON401      *Unauthorized
-	JSON403      *Forbidden
+	JSON403      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -9053,6 +9547,7 @@ type DeleteSandboxResponse struct {
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
+	JSON404      *NotFound
 }
 
 // Status returns HTTPResponse.Status
@@ -9501,6 +9996,7 @@ type DeleteFileResponse struct {
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
+	JSON404      *NotFound
 	JSON409      *NotRunning
 	JSON503      *SandboxUnreachable
 }
@@ -9737,6 +10233,7 @@ type ListProcessesResponse struct {
 	JSON200      *ProcessPage
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
+	JSON404      *NotFound
 	JSON409      *NotRunning
 	JSON503      *SandboxUnreachable
 }
@@ -9765,6 +10262,7 @@ type StartProcessResponse struct {
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
+	JSON404      *NotFound
 	JSON409      *Error
 	JSON503      *SandboxUnreachable
 }
@@ -9790,6 +10288,7 @@ type ReapProcessResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
+	JSON404      *NotFound
 	JSON409      *NotRunning
 	JSON503      *SandboxUnreachable
 }
@@ -10729,6 +11228,40 @@ func (c *ClientWithResponses) CreateKeyWithResponse(ctx context.Context, body Cr
 		return nil, err
 	}
 	return ParseCreateKeyResponse(rsp)
+}
+
+// AuthorizeKeyWithBodyWithResponse request with arbitrary body returning *AuthorizeKeyResponse
+func (c *ClientWithResponses) AuthorizeKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeKeyResponse, error) {
+	rsp, err := c.AuthorizeKeyWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) AuthorizeKeyWithResponse(ctx context.Context, body AuthorizeKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeKeyResponse, error) {
+	rsp, err := c.AuthorizeKey(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthorizeKeyResponse(rsp)
+}
+
+// RedeemKeyAuthorizationWithBodyWithResponse request with arbitrary body returning *RedeemKeyAuthorizationResponse
+func (c *ClientWithResponses) RedeemKeyAuthorizationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemKeyAuthorizationResponse, error) {
+	rsp, err := c.RedeemKeyAuthorizationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemKeyAuthorizationResponse(rsp)
+}
+
+func (c *ClientWithResponses) RedeemKeyAuthorizationWithResponse(ctx context.Context, body RedeemKeyAuthorizationJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemKeyAuthorizationResponse, error) {
+	rsp, err := c.RedeemKeyAuthorization(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemKeyAuthorizationResponse(rsp)
 }
 
 // RevokeKeyWithResponse request returning *RevokeKeyResponse
@@ -12285,6 +12818,100 @@ func ParseCreateKeyResponse(rsp *http.Response) (*CreateKeyResponse, error) {
 	return response, nil
 }
 
+// ParseAuthorizeKeyResponse parses an HTTP response from a AuthorizeKeyWithResponse call
+func ParseAuthorizeKeyResponse(rsp *http.Response) (*AuthorizeKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthorizeKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest KeyAuthorization
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRedeemKeyAuthorizationResponse parses an HTTP response from a RedeemKeyAuthorizationWithResponse call
+func ParseRedeemKeyAuthorizationResponse(rsp *http.Response) (*RedeemKeyAuthorizationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemKeyAuthorizationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest KeyCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRevokeKeyResponse parses an HTTP response from a RevokeKeyWithResponse call
 func ParseRevokeKeyResponse(rsp *http.Response) (*RevokeKeyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12307,7 +12934,7 @@ func ParseRevokeKeyResponse(rsp *http.Response) (*RevokeKeyResponse, error) {
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -12552,6 +13179,13 @@ func ParseDeleteSandboxResponse(rsp *http.Response) (*DeleteSandboxResponse, err
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -13489,6 +14123,13 @@ func ParseDeleteFileResponse(rsp *http.Response) (*DeleteFileResponse, error) {
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest NotRunning
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -13989,6 +14630,13 @@ func ParseListProcessesResponse(rsp *http.Response) (*ListProcessesResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest NotRunning
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -14057,6 +14705,13 @@ func ParseStartProcessResponse(rsp *http.Response) (*StartProcessResponse, error
 		}
 		response.JSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -14103,6 +14758,13 @@ func ParseReapProcessResponse(rsp *http.Response) (*ReapProcessResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest NotRunning
@@ -15632,6 +16294,12 @@ type ServerInterface interface {
 	// Mint a key
 	// (POST /v1/keys)
 	CreateKey(w http.ResponseWriter, r *http.Request)
+	// Approve a key for a program that asked for one
+	// (POST /v1/keys/authorizations)
+	AuthorizeKey(w http.ResponseWriter, r *http.Request)
+	// Trade an approval's code for its key
+	// (POST /v1/keys/authorizations/redeem)
+	RedeemKeyAuthorization(w http.ResponseWriter, r *http.Request)
 	// Revoke a key
 	// (DELETE /v1/keys/{keyId})
 	RevokeKey(w http.ResponseWriter, r *http.Request, keyId string)
@@ -16513,6 +17181,42 @@ func (siw *ServerInterfaceWrapper) CreateKey(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthorizeKey operation middleware
+func (siw *ServerInterfaceWrapper) AuthorizeKey(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthorizeKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RedeemKeyAuthorization operation middleware
+func (siw *ServerInterfaceWrapper) RedeemKeyAuthorization(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RedeemKeyAuthorization(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19210,6 +19914,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/info", wrapper.GetInfo)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/keys", wrapper.ListKeys)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/keys", wrapper.CreateKey)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/keys/authorizations", wrapper.AuthorizeKey)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/keys/authorizations/redeem", wrapper.RedeemKeyAuthorization)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/keys/{keyId}", wrapper.RevokeKey)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/me/picture", wrapper.GetMyPicture)

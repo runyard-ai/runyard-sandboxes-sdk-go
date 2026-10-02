@@ -14,6 +14,9 @@ import (
 type console interface {
 	io.Reader
 	io.Writer
+	// interactive says whether somebody is at it to type: what `auth login`
+	// asks before it waits for a code to be pasted.
+	interactive() bool
 	// size is its columns and rows; zero when it cannot say, which leaves the
 	// sandbox's terminal at the host's default.
 	size() (cols, rows int)
@@ -32,6 +35,8 @@ func terminal() console { return screen{in: os.Stdin, out: os.Stdout} }
 
 func (s screen) Read(p []byte) (int, error)  { return s.in.Read(p) }
 func (s screen) Write(p []byte) (int, error) { return s.out.Write(p) }
+
+func (s screen) interactive() bool { return term.IsTerminal(int(s.in.Fd())) }
 
 func (s screen) size() (int, int) {
 	cols, rows, err := term.GetSize(int(s.out.Fd()))

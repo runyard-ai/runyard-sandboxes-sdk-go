@@ -230,8 +230,19 @@ info:
 
     Every request carries `Authorization: Bearer rysk_<id>_<secret>`, scoped and
     expiring. The first key is minted by this daemon's own command line, on the
-    host, not by this API — an API that can mint its own first credential has an
-    unauthenticated route on it by definition.
+    host, not by this API: every route that decides a key should exist is called
+    with a credential, by somebody who may do what the key will.
+
+    One route hands a key over and is shown no credential:
+    `POST /v1/keys/authorizations/redeem`, by which a program on a person's
+    machine collects the key that person approved for it in the console. It
+    is not a way to a first credential. It hands over only what a signed-in
+    person approved minutes earlier, once, and only to whoever holds the
+    verifier that approval was bound to before it was given; with nothing
+    approved it answers nothing.
+
+    A key's scopes say what it may do, and its reach says to which sandboxes:
+    every one on the host, or only those it made itself (`KeyReach`).
 
     ### What is deliberately not here
 
@@ -382,6 +393,33 @@ tags:
       its owner may still do, whichever is less. A person taken off this
       daemon's lists takes every key they hold with them, at once, without
       anybody having to find those keys first.
+
+      **A key reaches every sandbox on the host, or only its own.** Its scopes
+      say what it may do and its reach (`sandboxes`) says to what: `all`, or
+      `own` — the sandboxes and volumes that very key made, and no others,
+      whoever its owner is. A key handed to a program that makes sandboxes for
+      itself is given `own`, and is then no way into anybody else's.
+
+      **A program on a person's machine asks that person for its key**, rather
+      than being pasted one. This is OAuth's authorization code with PKCE and
+      a loopback redirect (RFC 7636, RFC 8252):
+
+      1. The program makes a random `code_verifier`, listens on a port of its
+         own loopback, and opens the person's browser at
+         `GET /console/authorize`, saying what it wants and the
+         `code_challenge` that is the verifier's SHA-256.
+      2. The person, signed in, reads what is asked and approves it or does
+         not. Approving is `POST /v1/keys/authorizations`, called by the page
+         as them: nothing is minted, and a code comes back.
+      3. The page sends the browser to the program's `redirect_uri` with the
+         code — or shows it, for the person to paste, when the program gave
+         no address.
+      4. The program trades the code and its verifier for the key at
+         `POST /v1/keys/authorizations/redeem`, which mints it then.
+
+      The key is the approver's own, and can never do more than they may. A
+      program that is done with it revokes it: `DELETE /v1/keys/{keyId}`
+      takes a key's own id from that very key, whatever its scopes.
   - name: Auth
     description: |
       Who is calling. A program calls with a key; a person signs in to the
@@ -451,6 +489,13 @@ paths:
         routes answers `401` without one.
 
 
+        **Never in a frame.** Every address of the console is answered with
+        `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
+        'none'`: the page acts as whoever is signed in to it, on a click, and
+        a page that could frame it — a tunnel on a neighbouring host serves
+        whatever a sandbox does — could have that click made for it.
+
+
         **Its pages have addresses of their own**, below, and each answers with
         these same bytes, so a person can reload, bookmark or share any of
         them. They are named rather than a wildcard: the page decides what to
@@ -478,16 +523,47 @@ paths:
         required: true
         schema:
           type: string
-          enum: [usage, sandboxes, tunnels, volumes, images, brokers, keys]
+          enum: [usage, sandboxes, tunnels, volumes, images, brokers, keys, authorize]
     get:
       operationId: getConsolePage
       tags: [Meta]
       security: []
       summary: One of the console's pages
-      description: >-
+      description: |
         The console, as `GET /console` answers it: the page reads which of its
         pages to show from the address. A page the console does not have is a
         `404`.
+
+        **`authorize` is where a program sends a person to be given a key**
+        (see Keys), and it reads what is asked from its query:
+
+        | parameter | what it says |
+        |---|---|
+        | `client` | What is asking, in its own words: `ryclaude on ada-laptop`, say. Required, at most 128 characters, and text a person can read (`KeyRequest.name`). The asker's claim, which nothing checks: the page shows it as one, and the key is named it, with its ends trimmed and each run of spaces made one. |
+        | `scopes` | The scopes asked for (`Scope`), separated by commas. The person approving must hold every one: the page says which they do not, and offers nothing to approve. |
+        | `sandboxes` | Which sandboxes the key is to act on (`KeyReach`). `all`, when left out. |
+        | `code_challenge` | `KeyAuthorizationRequest.codeChallenge`. Required. |
+        | `redirect_uri` | Where the program listens for the code, as `KeyAuthorizationRequest.redirectUri` takes it: plain HTTP, on this machine's loopback, with a port. |
+        | `state` | Handed back to `redirect_uri` as it was given, so that the program can tell the answer to its own question from one somebody else sent to its port. |
+
+        They are the page's and not parameters of this route: the daemon
+        reads none of them and answers with the same bytes whatever they
+        say, so that what a link asks for is judged in one place, in front of
+        the person it is asked of. Signed out, the page signs the person in
+        and comes back to this address as it was.
+
+        The page shows who is signed in, what is asking and for what, and
+        nothing is minted until the person approves. Approved, it sends the
+        browser to `redirect_uri` with `code` and `state`; denied, with
+        `error=access_denied` and `state`. Without a `redirect_uri` it shows
+        the code instead, for the person to paste into the program.
+
+        **It is not a redirector.** A `redirect_uri` that is not this
+        machine's loopback, a `code_challenge` that is not one, or a scope
+        this contract does not define, and the page offers nothing to approve
+        and sends the browser nowhere — not with a refusal either, since
+        where a link says to go is the one thing about it that cannot be
+        trusted.
       responses:
         "200":
           description: The console.
@@ -669,6 +745,9 @@ paths:
         index, so a tunnel deleted before the page boundary does not move it.
         Without `limit` it is every tunnel, which is what a caller that does
         not page has always had. The relay is the same on every page.
+
+        A key that acts only on its `own` sandboxes is listed their tunnels,
+        and the same relay.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -733,7 +812,9 @@ paths:
         **Replacing an upstream moves every sandbox that uses it,** on its next
         connection — that is what "shared" means, and it is why this needs
         `brokers.admin` rather than anything a scheduler holds. Connections
-        already open finish where they started.
+        already open finish where they started. It is also why a key that acts
+        only on its `own` sandboxes is refused it, `403`, whatever its scopes:
+        the sandboxes it would move are not its own.
 
         This is the only way to declare one — the daemon has no flag for it,
         so a broker's upstream has one source — and it survives a restart of
@@ -771,6 +852,9 @@ paths:
         reads as an upstream that is down. Detach it from those sandboxes first.
 
         Deleting one that is not there succeeds, as every delete here does.
+
+        Refused, `403`, to a key that acts only on its `own` sandboxes, as
+        declaring one is: it is every sandbox's broker.
       responses:
         "204":
           description: Gone, or was never here.
@@ -849,6 +933,9 @@ paths:
         that could not give every sandbox what it was promised if they all
         asked at once.
 
+        Refused, `403`, to a key that acts only on its `own` sandboxes: these
+        are every sandbox's numbers.
+
         **CPUs and memory are a running sandbox's**, running as the host's
         history counts it: `creating`, `booting`, `ready`, `unreachable` and
         `paused` — a paused sandbox still holds its memory. **Disk is a
@@ -886,6 +973,9 @@ paths:
         same way: an hour of the readings as taken and a day of one-minute
         averages, written to the daemon's state directory every minute. The
         time the daemon was not running is absent, never zeroes.
+
+        Refused, `403`, to a key that acts only on its `own` sandboxes: what
+        every sandbox on the host is using is not its own to read.
 
         Everything here is measured on the host — `/proc` and the filesystem
         holding the state directory — and nothing comes from a guest.
@@ -1042,6 +1132,11 @@ paths:
         Including the ones a sandbox is using, with its id, because the
         question a list answers is usually "can I delete this" — and the one it
         answers next is "then what is holding it".
+
+
+        A key that acts only on its `own` sandboxes is listed the volumes it
+        made, and told which sandbox holds one only when that sandbox is its
+        own too.
       responses:
         "200":
           description: The volumes.
@@ -1066,6 +1161,11 @@ paths:
         Idempotent: deleting one that is already gone succeeds, because a
         caller cleaning up after a crash cannot tell "already gone" from "never
         existed".
+
+
+        A key that acts only on its `own` sandboxes drops only volumes it
+        made. One that is somebody else's is answered as a name no volume has
+        — `204`, and it is still there.
       responses:
         "204":
           description: Gone, or was already.
@@ -1075,6 +1175,8 @@ paths:
           description: >-
             A sandbox holds it — stopped and failed ones included, since either
             can be started again. The body names it: drop that sandbox first.
+            It is not named to a key that acts only on its `own` sandboxes
+            when the sandbox is not one of them.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1276,7 +1378,9 @@ paths:
         `disk=delete` deletes the volume: it is this sandbox's disk, and the
         parameter means what it says about it.
 
-        Idempotent: deleting one that is already gone succeeds.
+        Idempotent: deleting one that is already gone succeeds — except to a
+        key that acts only on its `own` sandboxes, which is answered `404` for
+        every sandbox that is not its own, one that is gone among them.
       parameters:
         - name: disk
           in: query
@@ -1292,6 +1396,8 @@ paths:
           description: Gone, or was already.
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes/{sandboxId}/stop:
@@ -2679,6 +2785,8 @@ paths:
               schema: { $ref: "#/components/schemas/ProcessPage" }
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
@@ -2722,6 +2830,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes/{sandboxId}/processes/{processId}:
@@ -2766,6 +2876,8 @@ paths:
           description: Gone, or was already.
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes/{sandboxId}/processes/{processId}/stdout:
@@ -3026,6 +3138,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes/{sandboxId}/files/list:
@@ -3091,7 +3205,10 @@ paths:
       summary: Mint a key
       description: >-
         Needs `keys.admin`, and may only grant scopes the caller already has.
-        Otherwise `keys.admin` is `*`, spelled at one remove.
+        Otherwise `keys.admin` is `*`, spelled at one remove. Nor may it grant
+        a wider reach than the caller's: a key that acts only on its `own`
+        sandboxes mints only keys that do, each on its own and not on its
+        minter's.
 
 
         **The key is its owner's**: the caller's, unless an administrator
@@ -3120,6 +3237,167 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/keys/authorizations:
+    post:
+      operationId: authorizeKey
+      tags: [Keys]
+      summary: Approve a key for a program that asked for one
+      description: |
+        What the console's `authorize` page calls when the person signed in
+        to it approves: a key is described, **nothing is minted**, and a code
+        comes back that `POST /v1/keys/authorizations/redeem` trades for the
+        key, once.
+
+        Needs `keys.admin`, and approves exactly what `POST /v1/keys` would
+        mint for the same caller and refuses what it would refuse: scopes the
+        caller holds, a reach no wider than its own, an expiry within ten
+        years. **The key is the caller's own.** There is no `owner` here,
+        and one that is sent is not read: what is approved is a program
+        acting as the person approving it, and an administrator approving on
+        somebody else's behalf would be one person's click putting a key in
+        another's name.
+
+        **The code is not the key.** It passes through a browser's address
+        bar and its history, or a person's clipboard, so it is bound to
+        `codeChallenge`: the SHA-256 of a verifier that only the program
+        which asked holds, and which the redeem must show.
+
+        **Where a code may be sent is this daemon's to judge.** `redirectUri`
+        is where the page means to take the browser with the code, and is
+        accepted only as plain HTTP on the loopback of the machine the
+        browser is on, with a port. Anything else is refused, so that a link
+        somebody was sent cannot have a code delivered to another host. The
+        page checks the same before it shows anything; this is the check that
+        does not depend on the page.
+
+        The code lasts five minutes. What is kept of it is its SHA-256, in
+        the database every daemon in front of it reads, so the redeem may be
+        answered by another daemon than this one.
+
+        **An approval is no better than what made it.** It is tied to the key
+        or the session this call carried, and goes with it: revoke that key,
+        sign out of that session, or let either expire, and what it approved
+        and nobody has collected can no longer be.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeyAuthorizationRequest" }
+      responses:
+        "201":
+          description: Approved. The code is in this response and nowhere else.
+          headers:
+            Cache-Control:
+              description: "`no-store`: the code is a secret for as long as it lasts."
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyAuthorization" }
+        "400":
+          description: >-
+            The body is not the JSON this route takes; the key has no name
+            or one longer than 128 characters, names a scope or a reach this
+            contract does not define, has no scopes, has expired already or
+            expires more than ten years from now; the name is not text a
+            person can read (`KeyRequest.name`); `codeChallenge` is not the
+            43 characters a SHA-256 is in base64url; or `redirectUri` is not
+            plain HTTP on loopback with a port. The message says which.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: >-
+            The caller does not hold `keys.admin`; or asked for a scope it
+            does not hold itself, or — being a key that acts only on its
+            `own` sandboxes — for a wider reach than its own. The message
+            names the scope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: >-
+            Nothing was approved: the caller already has sixteen approvals
+            waiting to be redeemed (`capacity_exceeded`; each lasts five
+            minutes, and they are counted for each person, so that nobody is
+            refused for what somebody else has waiting), or the database is
+            not answering (`upstream_error`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/keys/authorizations/redeem:
+    post:
+      operationId: redeemKeyAuthorization
+      tags: [Keys]
+      security: []
+      summary: Trade an approval's code for its key
+      description: |
+        What the program that asked calls, with the code the person's browser
+        brought it and the verifier it made before asking. The key is minted
+        by this call, as its approver's, and this response is the only place
+        its secret ever is.
+
+        **Unauthenticated, and the one route here that hands over a
+        credential without being shown one.** The caller has no key: this is
+        how it gets its first. What stands in for a credential is the pair it
+        sends — a code of 256 random bits that a signed-in person's approval
+        made, minutes ago, and the verifier whose SHA-256 that approval was
+        bound to. Neither is worth anything without the other, and nothing
+        is handed over that was not approved.
+
+        **A code works once**, and is spent by being presented — with the
+        right verifier or the wrong one. A code somebody else saw is then
+        used up by their first guess at the verifier, and the program it was
+        meant for finds out, rather than racing them.
+
+        **One answer for every code that yields no key.** A code this daemon
+        never gave, one already redeemed, one older than five minutes, one
+        whose verifier does not match or is not a verifier at all, one whose
+        approving key or session has been revoked, signed out or has
+        expired, and one whose approver may no longer do what they approved
+        are the same `400` with the same message: which of them it was is
+        what somebody holding a stolen code would like to know.
+
+        **What is minted is what `POST /v1/keys` would mint now.** The
+        approver is asked about again, of the daemon answering this call: a
+        person taken off its lists since, or who may no longer mint keys or
+        use a scope they approved, is given no key — nor one cut down to
+        what they still may.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeyAuthorizationRedemption" }
+      responses:
+        "200":
+          description: >-
+            Minted. The secret is in this response and nowhere else, and the
+            code is spent.
+          headers:
+            Cache-Control:
+              description: "`no-store`: the body is a credential."
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyCreated" }
+        "400":
+          description: >-
+            No key: the code and verifier do not redeem one, for any of the
+            reasons above and without saying which; or the body is not the
+            JSON this route takes, which the message does say. A code that
+            was presented is spent either way.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >-
+            The database is not answering. Nothing was minted, and a code
+            that was not reached is not spent: the same call may be made
+            again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/keys/{keyId}:
     parameters:
       - name: keyId
@@ -3130,15 +3408,30 @@ paths:
       operationId: revokeKey
       tags: [Keys]
       summary: Revoke a key
-      description: >-
+      description: |
         In force at once, on every daemon in front of the same database: a
         key revoked in a minute is a key that is not revoked. Idempotent.
-        The caller's own keys, or anybody's for an administrator.
+
+        With `keys.admin`: the caller's own keys, or anybody's for an
+        administrator.
+
+        **Any key may revoke itself**, whatever its scopes: called with a
+        key, naming that key's own id, this needs nothing else. So a program
+        given a key it cannot mint with can still hand it back when it is
+        done, and a key that could not be revoked by its holder is one that
+        lives until somebody else remembers it. It may name no other key that
+        way, its owner's included.
       responses:
         "204":
           description: Revoked, or was already.
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            The caller does not hold `keys.admin` and named a key that is not
+            the one it called with; or holds it, is not an administrator, and
+            named somebody else's key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -3174,7 +3467,8 @@ paths:
           in: query
           description: >-
             The console page to come back to, as a path: `/console` or under
-            it. Anything else — another host, another path on this one — is
+            it, with its query when it has one, which comes back as it was
+            sent. Anything else — another host, another path on this one — is
             refused, since a sign-in that redirects wherever its link says is
             how a phishing page ends up behind a real login.
           schema: { type: string, example: /console/sandboxes }
@@ -3468,13 +3762,19 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
       description: >-
-        The key is valid and does not hold the scope this route needs. Distinct
-        from `401`, which is a key that is missing, expired or revoked.
+        The key is valid and does not hold the scope this route needs — or it
+        acts only on its `own` sandboxes (`KeyReach`) and this route speaks
+        for the whole host. Distinct from `401`, which is a key that is
+        missing, expired or revoked.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
-      description: No such thing here.
+      description: >-
+        No such thing here. For a key that acts only on its `own` sandboxes
+        (`KeyReach`), a sandbox it did not make is no such thing: the answer
+        is this one, with the same body, whether the sandbox is somebody
+        else's or was never there.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -3643,7 +3943,9 @@ components:
                 otherwise, and then such a broker is refused when it connects
                 rather than when it is declared — resolution happens then, and
                 an address checked earlier would be one a DNS answer could
-                change underneath the check.
+                change underneath the check. Whatever this says, a one-off
+                broker is never dialled to the address of a sandbox on this
+                host: no sandbox reaches another.
         defaults:
           type: object
           description: What a `PUT` gets for anything it leaves out.
@@ -3779,7 +4081,9 @@ components:
           type: integer
           description: >-
             How many sandboxes are booted from it right now. What makes the
-            `409` on `DELETE` predictable rather than a surprise.
+            `409` on `DELETE` predictable rather than a surprise. Left out for
+            a key that acts only on its `own` sandboxes, whose `409` says that
+            the image is in use and not by how many.
         entrypoint:
           type: array
           items: { type: string }
@@ -3937,7 +4241,44 @@ components:
           type: string
           format: uuid
           description: The sandbox holding it. Absent when none does.
+        createdBy:
+          allOf: [{ $ref: "#/components/schemas/Creator" }]
+          description: >-
+            Who made the sandbox that first laid it down, which is whose it
+            is: a sandbox made later that names it does not change this.
+            Absent on a volume made before this was recorded. When it is a
+            key that acts only on its `own` sandboxes (`KeyReach`), only that
+            key attaches the volume.
         createdAt: { type: string, format: date-time }
+
+    Creator:
+      type: object
+      description: >-
+        Who made a sandbox or a volume: the person, and the key when the call
+        carried one. Written down when it is made and never changed, so it
+        still names a key that has since been revoked.
+      required: [user]
+      properties:
+        user:
+          type: string
+          format: email
+          description: >-
+            The person who was signed in to the console, or the owner of the
+            key the call carried.
+          example: ada@example.com
+        keyId:
+          type: string
+          description: >-
+            The key the call carried. Absent when it was a console session.
+            It is what a key that acts only on its `own` sandboxes is matched
+            against.
+          example: k7f3a91c
+        keyName:
+          type: string
+          description: >-
+            That key's name when it made this, for a person reading it: the
+            key may be gone by now, and its id alone says nothing to them.
+          example: "runyard server — lon-1"
 
     VolumeList:
       type: object
@@ -3980,6 +4321,18 @@ components:
             another sandbox holds — running, stopped or failed — is a `409`
             `volume_in_use`, and the next one can have it once that one is
             dropped.
+
+            **A key that acts only on its `own` sandboxes names a volume it
+            made, or a name no volume has.** Any other is a `403` — one
+            answer, whether that volume is held or free and whatever image it
+            was laid over, because those are somebody else's to know.
+
+            **A volume such a key laid down is attached by that key alone.**
+            Named by anybody else — another key, whatever it acts on, or a
+            person in the console — it is a `403`, saying whose it is to a
+            caller that may read that: what it holds is a filesystem that key
+            chose, and booting it is running what that key put there. Delete
+            the volume to have its name.
 
             **A volume belongs to the image it was first laid over**, by
             digest: what it holds is changes to THAT filesystem — a package
@@ -4556,6 +4909,12 @@ components:
                 because it is the number anybody tuning this watches, and
                 because a sandbox that takes thirty seconds and one that takes
                 two look identical afterwards.
+        createdBy:
+          allOf: [{ $ref: "#/components/schemas/Creator" }]
+          description: >-
+            Who made it. Absent on a sandbox made before this was recorded,
+            which is then nobody's: a key that acts only on its `own`
+            sandboxes does not see it.
         createdAt: { type: string, format: date-time }
         readyAt:
           type: string
@@ -4662,7 +5021,9 @@ components:
           description: The PEM it verifies the upstream with, when it has its own.
         sandboxes:
           type: integer
-          description: How many sandboxes on this host are given it right now.
+          description: >-
+            How many sandboxes on this host are given it right now. Left out
+            for a key that acts only on its `own` sandboxes.
 
     BrokerPage:
       type: object
@@ -5403,6 +5764,14 @@ components:
             What this key is for, for whoever decides one day whether it should
             still exist. Required, because an unnamed key is one nobody can
             revoke with confidence.
+
+
+            Text a person can read as it is written: not blank, and with no
+            control or formatting character (Unicode `Cc` and `Cf` — a NUL, a
+            newline, the marks that reverse the direction text reads in or
+            take no width) and no line or paragraph separator. A name is
+            shown in every list of keys, and those are how one is made to
+            read as something it is not.
           example: "runyard server — lon-1"
         owner:
           type: string
@@ -5412,16 +5781,79 @@ components:
             may name somebody else.
         scopes:
           type: array
+          description: At least one. A scope named twice is held once.
           items: { $ref: "#/components/schemas/Scope" }
         expiresAt:
           type: string
           format: date-time
-          description: Required, and bounded by this host's ceiling.
+          description: >-
+            Required, in the future, and at most ten years (3650 days) from
+            now: a key that outlives anybody's memory of it is one nobody
+            revokes. Answered, like every time of a key's, in UTC.
+        sandboxes:
+          allOf: [{ $ref: "#/components/schemas/KeyReach" }]
+          description: >-
+            Which sandboxes it acts on. `all`, when left out. A caller that
+            is itself a key acting only on its `own` may ask for nothing
+            wider.
+
+    KeyReach:
+      type: string
+      description: |
+        | reach | which sandboxes and volumes the key acts on |
+        |---|---|
+        | `all` | every one on this host |
+        | `own` | those this very key made, and no others |
+
+        Scopes say what a key may do; this says to what. A key with `exec`
+        and `all` runs commands in every sandbox on the host, which is more
+        than a program that makes its own sandboxes needs and exactly what
+        somebody who steals its key wants.
+
+        **`own` is the key's, not its owner's.** Two keys of one person each
+        see what they made and nothing of the other's, and what a person made
+        in the console is no key's. A console session is a person, and is
+        never narrowed this way.
+
+        To an `own` key:
+
+        - **A sandbox that is not its own is one that does not exist.** Every
+          route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
+          body, for somebody else's sandbox and for an id nothing has — before
+          anything else about the request is looked at, so no other answer
+          tells the two apart.
+        - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+          and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
+        - **A volume is its own when a sandbox it made first laid it down**
+          (`Volume.createdBy`). A sandbox it makes may name a volume of its
+          own or a name no volume has; any other is a `403`, which says
+          nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
+          not its own answers as for a name no volume has.
+        - **And a volume it laid down is its alone to attach.** No other
+          caller boots a sandbox from it — not another key, not one that
+          acts on `all`, not a person in the console: each is a `403`. What
+          is on it is a root filesystem the key chose, and a sandbox somebody
+          else booted from it would run that key's code as theirs. Whoever
+          could drop it still can, which is how its name is had again.
+        - **What speaks for the whole host is refused**, `403`: what the host
+          has been using and has promised (`GET /v1/host/…`), and declaring
+          or withdrawing a shared broker, which moves every sandbox given it.
+        - **How many sandboxes use an image or a shared broker is left out**:
+          most of them are not its own.
+
+        Images, the shared brokers as a list, the host's description and the
+        keys themselves are not sandboxes, and an `own` key reads and changes
+        them as its scopes say. So `keys.admin` on one lists and revokes the
+        keys its owner may — its owner's, and everybody's when its owner is
+        an administrator — exactly as a key that acts on `all` does. What it
+        cannot do is mint one that reaches further than itself.
+      enum: [all, own]
+      x-enum-varnames: [KeyReachAll, KeyReachOwn]
 
     Key:
       type: object
       description: A key's metadata. Never its secret.
-      required: [id, name, owner, scopes, createdAt, expiresAt]
+      required: [id, name, owner, scopes, sandboxes, createdAt, expiresAt]
       properties:
         id: { type: string, example: k7f3a91c }
         name: { type: string }
@@ -5436,6 +5868,7 @@ components:
         scopes:
           type: array
           items: { $ref: "#/components/schemas/Scope" }
+        sandboxes: { $ref: "#/components/schemas/KeyReach" }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         lastUsedAt:
@@ -5458,6 +5891,115 @@ components:
                 The whole key, `rysk_<id>_<secret>`. **This is the only time it
                 exists outside the caller.**
               example: rysk_k7f3a91c_9Qm2xV8sT1pLd0aZbN4wK7yR
+
+    KeyAuthorizationRequest:
+      type: object
+      description: >-
+        A key a person approves for a program, as `KeyRequest` describes one,
+        and what the code for it is bound to. It has no `owner`: the key is
+        its approver's.
+      required: [name, scopes, expiresAt, codeChallenge]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: >-
+            What the key is called, as `KeyRequest.name`: what its owner will
+            read in a list one day, deciding whether it should still exist.
+            From the console's page it is what the program asking called
+            itself (`client`). Text a person can read, as `KeyRequest.name`
+            is, and bounded in length here, since this one is written by a
+            link.
+          example: ryclaude on ada-laptop
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/Scope" }
+        expiresAt:
+          type: string
+          format: date-time
+          description: >-
+            When the KEY expires — not the code, which lasts five minutes.
+            Required, and within ten years, as `KeyRequest.expiresAt`.
+        sandboxes:
+          allOf: [{ $ref: "#/components/schemas/KeyReach" }]
+          description: >-
+            Which sandboxes the key acts on. `all`, when left out, as for
+            `KeyRequest`.
+        codeChallenge:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: >-
+            The SHA-256 of the `codeVerifier` the redeem will show, in
+            base64url without padding: RFC 7636's `S256`, and the only method
+            there is here. Exactly the 43 characters 32 bytes make. `plain`
+            is not offered, since it would make the challenge — which the
+            browser's address carried — the verifier.
+          example: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+        redirectUri:
+          type: string
+          maxLength: 2048
+          description: |
+            Where the page will take the browser with the code. Left out when
+            the page shows the code for the person to paste instead.
+
+            `http://127.0.0.1:<port>/…`, `http://localhost:<port>/…` or
+            `http://[::1]:<port>/…` and nothing else, as it is written: the
+            scheme in small letters, that host spelled that way, a port
+            written as a number is (`49152`, not `049152`) that is neither 0
+            nor 80, no user or password, no fragment, no space or backslash.
+            Port 80 is refused because a browser leaves it out of an address
+            that names it, and what the page read would not be what was
+            written. Loopback is the machine
+            the browser is on, which is the one the program asking runs on,
+            and plain HTTP is all a program listening there for a moment can
+            serve. It is checked and not kept: the code goes to whoever
+            redeems it with the verifier, wherever the browser took it.
+          example: "http://127.0.0.1:49152/callback"
+
+    KeyAuthorization:
+      type: object
+      description: An approval waiting to be redeemed.
+      required: [code, expiresAt]
+      properties:
+        code:
+          type: string
+          description: >-
+            What `POST /v1/keys/authorizations/redeem` trades for the key,
+            with the verifier: 32 random bytes in base64url. **This is the
+            only time it exists outside the caller**; what is stored is a
+            SHA-256 of it.
+          example: 3q2-7wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the code stops working, five minutes after it was given.
+
+    KeyAuthorizationRedemption:
+      type: object
+      required: [code, codeVerifier]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The code the approval gave, as it was given.
+        codeVerifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._~-]{43,128}$"
+          description: >-
+            What the program made before it asked, and has shown nobody since:
+            RFC 7636's `code_verifier`, 43 to 128 unreserved characters. Its
+            SHA-256, in base64url without padding, is the `codeChallenge` the
+            approval was given. Anything else redeems nothing, though its
+            hash is the challenge, and spends the code as a wrong verifier
+            does: a challenge made from something short enough to guess is
+            not one a key is handed over for.
+          example: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
 
     TunnelSpec:
       type: object
@@ -5759,7 +6301,10 @@ components:
       description: >-
         Each is what its own list would hold, filters left off: every sandbox
         `GET /v1/sandboxes` lists, every tunnel `GET /v1/tunnels` does, and so
-        on. Absent is a count this key may not read.
+        on. Absent is a count this key may not read. For a key that acts only
+        on its `own` sandboxes the sandboxes, tunnels and volumes are its own,
+        as those lists are, and the images and shared brokers are the host's,
+        as theirs are.
       properties:
         sandboxes: { type: integer, minimum: 0 }
         tunnels: { type: integer, minimum: 0 }
@@ -5856,11 +6401,12 @@ components:
           x-enum-varnames: [ViaSession, ViaKey]
         key:
           type: object
-          required: [id, name]
+          required: [id, name, sandboxes]
           description: The key the call carried, when it carried one.
           properties:
             id: { type: string }
             name: { type: string }
+            sandboxes: { $ref: "#/components/schemas/KeyReach" }
         sessionExpiresAt:
           type: string
           format: date-time

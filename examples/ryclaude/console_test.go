@@ -50,6 +50,10 @@ func TestAConsoleThatIsNotATerminalSaysSo(t *testing.T) {
 	if _, err := s.raw(); err == nil || !strings.Contains(err.Error(), "not a terminal") {
 		t.Fatalf("%v", err)
 	}
+	// Nobody is typing at a pipe: `auth login` waits there for no code.
+	if s.interactive() {
+		t.Error("a pipe is somebody typing")
+	}
 	if cols, rows := s.size(); cols != 0 || rows != 0 {
 		t.Errorf("%dx%d", cols, rows)
 	}

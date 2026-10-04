@@ -12,14 +12,13 @@ go 1.26
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/oapi-codegen/runtime v1.7.0
 	go.uber.org/goleak v1.3.0
-	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 )

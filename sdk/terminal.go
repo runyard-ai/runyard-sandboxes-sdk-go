@@ -71,25 +71,10 @@ func (s *Sandbox) Terminal(ctx context.Context, opts TerminalOptions) (*Terminal
 	if len(query) > 0 {
 		address += "?" + query.Encode()
 	}
-	header := http.Header{}
-	if s.client.key != "" {
-		// A header, not the subprotocol a browser offers its key in: this is
-		// not a browser, and a header is not echoed into anyone's logs.
-		header.Set("Authorization", "Bearer "+s.client.key)
-	}
-	//nolint:bodyclose // a dial that succeeded leaves no body, the connection being the terminal's; one that failed is closed below
-	conn, res, err := websocket.Dial(ctx, address, &websocket.DialOptions{
-		HTTPClient:   s.client.httpClient,
-		HTTPHeader:   header,
-		Subprotocols: []string{terminalProtocol},
-	})
+	conn, _, err := s.client.upgrade(ctx, address, terminalProtocol)
 	if err != nil {
-		if res != nil && res.StatusCode != http.StatusSwitchingProtocols {
-			// What the library kept of the body: enough for the contract's
-			// error, which is short.
-			body, _ := io.ReadAll(res.Body)
-			closeBody(res.Body)
-			return nil, refused(res, body)
+		if _, refusal := errors.AsType[*Error](err); refusal {
+			return nil, err
 		}
 		return nil, fmt.Errorf("opening a terminal in %s: %w", s.ID, err)
 	}
@@ -97,6 +82,36 @@ func (s *Sandbox) Terminal(ctx context.Context, opts TerminalOptions) (*Terminal
 	// a lot of screen, and one bigger is not a terminal's.
 	conn.SetReadLimit(1 << 20)
 	return &Terminal{conn: conn, ctx: ctx}, nil
+}
+
+// upgrade makes the WebSocket handshake of a route, offering its subprotocol,
+// and is the socket and the headers it was answered with. A daemon that
+// refuses does so before the upgrade, as it refuses any request: that comes
+// back as the *Error it is.
+func (c *Client) upgrade(ctx context.Context, address, protocol string) (*websocket.Conn, http.Header, error) {
+	header := http.Header{}
+	if c.key != "" {
+		// A header, not the subprotocol a browser offers its key in: this is
+		// not a browser, and a header is not echoed into anyone's logs.
+		header.Set("Authorization", "Bearer "+c.key)
+	}
+	//nolint:bodyclose // a dial that succeeded leaves no body, the connection being the socket's; one that failed is closed below
+	conn, res, err := websocket.Dial(ctx, address, &websocket.DialOptions{
+		HTTPClient:   c.httpClient,
+		HTTPHeader:   header,
+		Subprotocols: []string{protocol},
+	})
+	if err != nil {
+		if res != nil && res.StatusCode != http.StatusSwitchingProtocols {
+			// What the library kept of the body: enough for the contract's
+			// error, which is short.
+			body, _ := io.ReadAll(res.Body)
+			closeBody(res.Body)
+			return nil, nil, refused(res, body)
+		}
+		return nil, nil, err
+	}
+	return conn, res.Header, nil
 }
 
 // control is a text message: a resize going in, an exit coming out.

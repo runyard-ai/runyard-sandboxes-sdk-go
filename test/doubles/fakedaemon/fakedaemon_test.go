@@ -392,6 +392,11 @@ func TestTheFakeRefusesWhatTheDaemonRefusesAboutRules(t *testing.T) {
 		{"PUT", "/egress", `{"allow": ["a.example"]}`, http.StatusBadRequest},
 		{"PUT", "/egress", `{"rules": [{"name": "a"}]}`, http.StatusBadRequest},
 		{"PUT", "/egress", `{"rules": [{"name": "a", "cidrs": ["10.0.0.0/8"]}, {"name": "a", "cidrs": ["10.0.0.0/8"]}]}`, http.StatusBadRequest},
+		{"PUT", "/egress/rules/a", `{"internet": false}`, http.StatusBadRequest},
+		// The internet is something to open, alone.
+		{"PUT", "/egress/rules/internet", `{"internet": true, "ports": ["tcp/1-65535"]}`, http.StatusCreated},
+		{"GET", "/egress/rules/internet", ``, http.StatusOK},
+		{"PUT", "/egress", `{"rules": [{"name": "internet", "internet": true}]}`, http.StatusNoContent},
 		{"GET", "/egress/rules", ``, http.StatusOK},
 	} {
 		if got := raw(c.method, base+c.path, c.body); got != c.status {

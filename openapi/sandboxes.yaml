@@ -262,10 +262,12 @@ info:
     out. It comes back with the allowlist advertised in `GET /v1/info` and a
     `422` naming it.
 
-    **One kind of WebSocket, and only one.** `GET /v1/sandboxes/{id}/terminal`
-    is an interactive shell with a PTY, and it is a WebSocket because it is the
-    one exchange here that is bytes in BOTH directions at once, typed by a
-    person. Everything else stays a request or a chunked body.
+    **Two WebSockets, and only two.** `GET /v1/sandboxes/{id}/terminal` is an
+    interactive shell with a PTY, and `GET
+    /v1/sandboxes/{id}/brokers/{name}/serve` carries a client broker's
+    connections to the caller serving it. Each is a WebSocket because it is
+    bytes in BOTH directions at once, for as long as the caller stays.
+    Everything else stays a request or a chunked body.
 
     **No credentials of any kind.** There is no field in this document that
     could carry a token, a key or a registry password, which is a stronger
@@ -340,7 +342,7 @@ tags:
       own client certificate — minted by this host's CA, held here, and
       readable by nothing inside the machine.
 
-      **Two kinds of broker, one mechanism.**
+      **Three kinds of broker, one mechanism.**
 
       - A **shared** broker is declared on this host by `PUT /v1/brokers/{name}`
         — there is no other way to declare one — and any sandbox may be given
@@ -350,6 +352,14 @@ tags:
       - A **one-off** broker is declared inside one sandbox's spec, or attached
         to it later, with its upstream written out. Nothing else can name it,
         and it goes when the sandbox does.
+      - A **client** broker is one a caller of this API holds: it exists from
+        the moment the caller opens `GET
+        /v1/sandboxes/{id}/brokers/{name}/serve` until that connection ends,
+        and its connections are handed to the caller. What answers the
+        workload is the caller's own program, wherever it runs — so a
+        credential it puts on a request never reaches the sandbox, and never
+        reaches this host either. It is in no spec and nothing declares it:
+        when its caller goes, so does it.
 
       Either way the workload sees the same thing: a port on `127.0.0.1`, and
       the whole set in `/run/runyard/brokers.json` — the same file, in the same
@@ -357,6 +367,11 @@ tags:
       beside it for a reader with no JSON parser. Both are rewritten whenever the
       set changes, after the ports are open, so neither ever names a port that
       nothing accepts on.
+
+      A client broker is dialled nowhere, so nothing below about where a
+      one-off broker may go applies to it, and no certificate is presented: the
+      caller holding it was authenticated when it began to, and is told which
+      sandbox it serves by the path it asked for.
 
       **A one-off upstream is a destination the CALLER chose,** which a shared
       broker is not, and it is dialled from this host rather than from the
@@ -1692,6 +1707,9 @@ paths:
         With no `upstream`, gives it the SHARED broker of that name. With one,
         gives it a one-off broker only this sandbox can reach.
 
+        A name a caller is serving as a client broker is that caller's while
+        it does, and is refused here (`conflict`).
+
         Synchronous, like `PUT .../egress`: a `200` means the port is open
         inside the machine and `/run/runyard/brokers.json` names it. A broker
         this sandbox already has keeps its port, so re-attaching one to change
@@ -1750,6 +1768,107 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/StillBooting"
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve:
+    parameters:
+      - $ref: "#/components/parameters/SandboxID"
+      - $ref: "#/components/parameters/BrokerName"
+    get:
+      operationId: serveSandboxBroker
+      tags: [Brokers]
+      summary: Give a sandbox a broker this caller serves, over a WebSocket
+      description: |
+        Gives the sandbox a broker of this name and makes the caller its far
+        end, in one act: a port opens inside the machine,
+        `/run/runyard/brokers.json` names it, and every connection the
+        workload makes to it arrives here, where what the caller writes back
+        is what the workload reads. It lasts as long as the WebSocket does.
+        When that ends — the caller closed it, or stopped answering — every
+        connection it was carrying is cut, the port closes and the published
+        files stop naming it: the broker is gone, as one detached is.
+
+        Nothing of it is written into the sandbox's spec, and nothing is kept:
+        a broker of this kind is its caller's connection, and a caller that
+        wants it back serves it again.
+
+        **The port** is chosen when the WebSocket is accepted, and said in
+        the answer's `Runyard-Broker-Port`. It is also in the sandbox's list
+        of brokers for as long as the broker lasts.
+
+        **The frames.** Binary frames only, and together they are one
+        [yamux](https://github.com/hashicorp/yamux/blob/master/spec.md)
+        session, version 0. This daemon is the yamux client — the streams it
+        opens have odd ids — and the caller is the yamux server, which accepts
+        them and opens none. A stream is one connection from the workload,
+        carrying its bytes unmodified in both directions, from the first byte
+        it sent; closing one half of a stream is the workload, or the caller,
+        having finished writing. The session's own keepalives are how each
+        side learns the other is gone, so a caller that stops answering them
+        is hung up on within seconds.
+
+        What a caller owes the session, and what happens when it does not:
+
+        - It opens no stream. One that does is hung up on, with status `1008`.
+        - It accepts the streams it is sent. At most 256 wait to be accepted,
+          and 256 connections more wait their turn to be sent; one made past
+          that is closed if no place comes free within the time an upstream
+          is given to answer a dial, fifteen seconds. A stream still not
+          accepted after 75 seconds ends the serve.
+        - A stream one side has finished writing on is closed altogether five
+          minutes later, whatever the other side still had to say. An answer
+          that takes longer than that is one to a request whose sender kept
+          its half open, as an HTTP client does.
+
+        **A name is one broker's.** A sandbox that already has a broker of
+        this name — shared, one-off, or one another caller is serving — is
+        refused (`conflict`). A caller serving it is first asked whether it is
+        still there, and only one that answers keeps the name: a caller that
+        has gone, or that serves again the moment it closed its own
+        WebSocket, is not refused for a session that is over.
+
+        **Only a running sandbox.** The port is the machine's, so there is
+        nothing to give one that is not `ready`, and the serve ends when the
+        sandbox is paused, stopped or deleted, and when this daemon stops. A
+        daemon that ends it closes the WebSocket with status `1001`, going
+        away.
+
+        Everything that refuses does so before the WebSocket is accepted, as
+        an ordinary answer, and in this order: a name no broker could have,
+        no such sandbox, a sandbox that is not running, a request that is not
+        this handshake or does not offer `runyard.broker.v1`, a name the
+        sandbox already has.
+
+        **The key** is offered as it is to a terminal: in `Authorization`, or
+        as the subprotocol `runyard.bearer.<key>` beside `runyard.broker.v1`,
+        of which only `runyard.broker.v1` is echoed back.
+
+        `network.write`, because this is choosing where a sandbox's
+        connections go, as attaching a one-off broker is.
+      responses:
+        "101":
+          description: >-
+            Switched to a WebSocket: the sandbox has the broker, and this
+            caller is who serves it.
+          headers:
+            Runyard-Broker-Port:
+              description: The port on `127.0.0.1` inside the sandbox.
+              schema: { type: integer }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The sandbox is not running, or it already has a broker of that
+            name (`conflict`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
@@ -4404,6 +4523,9 @@ components:
           - name: package-mirror
             cidrs: ["10.4.0.0/24"]
             ports: ["tcp/443"]
+          - name: internet
+            internet: true
+            ports: ["tcp/1-65535", "udp/1-65535"]
 
     EgressRule:
       description: One named rule.
@@ -4426,10 +4548,23 @@ components:
       description: |
         What one rule opens: its names and its ranges, on its ports.
 
-        At least one name or one range — a rule that names nothing opens
-        nothing, and is refused rather than kept as a line that reads as if
-        it did something.
+        At least one name or one range, or `internet` — a rule that names
+        nothing opens nothing, and is refused rather than kept as a line that
+        reads as if it did something.
       properties:
+        internet:
+          type: boolean
+          description: >-
+            Every public address, on this rule's ports: any name resolves, to
+            what it resolves to that is public, and any public address is
+            reached, dialled by name or not. Public is what is not private,
+            loopback, link-local, carrier-grade NAT, multicast, reserved
+            (`240.0.0.0/4`) or "this network" (`0.0.0.0/8`) space — so this
+            opens the internet and not the operator's network,
+            which a range such as `0.0.0.0/0` would. This host and the other
+            sandboxes stay refused whatever a rule says. A name that resolves
+            into private space is still taken out of the answer unless a rule
+            that names it allows it (`allowPrivate`).
         domains:
           type: array
           maxItems: 256
@@ -4923,7 +5058,7 @@ components:
 
     SandboxBroker:
       type: object
-      required: [name, port, shared]
+      required: [name, port, kind]
       properties:
         name: { type: string, example: github }
         port:
@@ -4934,18 +5069,27 @@ components:
             change for as long as this sandbox has the broker, across stops and
             starts.
           example: 61000
-        shared:
-          type: boolean
-          description: >-
-            Whether this is the host's shared broker of that name, rather than
-            one declared for this sandbox alone.
+        kind: { $ref: "#/components/schemas/BrokerKind" }
         url:
           type: string
           description: >-
             Where its connections go now. For a shared broker this is the shared
-            broker's current upstream, and changes when that does.
+            broker's current upstream, and changes when that does. A client
+            broker has none.
           example: https://broker.internal:8443/
         description: { type: string }
+
+    BrokerKind:
+      type: string
+      description: >-
+        `shared` is the host's shared broker of that name. `one_off` is an
+        upstream declared for this sandbox alone. `client` is one a caller of
+        this API is serving right now, with `GET
+        /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+      enum: [shared, one_off, client]
+      # Named, because the generator's own name for the last one is `Client`,
+      # which is what it calls the client it generates.
+      x-enum-varnames: [BrokerKindShared, BrokerKindOneOff, BrokerKindClient]
 
     SandboxBrokerPage:
       type: object

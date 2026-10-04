@@ -10,6 +10,10 @@
 // rather than a false pass everywhere it is used. Its behaviour is tested here,
 // beside it.
 //
+// A test is whatever the daemon would have behind it: Settle is the machine
+// booting, Approve a person pressing a button, DialBroker the workload
+// connecting to a broker the code under test serves.
+//
 // It is in the SDK's module so that the SDK's tests can use it — and so that a
 // program built on the SDK can test against it too, without a daemon. Import
 // it from tests only: it is a double, not a server.
@@ -112,8 +116,11 @@ type Daemon struct {
 	tty     func(context.Context, genv1.SandboxID, *Terminal) int
 	network bool
 	google  bool
-	now     func() time.Time
-	created chan genv1.SandboxID
+	// brokerKeepAlive is how often a caller serving a broker is asked whether
+	// it is still there.
+	brokerKeepAlive time.Duration
+	now             func() time.Time
+	created         chan genv1.SandboxID
 
 	mu           sync.Mutex
 	sandboxes    map[genv1.SandboxID]*sandbox
@@ -130,11 +137,15 @@ type Daemon struct {
 	// their code; minted the keys redeemed and not revoked since.
 	approvals map[string]approval
 	minted    []genv1.KeyCreated
+	// changed is closed, and made again, whenever a caller's broker is given,
+	// served or taken away.
+	changed chan struct{}
 	// terminals is every terminal open, which the daemon's end hangs up.
 	terminals map[*websocket.Conn]struct{}
 
-	// serving is every terminal's handler, which outlives the request it
-	// was once: a WebSocket's connection is the handler's, not the server's.
+	// serving is every terminal's handler and every client broker's, which
+	// outlive the requests they were once: a WebSocket's connection is the
+	// handler's, not the server's.
 	serving sync.WaitGroup
 }
 
@@ -146,6 +157,9 @@ type sandbox struct {
 	// open is what a test said the sandbox has open, as its report lists it.
 	open    []genv1.Connection
 	tunnels []*tunnel
+	// callers is who holds each of its client brokers, by the broker's name:
+	// a client broker is there for as long as its caller is.
+	callers map[string]*caller
 	files   map[string][]byte
 	modes   map[string]string
 	console string
@@ -168,16 +182,18 @@ type idempotent struct {
 func New(tb testing.TB, opts ...Option) *Daemon {
 	tb.Helper()
 	d := &Daemon{
-		created:      make(chan genv1.SandboxID, 128),
-		sandboxes:    map[genv1.SandboxID]*sandbox{},
-		volumes:      map[string]*volume{},
-		idempotent:   map[string]idempotent{},
-		calls:        map[string]int{},
-		intercepts:   map[string][]Interceptor{},
-		interceptAll: map[string]Interceptor{},
-		approvals:    map[string]approval{},
-		terminals:    map[*websocket.Conn]struct{}{},
-		now:          time.Now,
+		created:         make(chan genv1.SandboxID, 128),
+		sandboxes:       map[genv1.SandboxID]*sandbox{},
+		volumes:         map[string]*volume{},
+		idempotent:      map[string]idempotent{},
+		calls:           map[string]int{},
+		intercepts:      map[string][]Interceptor{},
+		interceptAll:    map[string]Interceptor{},
+		approvals:       map[string]approval{},
+		terminals:       map[*websocket.Conn]struct{}{},
+		changed:         make(chan struct{}),
+		brokerKeepAlive: brokerKeepAlive,
+		now:             time.Now,
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -186,6 +202,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 	// Streams that follow a sandbox hold their connections open; closing the
 	// clients' side first is what lets Close return rather than wait on them.
 	tb.Cleanup(func() {
+		d.takeAwayEvery()
 		d.hangUpTerminals()
 		server.CloseClientConnections()
 		server.Close()
@@ -228,6 +245,10 @@ func (d *Daemon) routes() http.Handler {
 	handle("GET /v1/sandboxes/{id}/events", "streamSandboxEvents", d.streamEvents)
 	handle("GET /v1/sandboxes/{id}/console", "getSandboxConsole", d.console)
 	handle("GET /v1/sandboxes/{id}/terminal", "openTerminal", d.openTerminal)
+	handle("GET /v1/sandboxes/{id}/brokers", "listSandboxBrokers", d.listSandboxBrokers)
+	handle("PUT /v1/sandboxes/{id}/brokers/{broker}", "attachSandboxBroker", d.attachSandboxBroker)
+	handle("DELETE /v1/sandboxes/{id}/brokers/{broker}", "detachSandboxBroker", d.detachSandboxBroker)
+	handle("GET /v1/sandboxes/{id}/brokers/{broker}/serve", "serveSandboxBroker", d.serveSandboxBroker)
 	handle("POST /v1/sandboxes/{id}/commands", "runCommand", d.runCommand)
 	handle("GET /v1/sandboxes/{id}/files", "readFile", d.readFile)
 	handle("PUT /v1/sandboxes/{id}/files", "writeFile", d.writeFile)
@@ -264,12 +285,37 @@ func (d *Daemon) routes() http.Handler {
 func (d *Daemon) authorized(serve http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Get("Authorization")
+		if authorization == "" && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			// A browser cannot put a key in the Authorization of a WebSocket,
+			// so a handshake — and nothing else — may offer it as a
+			// subprotocol.
+			for _, protocol := range offered(r) {
+				if key, ok := strings.CutPrefix(protocol, bearerProtocol); ok {
+					authorization = "Bearer " + key
+				}
+			}
+		}
 		if d.key != "" && authorization != "Bearer "+d.key && !d.mintedKey(authorization) {
 			refuse(w, http.StatusUnauthorized, genv1.ErrorCodeUnauthorized, "no key, or one this daemon will not accept")
 			return
 		}
 		serve(w, r)
 	}
+}
+
+// bearerProtocol is what a WebSocket handshake offers its key as: the prefix
+// of a subprotocol, which is never the one echoed back.
+const bearerProtocol = "runyard.bearer."
+
+// offered is the subprotocols a handshake offers.
+func offered(r *http.Request) []string {
+	var protocols []string
+	for _, header := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for protocol := range strings.SplitSeq(header, ",") {
+			protocols = append(protocols, strings.TrimSpace(protocol))
+		}
+	}
+	return protocols
 }
 
 // Intercept answers the next call of an operation, by operationId, in the
@@ -344,6 +390,11 @@ func (d *Daemon) Settle(id genv1.SandboxID, state genv1.SandboxState, message st
 
 func (d *Daemon) settle(s *sandbox, state genv1.SandboxState, message string) {
 	s.record.State = state
+	if state != genv1.SandboxStateReady {
+		// A broker a caller serves is a running machine's: stopped or
+		// paused, the caller is hung up on and the broker goes.
+		d.takeAwayAll(s)
+	}
 	if state == genv1.SandboxStateFailed && message != "" {
 		s.record.Error = &message
 	}
@@ -496,11 +547,16 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 	if spec.Brokers != nil {
 		attached := []genv1.SandboxBroker{}
 		for i, wanted := range *spec.Brokers {
-			if wanted.Upstream == nil && !d.declares(wanted.Name) {
-				refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("this host declares no broker %q", wanted.Name))
+			broker, wrong, unknown := d.brokerOf(wanted.Name, wanted.Upstream, firstBrokerPort+i)
+			switch {
+			case unknown:
+				refuse(w, http.StatusUnprocessableEntity, genv1.ErrorCodeUnsupportedSpec, wrong)
+				return
+			case wrong != "":
+				refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, wrong)
 				return
 			}
-			attached = append(attached, genv1.SandboxBroker{Name: wanted.Name, Port: 4100 + i, Shared: wanted.Upstream == nil})
+			attached = append(attached, broker)
 		}
 		record.Brokers = &attached
 	}
@@ -537,7 +593,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		Fingerprint: "sha256:00",
 		NotAfter:    d.now().Add(24 * time.Hour).UTC(),
 	}
-	s := &sandbox{record: record, files: map[string][]byte{}, modes: map[string]string{}, changed: make(chan struct{})}
+	s := &sandbox{record: record, callers: map[string]*caller{}, files: map[string][]byte{}, modes: map[string]string{}, changed: make(chan struct{})}
 	d.sandboxes[id] = s
 	d.order = append(d.order, id)
 	d.idempotent[key] = idempotent{id: id, spec: canonical}
@@ -564,15 +620,6 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, http.StatusAccepted, accepted)
 	d.created <- id
-}
-
-func (d *Daemon) declares(name string) bool {
-	for _, broker := range d.brokers {
-		if broker.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // lookup is the sandbox a path names, or an answer saying there is none.
@@ -605,6 +652,8 @@ func (d *Daemon) deleteSandbox(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Whoever serves a broker of its own in it is hung up on.
+	d.takeAwayAll(s)
 	disk := r.URL.Query().Get("disk")
 	if disk == "" {
 		disk = "keep"
@@ -1001,8 +1050,8 @@ func checkRule(name string, spec genv1.EgressRuleSpec) string {
 	if !ruleName.MatchString(name) {
 		return fmt.Sprintf("%q is not a rule name", name)
 	}
-	if (spec.Domains == nil || len(*spec.Domains) == 0) && (spec.Cidrs == nil || len(*spec.Cidrs) == 0) {
-		return fmt.Sprintf("rule %s names no domains and no cidrs, so it opens nothing", name)
+	if (spec.Domains == nil || len(*spec.Domains) == 0) && (spec.Cidrs == nil || len(*spec.Cidrs) == 0) && (spec.Internet == nil || !*spec.Internet) {
+		return fmt.Sprintf("rule %s names no domains, no cidrs and not the internet, so it opens nothing", name)
 	}
 	return ""
 }
@@ -1025,7 +1074,7 @@ func (d *Daemon) setEgress(w http.ResponseWriter, r *http.Request) {
 	}
 	seen := map[string]bool{}
 	for _, rule := range rules {
-		wrong := checkRule(rule.Name, genv1.EgressRuleSpec{Domains: rule.Domains, Cidrs: rule.Cidrs})
+		wrong := checkRule(rule.Name, genv1.EgressRuleSpec{Domains: rule.Domains, Cidrs: rule.Cidrs, Internet: rule.Internet})
 		if wrong == "" && seen[rule.Name] {
 			wrong = fmt.Sprintf("two rules are called %q", rule.Name)
 		}
@@ -1085,7 +1134,7 @@ func (d *Daemon) putRule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rule := genv1.EgressRule{Name: name, Domains: spec.Domains, Cidrs: spec.Cidrs, Ports: spec.Ports, PinTtl: spec.PinTtl, AllowPrivate: spec.AllowPrivate}
+	rule := genv1.EgressRule{Name: name, Domains: spec.Domains, Cidrs: spec.Cidrs, Internet: spec.Internet, Ports: spec.Ports, PinTtl: spec.PinTtl, AllowPrivate: spec.AllowPrivate}
 	if spec.Paused != nil && *spec.Paused {
 		rule.Paused = new(true)
 	}

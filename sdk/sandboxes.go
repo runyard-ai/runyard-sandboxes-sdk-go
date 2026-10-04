@@ -16,14 +16,18 @@
 //     the examples all defer it.
 //   - **Ergonomics at the edge.** `Run` returns stdout, stderr and an exit
 //     code; `WriteFile` takes bytes; `PutRule` opens a name to a sandbox by a
-//     rule's name. The generated client returns a `*http.Response` and a
-//     pointer to a struct with eleven optional fields.
+//     rule's name; `ServeBroker` gives a sandbox a broker and is the
+//     `net.Listener` its connections arrive at, so an `http.Server` answers
+//     it. The generated client returns a
+//     `*http.Response` and a pointer to a struct with eleven optional fields —
+//     and of the two routes that are WebSockets, nothing past the handshake.
 //
 // It adds no behaviour of its own. Anything it can do is something the contract
 // describes, and anything it cannot is not there — a convenience that talked to
 // a route the document does not have would be a second, undocumented API. The
-// rest of the contract — processes, metrics, brokers, images, keys — is
-// [Client.API]: the generated client itself, on the same address and key.
+// rest of the contract — processes, metrics, attaching and declaring brokers,
+// images, keys — is [Client.API]: the generated client itself, on the same
+// address and key.
 //
 // It is in a module of its own, with the contract's generated code and nothing
 // else, so a program that requires it does not require the daemon.
@@ -56,6 +60,9 @@ type Client struct {
 	key        string
 	// What is told of a sandbox on its way to ready: WithProgress.
 	progress func(message string)
+	// How often the daemon is asked whether it is still there, while a
+	// broker is served.
+	brokerKeepAlive time.Duration
 	// WaitTimeout bounds Create's wait for a machine to answer. Zero uses three
 	// minutes, which is a large image on a cold cache.
 	WaitTimeout time.Duration
@@ -122,7 +129,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	// NewClient's error is its options', and none of these can fail.
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	api, _ := genv1.NewClientWithResponses(baseURL, clientOpts...)
-	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key, progress: settings.progress}, nil
+	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key, progress: settings.progress, brokerKeepAlive: brokerKeepAlive}, nil
 }
 
 // API is the generated client this one is built on, for every operation the
@@ -161,7 +168,10 @@ type Sandbox struct {
 	Name string
 	// State is what it was when this handle was last refreshed.
 	State genv1.SandboxState
-	// Brokers are the loopback ports inside the machine, by name.
+	// Brokers are the loopback ports inside the machine, by name, of the
+	// brokers it had when this handle was last refreshed: those its spec
+	// names. One given it by ServeBroker is not among them — it is given
+	// after, and its listener says where it is.
 	Brokers map[string]int
 	// Identity is what an upstream sees when this sandbox calls it.
 	Identity *genv1.Identity
@@ -462,7 +472,9 @@ func (s *Sandbox) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	return res.Body, nil
 }
 
-// Broker is the loopback address, inside the sandbox, of a brokered upstream.
+// Broker is the loopback address, inside the sandbox, of a brokered upstream:
+// one of the brokers in Brokers. A broker this program serves itself is asked
+// of what ServeBroker returned.
 //
 // It is here because it is the one thing a caller writing a workload needs and
 // cannot guess: what the port is. What makes a call to it work is on the host —

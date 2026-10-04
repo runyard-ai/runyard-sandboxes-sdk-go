@@ -56,8 +56,47 @@ func main() {
 want a shell. A non-zero exit code is in `result.ExitCode`, not an error.
 
 The SDK covers what most programs need: sandboxes, commands, terminals,
-files, egress rules, tunnels and volumes. Everything else in the API is on `client.API()`,
-the client generated from the OpenAPI document, on the same address and key.
+files, egress rules, tunnels, volumes and serving a client broker. Everything
+else in the API is on `client.API()`, the client generated from the OpenAPI
+document, on the same address and key.
+
+## Answering a sandbox from your own program
+
+A sandbox reaches its brokers and nothing else: each is a port on
+`127.0.0.1` inside the machine. A shared or a one-off broker goes to an
+upstream the host dials. A **client** broker goes to your program, and is
+given by serving it: `ServeBroker` opens a port inside the sandbox, and every
+connection the workload makes to it comes out of a `net.Listener`, where what
+you write back is what the workload reads. So a credential your program adds
+on the way upstream never reaches the sandbox, or the host that runs it.
+
+```go
+sandbox, err := client.Create(ctx, "agent", sdk.Spec{Image: "debian:bookworm-slim"})
+// …
+listener, err := sandbox.ServeBroker(ctx, "llm")
+if err != nil {
+	log.Fatal(err)
+}
+defer listener.Close()
+go http.Serve(listener, handler) // answers what the workload asks of the broker
+
+address := listener.URL() // http://127.0.0.1:<port>, inside the sandbox
+```
+
+Nothing declares the broker beforehand, and it lasts as long as the listener:
+closing it takes the broker away, port and all. `ctx` bounds the handshake
+only. The sandbox must be running, and the name one it has no broker of yet:
+either is refused with the code `conflict`. When the daemon hangs up — the
+sandbox was stopped, paused or deleted, the broker detached — or the line to
+it is lost, `Accept` returns an error and the listener is done: serve the
+broker again to have it back, on the port it is given then.
+
+**Closing the listener cuts what is being answered, and so does
+`http.Server.Shutdown`.** Every connection is a stream of the one session the
+listener is, and closing the listener ends it: a request in flight is cut, the
+workload reads an answer that stops short, and `Shutdown` still returns nil.
+To stop without cutting anything, stop the workload first — it is what asks —
+and close the listener once it has ended.
 
 ## Examples
 
@@ -70,12 +109,16 @@ the fake daemon:
 | [`examples/egress`](examples/egress) | A sandbox's egress rules at work: what they allow is reached, the rest is refused, while they change. |
 | [`examples/claude`](examples/claude) | The Claude CLI in a sandbox, with the API key held outside it by a broker. |
 | [`examples/claude-chat`](examples/claude-chat) | A conversation with Claude where each turn is a new sandbox on the last one's volume. |
-| [`examples/ryclaude`](examples/ryclaude) | Claude Code in your terminal, running in a sandbox: the screen and keys are yours, and everything it does is the sandbox's. |
 
 ```sh
 go run github.com/runyard-ai/runyard-sandboxes-sdk-go/examples/hello@latest \
   -addr https://sandboxes.example.com -key "$RUNYARD_KEY"
 ```
+
+Built on this SDK too, and published on their own: the ry harnesses —
+`ryclaude`, `rycodex` and `ryopencode`, an agent's CLI in your terminal running
+in a sandbox — in
+[runyard-harnesses](https://github.com/runyard-ai/runyard-harnesses).
 
 ## Packages
 
@@ -108,7 +151,9 @@ func TestHello(t *testing.T) {
 ```
 
 `fakedaemon.WithRun` decides what a command prints, and `Intercept` makes one
-operation fail the way you want to test.
+operation fail the way you want to test. For a client broker your code serves,
+`DialBroker` is a connection as the workload would make it, and `BrokerServed`
+waits until your code is serving it.
 
 ## The API itself
 

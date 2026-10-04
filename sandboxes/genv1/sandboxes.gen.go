@@ -27,6 +27,13 @@ const (
 	SessionScopes = "session.Scopes"
 )
 
+// Defines values for BrokerKind.
+const (
+	BrokerKindClient BrokerKind = "client"
+	BrokerKindOneOff BrokerKind = "one_off"
+	BrokerKindShared BrokerKind = "shared"
+)
+
 // Defines values for EgressRefusalKind.
 const (
 	Connect EgressRefusalKind = "connect"
@@ -218,6 +225,9 @@ type Broker struct {
 	Sandboxes *int   `json:"sandboxes,omitempty"`
 	Url       string `json:"url"`
 }
+
+// BrokerKind `shared` is the host's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+type BrokerKind string
 
 // BrokerName Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
 type BrokerName = string
@@ -416,6 +426,9 @@ type EgressRule struct {
 	// Domains Names, with `*.` for everything under one. `*.github.com` does not cover `github.com` — the two are written separately, because a wildcard that silently included its parent is a rule people get wrong in the direction of more access. A wildcard also lets the workload ask about any name under it, and those questions reach that domain's own nameservers: allowing `*.example.com` trusts whoever runs example.com with whatever the workload puts in a name.
 	Domains *[]string `json:"domains,omitempty"`
 
+	// Internet Every public address, on this rule's ports: any name resolves, to what it resolves to that is public, and any public address is reached, dialled by name or not. Public is what is not private, loopback, link-local, carrier-grade NAT, multicast, reserved (`240.0.0.0/4`) or "this network" (`0.0.0.0/8`) space — so this opens the internet and not the operator's network, which a range such as `0.0.0.0/0` would. This host and the other sandboxes stay refused whatever a rule says. A name that resolves into private space is still taken out of the answer unless a rule that names it allows it (`allowPrivate`).
+	Internet *bool `json:"internet,omitempty"`
+
 	// Name What the rule is called, and how it is changed and removed: lowercase letters, digits and hyphens. Chosen by whoever writes it, so an audit reads `github-ssh` rather than an id.
 	Name string `json:"name"`
 
@@ -451,9 +464,9 @@ type EgressRule struct {
 
 // EgressRuleSpec What one rule opens: its names and its ranges, on its ports.
 //
-// At least one name or one range — a rule that names nothing opens
-// nothing, and is refused rather than kept as a line that reads as if
-// it did something.
+// At least one name or one range, or `internet` — a rule that names
+// nothing opens nothing, and is refused rather than kept as a line that
+// reads as if it did something.
 type EgressRuleSpec struct {
 	// AllowPrivate Whether this rule's names may resolve into private, loopback or link-local space. Off by default: an A record is written by whoever runs the domain, so without this a name that resolves to `10.0.0.5` opens the operator's own network to the sandbox. Such an address is taken out of the answer unless a rule that allows the name allows it.
 	AllowPrivate *bool `json:"allowPrivate,omitempty"`
@@ -463,6 +476,9 @@ type EgressRuleSpec struct {
 
 	// Domains Names, with `*.` for everything under one. `*.github.com` does not cover `github.com` — the two are written separately, because a wildcard that silently included its parent is a rule people get wrong in the direction of more access. A wildcard also lets the workload ask about any name under it, and those questions reach that domain's own nameservers: allowing `*.example.com` trusts whoever runs example.com with whatever the workload puts in a name.
 	Domains *[]string `json:"domains,omitempty"`
+
+	// Internet Every public address, on this rule's ports: any name resolves, to what it resolves to that is public, and any public address is reached, dialled by name or not. Public is what is not private, loopback, link-local, carrier-grade NAT, multicast, reserved (`240.0.0.0/4`) or "this network" (`0.0.0.0/8`) space — so this opens the internet and not the operator's network, which a range such as `0.0.0.0/0` would. This host and the other sandboxes stay refused whatever a rule says. A name that resolves into private space is still taken out of the answer unless a rule that names it allows it (`allowPrivate`).
+	Internet *bool `json:"internet,omitempty"`
 
 	// Paused A paused rule is kept, as it was written, and opens nothing: its
 	// ranges are closed, its names no longer resolve — a name only
@@ -1494,15 +1510,15 @@ type Sandbox struct {
 // SandboxBroker defines model for SandboxBroker.
 type SandboxBroker struct {
 	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+
+	// Kind `shared` is the host's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+	Kind BrokerKind `json:"kind"`
+	Name string     `json:"name"`
 
 	// Port The port on `127.0.0.1` inside the sandbox. What is listening on it is the agent, carrying the connection out over vsock. It does not change for as long as this sandbox has the broker, across stops and starts.
 	Port int `json:"port"`
 
-	// Shared Whether this is the host's shared broker of that name, rather than one declared for this sandbox alone.
-	Shared bool `json:"shared"`
-
-	// Url Where its connections go now. For a shared broker this is the shared broker's current upstream, and changes when that does.
+	// Url Where its connections go now. For a shared broker this is the shared broker's current upstream, and changes when that does. A client broker has none.
 	Url *string `json:"url,omitempty"`
 }
 
@@ -2863,6 +2879,9 @@ type ClientInterface interface {
 
 	AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ServeSandboxBroker request
+	ServeSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RunCommandWithBody request with any body
 	RunCommandWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3571,6 +3590,18 @@ func (c *Client) AttachSandboxBrokerWithBody(ctx context.Context, sandboxId Sand
 
 func (c *Client) AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAttachSandboxBrokerRequest(c.Server, sandboxId, brokerName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ServeSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewServeSandboxBrokerRequest(c.Server, sandboxId, brokerName)
 	if err != nil {
 		return nil, err
 	}
@@ -5891,6 +5922,47 @@ func NewAttachSandboxBrokerRequestWithBody(server string, sandboxId SandboxID, b
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewServeSandboxBrokerRequest generates requests for ServeSandboxBroker
+func NewServeSandboxBrokerRequest(server string, sandboxId SandboxID, brokerName BrokerName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s/serve", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8573,6 +8645,9 @@ type ClientWithResponsesInterface interface {
 
 	AttachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
 
+	// ServeSandboxBrokerWithResponse request
+	ServeSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
+
 	// RunCommandWithBodyWithResponse request with any body
 	RunCommandWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
 
@@ -9667,6 +9742,33 @@ func (r AttachSandboxBrokerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AttachSandboxBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ServeSandboxBrokerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON503      *SandboxUnreachable
+}
+
+// Status returns HTTPResponse.Status
+func (r ServeSandboxBrokerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ServeSandboxBrokerResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11377,6 +11479,15 @@ func (c *ClientWithResponses) AttachSandboxBrokerWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseAttachSandboxBrokerResponse(rsp)
+}
+
+// ServeSandboxBrokerWithResponse request returning *ServeSandboxBrokerResponse
+func (c *ClientWithResponses) ServeSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error) {
+	rsp, err := c.ServeSandboxBroker(ctx, sandboxId, brokerName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseServeSandboxBrokerResponse(rsp)
 }
 
 // RunCommandWithBodyWithResponse request with arbitrary body returning *RunCommandResponse
@@ -13416,6 +13527,67 @@ func ParseAttachSandboxBrokerResponse(rsp *http.Response) (*AttachSandboxBrokerR
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseServeSandboxBrokerResponse parses an HTTP response from a ServeSandboxBrokerWithResponse call
+func ParseServeSandboxBrokerResponse(rsp *http.Response) (*ServeSandboxBrokerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ServeSandboxBrokerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -16333,6 +16505,9 @@ type ServerInterface interface {
 	// Give a sandbox a broker, while it runs
 	// (PUT /v1/sandboxes/{sandboxId}/brokers/{brokerName})
 	AttachSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
+	// Give a sandbox a broker this caller serves, over a WebSocket
+	// (GET /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve)
+	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
 	// Run one thing and collect what it printed
 	// (POST /v1/sandboxes/{sandboxId}/commands)
 	RunCommand(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
@@ -17634,6 +17809,48 @@ func (siw *ServerInterfaceWrapper) AttachSandboxBroker(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AttachSandboxBroker(w, r, sandboxId, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ServeSandboxBroker operation middleware
+func (siw *ServerInterfaceWrapper) ServeSandboxBroker(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxId" -------------
+	var sandboxId SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxId", r.PathValue("sandboxId"), &sandboxId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandboxId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ServeSandboxBroker(w, r, sandboxId, brokerName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19927,6 +20144,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers", wrapper.ListSandboxBrokers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.DetachSandboxBroker)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.AttachSandboxBroker)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve", wrapper.ServeSandboxBroker)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/commands", wrapper.RunCommand)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/console", wrapper.GetSandboxConsole)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress", wrapper.GetSandboxEgress)

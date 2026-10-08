@@ -160,9 +160,11 @@ func (d *Daemon) listHostTunnels(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	gateway, domain, namespace := "https://gateway.invalid", TunnelDomain, TunnelNamespace
+	gateway, agent, namespace := "https://gateway.invalid", TunnelNamespace, TunnelNamespace
+	domain := TunnelDomain
 	out := genv1.HostTunnels{Items: []genv1.Tunnel{},
-		Relay: genv1.TunnelRelay{Reachable: true, Docked: true, Gateway: &gateway, Domain: &domain, Namespace: &namespace}}
+		Relay: genv1.TunnelRelay{Reachable: true, Docked: true, Gateway: &gateway,
+			Agent: &agent, Domain: &domain, Namespace: &namespace}}
 	var all []genv1.Tunnel
 	for _, id := range d.order {
 		s := d.sandboxes[id]
@@ -347,7 +349,7 @@ func (d *Daemon) createTunnelToken(w http.ResponseWriter, r *http.Request) {
 	record := genv1.TunnelToken{Id: id, Comment: body.Comment, CreatedAt: d.now().UTC()}
 	t.record.Tokens = append(t.record.Tokens, record)
 	reply(w, http.StatusCreated, genv1.TunnelTokenCreated{Id: id, Comment: body.Comment, CreatedAt: record.CreatedAt,
-		Token: "ryt_" + id + "_" + randomOf(32, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")})
+		Token: "tgt_" + id + "_" + randomOf(32, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")})
 }
 
 func (d *Daemon) revokeTunnelToken(w http.ResponseWriter, r *http.Request) {

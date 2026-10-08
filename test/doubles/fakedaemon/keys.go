@@ -108,6 +108,21 @@ const operator = "operator@example.com"
 // getMe says whose key a call carried: its approver's for one minted here,
 // and the operator's for the daemon's own, which may do everything. It is
 // what a program asks to learn whether its key is still accepted.
+// creatorOf is who a request's key is, as a volume it lays down records them:
+// nil for a daemon made with no key, which has nobody to name.
+func (d *Daemon) creatorOf(r *http.Request) *genv1.Creator {
+	secret, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	for _, key := range d.minted {
+		if key.Secret == secret {
+			return &genv1.Creator{User: key.Owner, KeyId: new(key.Id), KeyName: new(key.Name)}
+		}
+	}
+	if d.key != "" && secret == d.key {
+		return &genv1.Creator{User: operator, KeyId: new("koperator"), KeyName: new("the daemon's own")}
+	}
+	return nil
+}
+
 func (d *Daemon) getMe(w http.ResponseWriter, r *http.Request) {
 	secret, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	me := genv1.Me{Via: genv1.ViaKey}

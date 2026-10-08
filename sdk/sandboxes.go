@@ -824,9 +824,14 @@ func (s *Sandbox) drop(ctx context.Context, what string) error {
 	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
 
-// Volumes is every volume on the host, with the sandbox holding each.
-func (c *Client) Volumes(ctx context.Context) ([]genv1.Volume, error) {
-	res, err := c.api.ListVolumesWithResponse(ctx)
+// Volumes is every volume on the host, with the sandbox holding each: those
+// carrying every label given, written `key=value`, when some are.
+func (c *Client) Volumes(ctx context.Context, labels ...string) ([]genv1.Volume, error) {
+	params := &genv1.ListVolumesParams{}
+	if len(labels) > 0 {
+		params.Label = &labels
+	}
+	res, err := c.api.ListVolumesWithResponse(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -834,6 +839,20 @@ func (c *Client) Volumes(ctx context.Context) ([]genv1.Volume, error) {
 		return nil, refused(res.HTTPResponse, res.Body)
 	}
 	return res.JSON200.Items, nil
+}
+
+// SetVolumeLabels replaces a volume's labels, whether or not a sandbox holds
+// it. Nil clears them, as an empty set does.
+func (c *Client) SetVolumeLabels(ctx context.Context, name string, labels map[string]string) error {
+	if labels == nil {
+		// Sent as null, it is a body without them, which is refused.
+		labels = map[string]string{}
+	}
+	res, err := c.api.SetVolumeLabelsWithResponse(ctx, name, genv1.SetVolumeLabelsJSONRequestBody{Labels: labels})
+	if err != nil {
+		return err
+	}
+	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
 
 // DeleteVolume lets a volume go, and what was written on it. Deleting one that

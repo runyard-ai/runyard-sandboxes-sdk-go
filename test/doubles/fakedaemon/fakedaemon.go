@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -168,9 +169,12 @@ type sandbox struct {
 }
 
 type volume struct {
-	createdAt time.Time
-	holder    *genv1.SandboxID
-	bytes     int64
+	createdAt  time.Time
+	lastUsedAt time.Time
+	holder     *genv1.SandboxID
+	bytes      int64
+	labels     map[string]string
+	createdBy  *genv1.Creator
 }
 
 type idempotent struct {
@@ -275,6 +279,7 @@ func (d *Daemon) routes() http.Handler {
 	handle("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
 	handle("GET /v1/volumes", "listVolumes", d.listVolumes)
 	handle("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
+	handle("PUT /v1/volumes/{name}/labels", "setVolumeLabels", d.setVolumeLabels)
 	open("GET /v1/auth", "getAuth", d.getAuth)
 	handle("GET /v1/me", "getMe", d.getMe)
 	open("POST /v1/keys/authorizations/redeem", "redeemKeyAuthorization", d.redeemKeyAuthorization)
@@ -482,9 +487,31 @@ func (d *Daemon) Volume(name string) (exists bool, holder *genv1.SandboxID) {
 
 // PutVolume makes a volume, as an earlier run would have left it.
 func (d *Daemon) PutVolume(name string, bytes int64) {
+	d.PutVolumeWith(name, bytes, nil, nil, time.Time{})
+}
+
+// PutVolumeWith makes a volume, as an earlier run would have left it: with
+// these labels, made by this caller — nobody, when nil — and last used then,
+// or now when that is zero.
+func (d *Daemon) PutVolumeWith(name string, bytes int64, labels map[string]string, by *genv1.Creator, used time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.volumes[name] = &volume{createdAt: d.now().UTC(), bytes: bytes}
+	now := d.now().UTC()
+	if used.IsZero() {
+		used = now
+	}
+	d.volumes[name] = &volume{createdAt: now, lastUsedAt: used.UTC(), bytes: bytes, labels: maps.Clone(labels), createdBy: by}
+}
+
+// VolumeLabels are a volume's labels, and whether there is one.
+func (d *Daemon) VolumeLabels(name string) (map[string]string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	v, ok := d.volumes[name]
+	if !ok {
+		return nil, false
+	}
+	return maps.Clone(v.labels), true
 }
 
 func (d *Daemon) getInfo(w http.ResponseWriter, _ *http.Request) {
@@ -578,9 +605,13 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		v = &volume{createdAt: d.now().UTC()}
+		v = &volume{createdAt: d.now().UTC(), createdBy: d.creatorOf(r)}
+		if record.Spec.Disk.Labels != nil {
+			v.labels = maps.Clone(*record.Spec.Disk.Labels)
+		}
 		d.volumes[volumeName] = v
 	}
+	v.lastUsedAt = d.now().UTC()
 	// The size the guest sees is the last sandbox's to say.
 	if record.Spec.Disk.Size != nil {
 		v.bytes = sizeOf(*record.Spec.Disk.Size)
@@ -664,6 +695,7 @@ func (d *Daemon) deleteSandbox(w http.ResponseWriter, r *http.Request) {
 		name := *s.record.Spec.Disk.Volume
 		if v, ok := d.volumes[name]; ok && v.holder != nil && *v.holder == id {
 			v.holder = nil
+			v.lastUsedAt = d.now().UTC()
 			v.bytes += 7_500_000
 			if disk == "delete" {
 				delete(d.volumes, name)
@@ -858,7 +890,16 @@ func sizeOf(size string) int64 {
 	return 0
 }
 
-func (d *Daemon) listVolumes(w http.ResponseWriter, _ *http.Request) {
+func (d *Daemon) listVolumes(w http.ResponseWriter, r *http.Request) {
+	wanted := map[string]string{}
+	for _, pair := range r.URL.Query()["label"] {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a label filter is written `key=value`")
+			return
+		}
+		wanted[key] = value
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	names := make([]string, 0, len(d.volumes))
@@ -869,12 +910,47 @@ func (d *Daemon) listVolumes(w http.ResponseWriter, _ *http.Request) {
 	list := genv1.VolumeList{Items: []genv1.Volume{}}
 	for _, name := range names {
 		v := d.volumes[name]
+		labels := map[string]string{}
+		maps.Copy(labels, v.labels)
+		if !carries(labels, wanted) {
+			continue
+		}
 		list.Items = append(list.Items, genv1.Volume{
-			Name: name, CreatedAt: v.createdAt, SandboxId: v.holder,
+			Name: name, CreatedAt: v.createdAt, LastUsedAt: v.lastUsedAt, SandboxId: v.holder, Labels: labels, CreatedBy: v.createdBy,
 			Bytes: v.bytes, AllocatedBytes: v.bytes, Digest: "sha256:" + strings.Repeat("0", 64),
 		})
 	}
 	reply(w, http.StatusOK, list)
+}
+
+// carries says whether labels has every one wanted.
+func carries(labels, wanted map[string]string) bool {
+	for key, value := range wanted {
+		if have, ok := labels[key]; !ok || have != value {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Daemon) setVolumeLabels(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Labels *map[string]string `json:"labels"`
+	}
+	if err := strictly(r, &body); err != nil || body.Labels == nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "`labels` is required; `{\"labels\":{}}` is what clears them")
+		return
+	}
+	name := r.PathValue("name")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	v, ok := d.volumes[name]
+	if !ok {
+		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no volume "+name)
+		return
+	}
+	v.labels = maps.Clone(*body.Labels)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (d *Daemon) deleteVolume(w http.ResponseWriter, r *http.Request) {

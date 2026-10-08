@@ -208,8 +208,11 @@ const (
 
 // AuthMethods How a person may sign in to this daemon's console.
 type AuthMethods struct {
-	// Google Whether `GET /v1/auth/google` signs somebody in here. Without it, nobody can sign in to the console.
+	// Google Whether `GET /v1/auth/google` signs somebody in here.
 	Google bool `json:"google"`
+
+	// Password Whether `POST /v1/auth/password` signs somebody in here. Without it or Google, nobody can sign in to the console.
+	Password bool `json:"password"`
 }
 
 // Broker A shared broker, as this host declares it.
@@ -327,7 +330,10 @@ type DirListing struct {
 
 		// Symlink Reported and never followed. A sandbox can point one at anything, and a lister that followed them would walk out of wherever it was asked to look.
 		Symlink *bool `json:"symlink,omitempty"`
-		Uid     *int  `json:"uid,omitempty"`
+
+		// Target What a symlink says it points at, as it says it: relative to its own directory unless it begins with `/`, and not looked at — it may name nothing at all. Absent for anything that is not a symlink, and from a guest older than this field.
+		Target *string `json:"target,omitempty"`
+		Uid    *int    `json:"uid,omitempty"`
 	} `json:"entries"`
 
 	// NextCursor Pass as `cursor` to continue. Absent means the end. A directory is listed in the order the filesystem reports it, and a file created during a walk is not promised to appear in it.
@@ -345,6 +351,9 @@ type DirListing struct {
 // sandbox wrote to — and then it is that disk, attached rather than
 // copied.
 type DiskSpec struct {
+	// Labels The volume's labels, written when it is first made and never by a later sandbox that names it: they are the volume's, and outlive this sandbox with it. `PUT /v1/volumes/{volumeName}/labels` changes them.
+	Labels *map[string]string `json:"labels,omitempty"`
+
 	// Persist Whether the disk survives `DELETE`. The default is the conservative one; `?disk=delete` on the delete overrides it either way, and this is what protects a machine somebody deletes without thinking.
 	Persist *bool `json:"persist,omitempty"`
 
@@ -1322,6 +1331,12 @@ type Page struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
+// PasswordSignIn An address, and the password the daemon's htpasswd file holds for it.
+type PasswordSignIn struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
 // PinTtl How long an address this rule's names resolve to stays open: the
 // DNS answer's own TTL, held between these two bounds. Resolved again,
 // the address is pinned again for the new answer's TTL; not resolved
@@ -1811,6 +1826,19 @@ type SandboxSocketTable struct {
 // whether it is a property of the MACHINE rather than of the host it
 // happens to be on.
 type SandboxSpec struct {
+	// AbandonAfterSeconds Deletes the sandbox once no caller has served it a broker for this
+	// many seconds, as a `DELETE` with no `disk` would: its disk goes
+	// only if `disk.persist` is `false`. Absent never does.
+	//
+	// For a sandbox whose life is a program's: the program holds a
+	// client broker open for as long as it uses the sandbox, and a
+	// program that is killed, or loses its network, leaves nothing
+	// behind. The time runs from when the sandbox is up — never while
+	// it is being made or booted — and starts again whenever the last
+	// caller lets go; a daemon that restarts starts it again too, since
+	// what callers it had are gone with it.
+	AbandonAfterSeconds *int `json:"abandonAfterSeconds,omitempty"`
+
 	// Brokers What this sandbox may reach: shared brokers by name, and one-off
 	// brokers with their upstream written out. See the Brokers section
 	// for the difference.
@@ -2041,7 +2069,8 @@ type Tunnel struct {
 	// Tokens Every token minted for it, revoked ones included, oldest first.
 	Tokens []TunnelToken `json:"tokens"`
 
-	// Url Where a visitor goes. Known once the relay has docked at a gateway and learnt the domain it serves; absent before.
+	// Url Where a visitor goes, **as the gateway says it is**.
+	// Reported and never computed here: the gateway builds every hostname from a domain it holds and the namespace on this host's key, so working one out on this side would be a second implementation of that rule — and the day the two disagreed it would be an address that answers nobody. Absent until the relay has docked and the gateway has taken its announcement, which is the honest answer: there is no address yet.
 	Url *string `json:"url,omitempty"`
 }
 
@@ -2103,13 +2132,20 @@ type TunnelOverlayCorner string
 // TunnelRelay This host's relay: the separate service that carries visitors from the
 // gateway into sandboxes, and keeps doing so while this daemon restarts.
 type TunnelRelay struct {
+	// Agent What the gateway's key calls this relay.
+	Agent *string `json:"agent,omitempty"`
+
 	// Docked Whether it holds its line to a gateway. Without one no tunnel is reachable.
-	Docked  bool    `json:"docked"`
+	Docked bool `json:"docked"`
+
+	// Domain The domain the gateway serves this host's tunnels under. One: a gateway serves one domain, and a second one is a second gateway.
 	Domain  *string `json:"domain,omitempty"`
 	Gateway *string `json:"gateway,omitempty"`
 
 	// Message Why it is not reachable or not docked, when it is not.
-	Message   *string `json:"message,omitempty"`
+	Message *string `json:"message,omitempty"`
+
+	// Namespace This host's part of that domain.
 	Namespace *string `json:"namespace,omitempty"`
 
 	// Reachable Whether it answers on its socket.
@@ -2209,7 +2245,7 @@ type TunnelTokenCreated struct {
 	RevokedAt     *time.Time `json:"revokedAt,omitempty"`
 	RevokedReason *string    `json:"revokedReason,omitempty"`
 
-	// Token The whole token, `ryt_<id>_<secret>`. **This is the only time it exists outside the caller.**
+	// Token The whole token, `tgt_<id>_<secret>`. **This is the only time it exists outside the caller.**
 	Token string `json:"token"`
 }
 
@@ -2233,6 +2269,12 @@ type Volume struct {
 
 	// Digest The manifest digest of the image it was first laid over, which every sandbox that names it must be booted from.
 	Digest string `json:"digest"`
+
+	// Labels The caller's own, stored and echoed and never interpreted, as a sandbox's are: first `spec.disk.labels`, then whatever `PUT .../labels` set. Empty when it has none.
+	Labels map[string]string `json:"labels"`
+
+	// LastUsedAt When a sandbox last took it or let it go: when it was last in use, which is what a list of them is sorted by to find the latest. Its `createdAt` until then.
+	LastUsedAt time.Time `json:"lastUsedAt"`
 
 	// Name Lower case letters, digits, `.`, `_` and `-`, starting with a letter or a digit. It is a file name on the host, which is why it is this narrow.
 	Name VolumeName `json:"name"`
@@ -2565,6 +2607,20 @@ type ListHostTunnelsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListVolumesParams defines parameters for ListVolumes.
+type ListVolumesParams struct {
+	// Label Only volumes carrying this label, written `key=value`. Repeat to require several; they are ANDed, as the sandboxes' filter is.
+	Label *[]string `form:"label,omitempty" json:"label,omitempty"`
+}
+
+// SetVolumeLabelsJSONBody defines parameters for SetVolumeLabels.
+type SetVolumeLabelsJSONBody struct {
+	Labels map[string]string `json:"labels"`
+}
+
+// SignInWithPasswordJSONRequestBody defines body for SignInWithPassword for application/json ContentType.
+type SignInWithPasswordJSONRequestBody = PasswordSignIn
+
 // PutBrokerJSONRequestBody defines body for PutBroker for application/json ContentType.
 type PutBrokerJSONRequestBody = BrokerUpstream
 
@@ -2612,6 +2668,9 @@ type PutTunnelJSONRequestBody = TunnelSpec
 
 // CreateTunnelTokenJSONRequestBody defines body for CreateTunnelToken for application/json ContentType.
 type CreateTunnelTokenJSONRequestBody = TunnelTokenRequest
+
+// SetVolumeLabelsJSONRequestBody defines body for SetVolumeLabels for application/json ContentType.
+type SetVolumeLabelsJSONRequestBody SetVolumeLabelsJSONBody
 
 // AsStreamGap returns the union data inside the StreamGapped as a StreamGap
 func (t StreamGapped) AsStreamGap() (StreamGap, error) {
@@ -2760,6 +2819,9 @@ type ClientInterface interface {
 	// GetConsoleSandboxTab request
 	GetConsoleSandboxTab(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConsoleVolume request
+	GetConsoleVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConsolePage request
 	GetConsolePage(ctx context.Context, page string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2774,6 +2836,11 @@ type ClientInterface interface {
 
 	// CompleteGoogleSignIn request
 	CompleteGoogleSignIn(ctx context.Context, params *CompleteGoogleSignInParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SignInWithPasswordWithBody request with any body
+	SignInWithPasswordWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SignInWithPassword(ctx context.Context, body SignInWithPasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SignOut request
 	SignOut(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3042,10 +3109,15 @@ type ClientInterface interface {
 	ListHostTunnels(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVolumes request
-	ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListVolumes(ctx context.Context, params *ListVolumesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteVolume request
 	DeleteVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetVolumeLabelsWithBody request with any body
+	SetVolumeLabelsWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetVolumeLabels(ctx context.Context, volumeName VolumeName, body SetVolumeLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetRoot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3086,6 +3158,18 @@ func (c *Client) GetConsoleSandbox(ctx context.Context, sandboxId SandboxID, req
 
 func (c *Client) GetConsoleSandboxTab(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConsoleSandboxTabRequest(c.Server, sandboxId, tab)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetConsoleVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleVolumeRequest(c.Server, volumeName)
 	if err != nil {
 		return nil, err
 	}
@@ -3146,6 +3230,30 @@ func (c *Client) BeginGoogleSignIn(ctx context.Context, params *BeginGoogleSignI
 
 func (c *Client) CompleteGoogleSignIn(ctx context.Context, params *CompleteGoogleSignInParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCompleteGoogleSignInRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SignInWithPasswordWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignInWithPasswordRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SignInWithPassword(ctx context.Context, body SignInWithPasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignInWithPasswordRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4284,8 +4392,8 @@ func (c *Client) ListHostTunnels(ctx context.Context, params *ListHostTunnelsPar
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListVolumesRequest(c.Server)
+func (c *Client) ListVolumes(ctx context.Context, params *ListVolumesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVolumesRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4298,6 +4406,30 @@ func (c *Client) ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn)
 
 func (c *Client) DeleteVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteVolumeRequest(c.Server, volumeName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetVolumeLabelsWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetVolumeLabelsRequestWithBody(c.Server, volumeName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetVolumeLabels(ctx context.Context, volumeName VolumeName, body SetVolumeLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetVolumeLabelsRequest(c.Server, volumeName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4442,6 +4574,40 @@ func NewGetConsoleSandboxTabRequest(server string, sandboxId SandboxID, tab stri
 	}
 
 	operationPath := fmt.Sprintf("/console/sandboxes/%s/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetConsoleVolumeRequest generates requests for GetConsoleVolume
+func NewGetConsoleVolumeRequest(server string, volumeName VolumeName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/console/volumes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -4673,6 +4839,46 @@ func NewCompleteGoogleSignInRequest(server string, params *CompleteGoogleSignInP
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSignInWithPasswordRequest calls the generic SignInWithPassword builder with application/json body
+func NewSignInWithPasswordRequest(server string, body SignInWithPasswordJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSignInWithPasswordRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSignInWithPasswordRequestWithBody generates requests for SignInWithPassword with any type of body
+func NewSignInWithPasswordRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/auth/password")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8411,7 +8617,7 @@ func NewListHostTunnelsRequest(server string, params *ListHostTunnelsParams) (*h
 }
 
 // NewListVolumesRequest generates requests for ListVolumes
-func NewListVolumesRequest(server string) (*http.Request, error) {
+func NewListVolumesRequest(server string, params *ListVolumesParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -8427,6 +8633,28 @@ func NewListVolumesRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Label != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "label", runtime.ParamLocationQuery, *params.Label); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -8467,6 +8695,53 @@ func NewDeleteVolumeRequest(server string, volumeName VolumeName) (*http.Request
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSetVolumeLabelsRequest calls the generic SetVolumeLabels builder with application/json body
+func NewSetVolumeLabelsRequest(server string, volumeName VolumeName, body SetVolumeLabelsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetVolumeLabelsRequestWithBody(server, volumeName, "application/json", bodyReader)
+}
+
+// NewSetVolumeLabelsRequestWithBody generates requests for SetVolumeLabels with any type of body
+func NewSetVolumeLabelsRequestWithBody(server string, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/volumes/%s/labels", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8526,6 +8801,9 @@ type ClientWithResponsesInterface interface {
 	// GetConsoleSandboxTabWithResponse request
 	GetConsoleSandboxTabWithResponse(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*GetConsoleSandboxTabResponse, error)
 
+	// GetConsoleVolumeWithResponse request
+	GetConsoleVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error)
+
 	// GetConsolePageWithResponse request
 	GetConsolePageWithResponse(ctx context.Context, page string, reqEditors ...RequestEditorFn) (*GetConsolePageResponse, error)
 
@@ -8540,6 +8818,11 @@ type ClientWithResponsesInterface interface {
 
 	// CompleteGoogleSignInWithResponse request
 	CompleteGoogleSignInWithResponse(ctx context.Context, params *CompleteGoogleSignInParams, reqEditors ...RequestEditorFn) (*CompleteGoogleSignInResponse, error)
+
+	// SignInWithPasswordWithBodyWithResponse request with any body
+	SignInWithPasswordWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignInWithPasswordResponse, error)
+
+	SignInWithPasswordWithResponse(ctx context.Context, body SignInWithPasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*SignInWithPasswordResponse, error)
 
 	// SignOutWithResponse request
 	SignOutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SignOutResponse, error)
@@ -8808,10 +9091,15 @@ type ClientWithResponsesInterface interface {
 	ListHostTunnelsWithResponse(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error)
 
 	// ListVolumesWithResponse request
-	ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error)
+	ListVolumesWithResponse(ctx context.Context, params *ListVolumesParams, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error)
 
 	// DeleteVolumeWithResponse request
 	DeleteVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error)
+
+	// SetVolumeLabelsWithBodyWithResponse request with any body
+	SetVolumeLabelsWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetVolumeLabelsResponse, error)
+
+	SetVolumeLabelsWithResponse(ctx context.Context, volumeName VolumeName, body SetVolumeLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetVolumeLabelsResponse, error)
 }
 
 type GetRootResponse struct {
@@ -8896,6 +9184,28 @@ func (r GetConsoleSandboxTabResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetConsoleSandboxTabResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetConsoleVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConsoleVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConsoleVolumeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9008,6 +9318,32 @@ func (r CompleteGoogleSignInResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CompleteGoogleSignInResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type SignInWithPasswordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r SignInWithPasswordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SignInWithPasswordResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11031,6 +11367,7 @@ type ListVolumesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *VolumeList
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
 }
 
@@ -11074,6 +11411,30 @@ func (r DeleteVolumeResponse) StatusCode() int {
 	return 0
 }
 
+type SetVolumeLabelsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r SetVolumeLabelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetVolumeLabelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetRootWithResponse request returning *GetRootResponse
 func (c *ClientWithResponses) GetRootWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRootResponse, error) {
 	rsp, err := c.GetRoot(ctx, reqEditors...)
@@ -11108,6 +11469,15 @@ func (c *ClientWithResponses) GetConsoleSandboxTabWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseGetConsoleSandboxTabResponse(rsp)
+}
+
+// GetConsoleVolumeWithResponse request returning *GetConsoleVolumeResponse
+func (c *ClientWithResponses) GetConsoleVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error) {
+	rsp, err := c.GetConsoleVolume(ctx, volumeName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConsoleVolumeResponse(rsp)
 }
 
 // GetConsolePageWithResponse request returning *GetConsolePageResponse
@@ -11153,6 +11523,23 @@ func (c *ClientWithResponses) CompleteGoogleSignInWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCompleteGoogleSignInResponse(rsp)
+}
+
+// SignInWithPasswordWithBodyWithResponse request with arbitrary body returning *SignInWithPasswordResponse
+func (c *ClientWithResponses) SignInWithPasswordWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignInWithPasswordResponse, error) {
+	rsp, err := c.SignInWithPasswordWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignInWithPasswordResponse(rsp)
+}
+
+func (c *ClientWithResponses) SignInWithPasswordWithResponse(ctx context.Context, body SignInWithPasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*SignInWithPasswordResponse, error) {
+	rsp, err := c.SignInWithPassword(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignInWithPasswordResponse(rsp)
 }
 
 // SignOutWithResponse request returning *SignOutResponse
@@ -11986,8 +12373,8 @@ func (c *ClientWithResponses) ListHostTunnelsWithResponse(ctx context.Context, p
 }
 
 // ListVolumesWithResponse request returning *ListVolumesResponse
-func (c *ClientWithResponses) ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error) {
-	rsp, err := c.ListVolumes(ctx, reqEditors...)
+func (c *ClientWithResponses) ListVolumesWithResponse(ctx context.Context, params *ListVolumesParams, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error) {
+	rsp, err := c.ListVolumes(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -12001,6 +12388,23 @@ func (c *ClientWithResponses) DeleteVolumeWithResponse(ctx context.Context, volu
 		return nil, err
 	}
 	return ParseDeleteVolumeResponse(rsp)
+}
+
+// SetVolumeLabelsWithBodyWithResponse request with arbitrary body returning *SetVolumeLabelsResponse
+func (c *ClientWithResponses) SetVolumeLabelsWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetVolumeLabelsResponse, error) {
+	rsp, err := c.SetVolumeLabelsWithBody(ctx, volumeName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetVolumeLabelsResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetVolumeLabelsWithResponse(ctx context.Context, volumeName VolumeName, body SetVolumeLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetVolumeLabelsResponse, error) {
+	rsp, err := c.SetVolumeLabels(ctx, volumeName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetVolumeLabelsResponse(rsp)
 }
 
 // ParseGetRootResponse parses an HTTP response from a GetRootWithResponse call
@@ -12098,6 +12502,32 @@ func ParseGetConsoleSandboxTabResponse(rsp *http.Response) (*GetConsoleSandboxTa
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConsoleVolumeResponse parses an HTTP response from a GetConsoleVolumeWithResponse call
+func ParseGetConsoleVolumeResponse(rsp *http.Response) (*GetConsoleVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConsoleVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	}
 
@@ -12242,6 +12672,60 @@ func ParseCompleteGoogleSignInResponse(rsp *http.Response) (*CompleteGoogleSignI
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSignInWithPasswordResponse parses an HTTP response from a SignInWithPasswordWithResponse call
+func ParseSignInWithPasswordResponse(rsp *http.Response) (*SignInWithPasswordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SignInWithPasswordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -16334,6 +16818,13 @@ func ParseListVolumesResponse(rsp *http.Response) (*ListVolumesResponse, error) 
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -16386,6 +16877,46 @@ func ParseDeleteVolumeResponse(rsp *http.Response) (*DeleteVolumeResponse, error
 	return response, nil
 }
 
+// ParseSetVolumeLabelsResponse parses an HTTP response from a SetVolumeLabelsWithResponse call
+func ParseSetVolumeLabelsResponse(rsp *http.Response) (*SetVolumeLabelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetVolumeLabelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Go to the console
@@ -16400,6 +16931,9 @@ type ServerInterface interface {
 	// The console, on one tab of one sandbox
 	// (GET /console/sandboxes/{sandboxId}/{tab})
 	GetConsoleSandboxTab(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tab string)
+	// The console, on one volume
+	// (GET /console/volumes/{volumeName})
+	GetConsoleVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
 	// One of the console's pages
 	// (GET /console/{page})
 	GetConsolePage(w http.ResponseWriter, r *http.Request, page string)
@@ -16415,6 +16949,9 @@ type ServerInterface interface {
 	// Where Google sends a browser back
 	// (GET /v1/auth/google/callback)
 	CompleteGoogleSignIn(w http.ResponseWriter, r *http.Request, params CompleteGoogleSignInParams)
+	// Sign in with a password
+	// (POST /v1/auth/password)
+	SignInWithPassword(w http.ResponseWriter, r *http.Request)
 	// Sign out
 	// (POST /v1/auth/signout)
 	SignOut(w http.ResponseWriter, r *http.Request)
@@ -16651,10 +17188,13 @@ type ServerInterface interface {
 	ListHostTunnels(w http.ResponseWriter, r *http.Request, params ListHostTunnelsParams)
 	// Every volume on this host
 	// (GET /v1/volumes)
-	ListVolumes(w http.ResponseWriter, r *http.Request)
+	ListVolumes(w http.ResponseWriter, r *http.Request, params ListVolumesParams)
 	// Let a volume go, and what was written on it
 	// (DELETE /v1/volumes/{volumeName})
 	DeleteVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
+	// Replace this volume's labels
+	// (PUT /v1/volumes/{volumeName}/labels)
+	SetVolumeLabels(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -16757,6 +17297,31 @@ func (siw *ServerInterfaceWrapper) GetConsoleSandboxTab(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetConsoleSandboxTab(w, r, sandboxId, tab)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetConsoleVolume operation middleware
+func (siw *ServerInterfaceWrapper) GetConsoleVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "volumeName" -------------
+	var volumeName VolumeName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeName", r.PathValue("volumeName"), &volumeName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeName", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConsoleVolume(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -16880,6 +17445,20 @@ func (siw *ServerInterfaceWrapper) CompleteGoogleSignIn(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CompleteGoogleSignIn(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SignInWithPassword operation middleware
+func (siw *ServerInterfaceWrapper) SignInWithPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SignInWithPassword(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19933,6 +20512,8 @@ func (siw *ServerInterfaceWrapper) ListHostTunnels(w http.ResponseWriter, r *htt
 // ListVolumes operation middleware
 func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
@@ -19941,8 +20522,19 @@ func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Re
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListVolumesParams
+
+	// ------------- Optional query parameter "label" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "label", r.URL.Query(), &params.Label)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListVolumes(w, r)
+		siw.Handler.ListVolumes(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -19976,6 +20568,39 @@ func (siw *ServerInterfaceWrapper) DeleteVolume(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteVolume(w, r, volumeName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetVolumeLabels operation middleware
+func (siw *ServerInterfaceWrapper) SetVolumeLabels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "volumeName" -------------
+	var volumeName VolumeName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeName", r.PathValue("volumeName"), &volumeName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetVolumeLabels(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20109,11 +20734,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/console", wrapper.GetConsole)
 	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}", wrapper.GetConsoleSandbox)
 	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}/{tab}", wrapper.GetConsoleSandboxTab)
+	m.HandleFunc("GET "+options.BaseURL+"/console/volumes/{volumeName}", wrapper.GetConsoleVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/console/{page}", wrapper.GetConsolePage)
 	m.HandleFunc("GET "+options.BaseURL+"/healthz", wrapper.Health)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth", wrapper.GetAuth)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google", wrapper.BeginGoogleSignIn)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google/callback", wrapper.CompleteGoogleSignIn)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/password", wrapper.SignInWithPassword)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/signout", wrapper.SignOut)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/brokers", wrapper.ListBrokers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.DeleteBroker)
@@ -20194,6 +20821,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/tunnels", wrapper.ListHostTunnels)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/volumes", wrapper.ListVolumes)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/volumes/{volumeName}", wrapper.DeleteVolume)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/volumes/{volumeName}/labels", wrapper.SetVolumeLabels)
 
 	return m
 }

@@ -438,8 +438,9 @@ tags:
   - name: Auth
     description: |
       Who is calling. A program calls with a key; a person signs in to the
-      console with Google and is given a session, which is a cookie the
-      browser sends and nothing else can.
+      console — with Google, or with a password from the daemon's htpasswd
+      file — and is given a session, which is a cookie the browser sends and
+      nothing else can.
 
       **Who may sign in, and what they may do, is this daemon's
       configuration and not something the API changes.** Its administrators
@@ -610,6 +611,28 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /console/volumes/{volumeName}:
+    parameters:
+      - $ref: "#/components/parameters/VolumeName"
+    get:
+      operationId: getConsoleVolume
+      tags: [Meta]
+      security: []
+      summary: The console, on one volume
+      description: >-
+        The console, as `GET /console` answers it, showing one volume. Whether
+        that volume exists is not checked here, for the reason
+        `GET /console/sandboxes/{sandboxId}` does not check its sandbox: the
+        page asks, with the key the person gave it.
+      responses:
+        "200":
+          description: The console.
+          content:
+            text/html:
+              schema: { type: string, format: binary }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /console/sandboxes/{sandboxId}/{tab}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -618,7 +641,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [brokers, usage, history, processes, ports, network, tunnels, output, terminal]
+          enum: [brokers, usage, history, processes, ports, network, tunnels, files, output, terminal]
     get:
       operationId: getConsoleSandboxTab
       tags: [Meta]
@@ -1152,7 +1175,20 @@ paths:
         A key that acts only on its `own` sandboxes is listed the volumes it
         made, and told which sandbox holds one only when that sandbox is its
         own too.
+      parameters:
+        - name: label
+          in: query
+          description: >-
+            Only volumes carrying this label, written `key=value`. Repeat to
+            require several; they are ANDed, as the sandboxes' filter is.
+          schema:
+            type: array
+            items: { type: string }
+          explode: true
+          example: ["runyard.harness=ryclaude"]
       responses:
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "200":
           description: The volumes.
           content:
@@ -1195,6 +1231,41 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/volumes/{volumeName}/labels:
+    parameters:
+      - $ref: "#/components/parameters/VolumeName"
+    put:
+      operationId: setVolumeLabels
+      tags: [Volumes]
+      summary: Replace this volume's labels
+      description: >-
+        The set, not a delta, as a sandbox's are. `spec.disk.labels` is what
+        it was first made with; this is what is true now, and what `?label=`
+        matches. Set whether or not a sandbox holds it.
+
+
+        A key that acts only on its `own` sandboxes sets the labels of a
+        volume it made; any other is answered as a name no volume has.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [labels]
+              properties:
+                labels:
+                  type: object
+                  additionalProperties: { type: string }
+      responses:
+        "204":
+          description: Set.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes:
@@ -2644,7 +2715,7 @@ paths:
       description: |
         For the callers that cannot sign in — a `curl`, a CI job, an SDK
         against an API the sandbox serves. Presented to the gateway as
-        `Authorization: Bearer ryt_<id>_<secret>`, it opens this tunnel and no
+        `Authorization: Bearer tgt_<id>_<secret>`, it opens this tunnel and no
         other, and is taken off the request before it reaches the sandbox.
 
         **The answer is the only time the token exists outside the caller.**
@@ -3562,7 +3633,7 @@ paths:
       summary: How a person may sign in here
       description: >-
         Unauthenticated, because it is what the console reads before anybody
-        has signed in, to know whether to offer Google.
+        has signed in, to know what to offer.
       responses:
         "200":
           description: The ways to sign in.
@@ -3644,6 +3715,63 @@ paths:
               schema: { type: string }
         "404":
           description: This daemon has no Google sign-in configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/auth/password:
+    post:
+      operationId: signInWithPassword
+      tags: [Auth]
+      security: []
+      summary: Sign in with a password
+      description: |
+        Sign-in for a daemon with no Google to ask — one on a machine of its
+        own, say: an address and its password, checked against the htpasswd
+        file the daemon is configured with, read at each sign-in so that a
+        password changed there is the one asked for next. A person whose
+        password it is and whom this daemon lets in is given a session, the
+        same as one signed in with Google.
+
+        Made by the console's own page and nothing else: a page elsewhere
+        that posted here would sign the browser in as whoever's password it
+        knows, and the person at it would go on to work as them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordSignIn" }
+      responses:
+        "204":
+          description: Signed in, with the session cookie set.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: >-
+            Not that address's password, or an address the file does not
+            hold: one answer for both, so that it does not say who has a
+            password here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: >-
+            The password is right, and this daemon does not let that address
+            in — or the request is not the console's own page's.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: This daemon has no password sign-in configured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >-
+            The password file could not be read, or the database is not
+            answering. The message says which.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -3788,7 +3916,7 @@ components:
       name: tokenId
       in: path
       required: true
-      description: A token's id, the part of it between `ryt_` and the secret.
+      description: A token's id, the part of it between `tgt_` and the secret.
       schema:
         type: string
         pattern: "^[a-z0-9]{8}$"
@@ -4315,6 +4443,23 @@ components:
             - { name: github }
             - name: billing
               upstream: { url: "https://billing.example.com/" }
+        abandonAfterSeconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+          description: |
+            Deletes the sandbox once no caller has served it a broker for this
+            many seconds, as a `DELETE` with no `disk` would: its disk goes
+            only if `disk.persist` is `false`. Absent never does.
+
+            For a sandbox whose life is a program's: the program holds a
+            client broker open for as long as it uses the sandbox, and a
+            program that is killed, or loses its network, leaves nothing
+            behind. The time runs from when the sandbox is up — never while
+            it is being made or booted — and starts again whenever the last
+            caller lets go; a daemon that restarts starts it again too, since
+            what callers it had are gone with it.
+          example: 300
         labels:
           type: object
           additionalProperties: { type: string }
@@ -4339,7 +4484,7 @@ components:
 
     Volume:
       type: object
-      required: [name, digest, bytes, allocatedBytes, createdAt]
+      required: [name, digest, bytes, allocatedBytes, labels, createdAt, lastUsedAt]
       properties:
         name: { $ref: "#/components/schemas/VolumeName" }
         digest:
@@ -4368,7 +4513,21 @@ components:
             Absent on a volume made before this was recorded. When it is a
             key that acts only on its `own` sandboxes (`KeyReach`), only that
             key attaches the volume.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            The caller's own, stored and echoed and never interpreted, as a
+            sandbox's are: first `spec.disk.labels`, then whatever
+            `PUT .../labels` set. Empty when it has none.
         createdAt: { type: string, format: date-time }
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: >-
+            When a sandbox last took it or let it go: when it was last in use,
+            which is what a list of them is sorted by to find the latest. Its
+            `createdAt` until then.
 
     Creator:
       type: object
@@ -4460,6 +4619,15 @@ components:
             different digest fails, with the reason, rather than booting that
             machine. Pin the image by digest, or delete the volume, to move
             to a new one.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            The volume's labels, written when it is first made and never by a
+            later sandbox that names it: they are the volume's, and outlive
+            this sandbox with it. `PUT /v1/volumes/{volumeName}/labels`
+            changes them.
+          example: { runyard.harness: ryclaude }
         size:
           type: string
           description: >-
@@ -5803,6 +5971,14 @@ components:
                   Reported and never followed. A sandbox can point one at
                   anything, and a lister that followed them would walk out of
                   wherever it was asked to look.
+              target:
+                type: string
+                description: >-
+                  What a symlink says it points at, as it says it: relative to
+                  its own directory unless it begins with `/`, and not looked
+                  at — it may name nothing at all. Absent for anything that is
+                  not a symlink, and from a guest older than this field.
+                example: ../lib/os-release
 
     Page:
       type: object
@@ -6258,8 +6434,15 @@ components:
         url:
           type: string
           description: >-
-            Where a visitor goes. Known once the relay has docked at a gateway
-            and learnt the domain it serves; absent before.
+            Where a visitor goes, **as the gateway says it is**.
+            
+            Reported and never computed here: the gateway builds every hostname
+            from a domain it holds and the namespace on this host's key, so
+            working one out on this side would be a second implementation of
+            that rule — and the day the two disagreed it would be an address
+            that answers nobody. Absent until the relay has docked and the
+            gateway has taken its announcement, which is the honest answer:
+            there is no address yet.
           example: https://preview-k3v9qa--lon1.tunnels.example.com/
         tokens:
           type: array
@@ -6327,9 +6510,9 @@ components:
             token:
               type: string
               description: >-
-                The whole token, `ryt_<id>_<secret>`. **This is the only time it
+                The whole token, `tgt_<id>_<secret>`. **This is the only time it
                 exists outside the caller.**
-              example: ryt_t4kq9z2m_Xb8n2LqP0sVt6yWc3dRf7gHj
+              example: tgt_t4kq9z2m_Xb8n2LqP0sVt6yWc3dRf7gHj
 
     TunnelRequest:
       type: object
@@ -6398,8 +6581,20 @@ components:
           type: boolean
           description: Whether it holds its line to a gateway. Without one no tunnel is reachable.
         gateway: { type: string, example: https://gateway.example.com }
-        domain: { type: string, example: tunnels.example.com }
-        namespace: { type: string, example: lon1 }
+        agent:
+          type: string
+          description: What the gateway's key calls this relay.
+          example: lon1
+        domain:
+          type: string
+          description: >-
+            The domain the gateway serves this host's tunnels under. One: a
+            gateway serves one domain, and a second one is a second gateway.
+          example: tunnels.example.com
+        namespace:
+          type: string
+          description: This host's part of that domain.
+          example: lon1
         message:
           type: string
           description: Why it is not reachable or not docked, when it is not.
@@ -6489,13 +6684,25 @@ components:
     AuthMethods:
       type: object
       description: How a person may sign in to this daemon's console.
-      required: [google]
+      required: [google, password]
       properties:
         google:
           type: boolean
+          description: Whether `GET /v1/auth/google` signs somebody in here.
+        password:
+          type: boolean
           description: >-
-            Whether `GET /v1/auth/google` signs somebody in here. Without it,
-            nobody can sign in to the console.
+            Whether `POST /v1/auth/password` signs somebody in here. Without
+            it or Google, nobody can sign in to the console.
+
+    PasswordSignIn:
+      type: object
+      description: An address, and the password the daemon's htpasswd file holds for it.
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { type: string, minLength: 1, maxLength: 320, example: ada@example.com }
+        password: { type: string, minLength: 1, maxLength: 1024 }
 
     SignInError:
       type: string

@@ -790,6 +790,30 @@ func TestVolumesAreListedAndLetGo(t *testing.T) {
 	}
 }
 
+// Volumes are listed by label, and their labels set.
+func TestVolumesAreFoundAndLabelledByLabel(t *testing.T) {
+	d, client := fake(t)
+	d.PutVolumeWith("chat", 1, map[string]string{"runyard.harness": "ryclaude"}, nil, time.Time{})
+	d.PutVolumeWith("other", 1, nil, nil, time.Time{})
+	volumes, err := client.Volumes(context.Background(), "runyard.harness=ryclaude")
+	if err != nil || len(volumes) != 1 || volumes[0].Name != "chat" {
+		t.Fatalf("Volumes = %+v, %v", volumes, err)
+	}
+	if err := client.SetVolumeLabels(context.Background(), "chat", map[string]string{"runyard.title": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if labels, _ := d.VolumeLabels("chat"); labels["runyard.title"] != "x" || len(labels) != 1 {
+		t.Errorf("labels %v", labels)
+	}
+	if err := client.SetVolumeLabels(context.Background(), "never-was", nil); CodeOf(err) != "not_found" {
+		t.Errorf("labelling a volume that is not there = %v", err)
+	}
+	d.Intercept("setVolumeLabels", fakedaemon.HangUp())
+	if err := client.SetVolumeLabels(context.Background(), "chat", nil); err == nil {
+		t.Error("a hang-up was a success")
+	}
+}
+
 func TestConsoleIsWhatTheGuestWrote(t *testing.T) {
 	_, client := fake(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
 		return fakedaemon.Outcome{Console: "[    0.000000] Linux version 6.12\n"}
@@ -1269,7 +1293,7 @@ func TestATunnelIsPublishedPausedTokenedAndTakenAwayByItsName(t *testing.T) {
 		t.Fatalf("ResumeTunnel = %+v, %v", resumed, err)
 	}
 	token, err := sandbox.MintTunnelToken(ctx, "web", "ci")
-	if err != nil || !strings.HasPrefix(token.Token, "ryt_"+token.Id+"_") {
+	if err != nil || !strings.HasPrefix(token.Token, "tgt_"+token.Id+"_") {
 		t.Fatalf("MintTunnelToken = %+v, %v", token, err)
 	}
 	revoked, err := sandbox.RevokeTunnelToken(ctx, "web", token.Id, "done")

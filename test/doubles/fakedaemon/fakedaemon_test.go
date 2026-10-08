@@ -107,7 +107,7 @@ func TestTheFakeDoesWhatTheDaemonDoes(t *testing.T) {
 	if got, _ := client.ReadFileWithResponse(ctx, id, &genv1.ReadFileParams{Path: "/work/none"}); got.JSON404 == nil {
 		t.Fatalf("a missing file = %d", got.StatusCode())
 	}
-	if got, _ := client.ListVolumesWithResponse(ctx); got.JSON200 == nil || got.JSON200.Items[0].SandboxId == nil || *got.JSON200.Items[0].SandboxId != id {
+	if got, _ := client.ListVolumesWithResponse(ctx, nil); got.JSON200 == nil || got.JSON200.Items[0].SandboxId == nil || *got.JSON200.Items[0].SandboxId != id {
 		t.Fatalf("the volume does not say who holds it: %s", got.Body)
 	}
 	if got, _ := client.DeleteVolumeWithResponse(ctx, volume); got.JSON409 == nil {
@@ -144,10 +144,60 @@ func TestTheFakeDoesWhatTheDaemonDoes(t *testing.T) {
 }
 
 // A volume a test puts there is listed with its size and held by nobody.
+// A volume keeps the labels it was made with, which `?label=` filters on and
+// PUT replaces; it says who made it, and when it was last taken or let go.
+func TestTheFakeKeepsAVolumesLabels(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	clock := now
+	d := New(t, WithKey("k"), WithClock(func() time.Time { return clock }))
+	client := typed(t, d, "k")
+	ctx := context.Background()
+	labels := map[string]string{"runyard.harness": "ryclaude"}
+	spec := genv1.SandboxSpec{Image: "alpine", Disk: &genv1.DiskSpec{Volume: new("chat"), Labels: &labels}}
+	created, err := client.CreateSandboxWithResponse(ctx, &genv1.CreateSandboxParams{IdempotencyKey: "k1"}, spec)
+	if err != nil || created.JSON202 == nil {
+		t.Fatalf("create = %v %s", err, created.Body)
+	}
+	d.PutVolumeWith("other", 1, map[string]string{"runyard.harness": "rycodex"}, nil, now.Add(-time.Hour))
+
+	got, _ := client.ListVolumesWithResponse(ctx, &genv1.ListVolumesParams{Label: &[]string{"runyard.harness=ryclaude"}})
+	if got.JSON200 == nil || len(got.JSON200.Items) != 1 {
+		t.Fatalf("filtered = %s", got.Body)
+	}
+	chat := got.JSON200.Items[0]
+	if chat.Name != "chat" || chat.Labels["runyard.harness"] != "ryclaude" || chat.CreatedBy == nil || *chat.CreatedBy.KeyId != "koperator" || !chat.LastUsedAt.Equal(now) {
+		t.Errorf("chat = %+v", chat)
+	}
+	if got, _ := client.ListVolumesWithResponse(ctx, &genv1.ListVolumesParams{Label: &[]string{"nokey"}}); got.StatusCode() != 400 {
+		t.Errorf("a filter that is not key=value = %d", got.StatusCode())
+	}
+
+	clock = now.Add(time.Minute)
+	if got, _ := client.DeleteSandboxWithResponse(ctx, created.JSON202.Id, nil); got.StatusCode() != 204 {
+		t.Fatalf("delete = %d", got.StatusCode())
+	}
+	if got, _ := client.SetVolumeLabelsWithResponse(ctx, "chat", genv1.SetVolumeLabelsJSONRequestBody{Labels: map[string]string{"runyard.title": "x"}}); got.StatusCode() != 204 {
+		t.Fatalf("set = %d %s", got.StatusCode(), got.Body)
+	}
+	if got, ok := d.VolumeLabels("chat"); !ok || len(got) != 1 || got["runyard.title"] != "x" {
+		t.Errorf("labels %v", got)
+	}
+	all, _ := client.ListVolumesWithResponse(ctx, nil)
+	if len(all.JSON200.Items) != 2 || !all.JSON200.Items[0].LastUsedAt.Equal(clock) || all.JSON200.Items[1].CreatedBy != nil {
+		t.Errorf("all = %+v", all.JSON200.Items)
+	}
+	if got, _ := client.SetVolumeLabelsWithResponse(ctx, "never-was", genv1.SetVolumeLabelsJSONRequestBody{Labels: map[string]string{}}); got.StatusCode() != 404 {
+		t.Errorf("a volume that is not there = %d", got.StatusCode())
+	}
+	if _, ok := d.VolumeLabels("never-was"); ok {
+		t.Error("labels of a volume that is not there")
+	}
+}
+
 func TestPutVolumeIsAVolumeNobodyHolds(t *testing.T) {
 	d := New(t)
 	d.PutVolume("seeded", 4096)
-	got, err := typed(t, d, "").ListVolumesWithResponse(context.Background())
+	got, err := typed(t, d, "").ListVolumesWithResponse(context.Background(), nil)
 	if err != nil || got.JSON200 == nil || len(got.JSON200.Items) != 1 {
 		t.Fatalf("volumes = %v %s", err, got.Body)
 	}

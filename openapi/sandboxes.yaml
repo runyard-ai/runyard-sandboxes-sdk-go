@@ -294,6 +294,11 @@ tags:
     description: >-
       OCI references turned into the rootfs a VM boots, and the cache of them.
       Content-addressed, so pulling twice costs one pull.
+  - name: Builds
+    description: >-
+      Images made on this host from a recipe: a Dockerfile whose every RUN step
+      says what it may reach. Each step runs in a machine, its changes are a
+      layer, and the image is pushed to this host's registry and cached.
   - name: Sandboxes
     description: >-
       The machines: making them, seeing them, stopping them, dropping them. One
@@ -539,7 +544,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [usage, sandboxes, tunnels, volumes, images, brokers, keys, authorize]
+          enum: [usage, sandboxes, tunnels, volumes, images, builds, brokers, keys, authorize]
     get:
       operationId: getConsolePage
       tags: [Meta]
@@ -632,6 +637,27 @@ paths:
               schema: { type: string, format: binary }
         "400":
           $ref: "#/components/responses/BadRequest"
+
+  /console/builds/{buildId}:
+    parameters:
+      - $ref: "#/components/parameters/BuildID"
+    get:
+      operationId: getConsoleBuild
+      tags: [Meta]
+      security: []
+      summary: The console, on one build
+      description: >-
+        The console, as `GET /console` answers it, showing one build: its
+        steps and its log, followed while it runs. Whether that build exists
+        is not checked here, for the reason `GET /console/sandboxes/{sandboxId}`
+        does not check its sandbox: the page asks, with the key the person
+        gave it.
+      responses:
+        "200":
+          description: The console.
+          content:
+            text/html:
+              schema: { type: string, format: binary }
 
   /console/sandboxes/{sandboxId}/{tab}:
     parameters:
@@ -1159,6 +1185,155 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/builds:
+    get:
+      operationId: listBuilds
+      tags: [Builds]
+      summary: Every build on this host, the oldest first
+      description: >-
+        A key held to its own sandboxes sees the builds it started, and no
+        other.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: The builds.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuildPage" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createBuild
+      tags: [Builds]
+      summary: Build an image from a recipe
+      description: |
+        **A recipe is a Dockerfile of one stage, and every step says what it
+        may reach.** `FROM` once and first, then `RUN`, `COPY` from a heredoc,
+        `ENV`, `ARG`, `WORKDIR`, `USER`, `LABEL`, `ENTRYPOINT` and `CMD`.
+        Anything else — `ADD`, a second `FROM`, `COPY` from a build context
+        there is none of — is a `422` naming its line.
+
+        A `RUN` reaches nothing unless it says so:
+
+        - `--allow=deb.debian.org,security.debian.org` lets it resolve and
+          connect to those names, on ports 80 and 443, as an egress rule of a
+          sandbox would. `*.example.com` is every name under it.
+        - `--broker=github` gives it that shared broker, at
+          `$RUNYARD_BROKER_GITHUB_URL`, as a sandbox's broker is given.
+
+        Both are for that step alone: taken away when it ends.
+
+        **A build is a sandbox the caller starts.** Its steps run in a machine
+        made from the `FROM` image, created as the caller, so what a caller may
+        not do in a sandbox — a broker it may not attach, a key held to its own
+        — it may not do in a build either. It is `sandboxId` while it runs, and
+        removed, disk and all, when the build ends.
+
+        **What each step changed is a layer**, pushed with the `FROM` image's
+        layers to this host's registry as `repository`, tagged with the build's
+        id, and then cached as any pulled image is — `imageId` once it is
+        `succeeded`. The recipe is in the image, as its label
+        `ai.runyard.recipe`, and is its `recipe` in `GET /v1/images`.
+
+        **Asynchronous.** It answers `202` with the build `queued`; the caller
+        watches `GET /v1/builds/{buildId}` and reads its log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BuildRequest" }
+      responses:
+        "202":
+          description: Accepted. The build is `queued`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Build" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: >-
+            This host builds nothing: it has no registry to push to
+            (`builds_unconfigured`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: >-
+            The recipe is not one this host builds (`recipe_invalid`); the
+            message names the line.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: This daemon is going down, and starts no build.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/builds/{buildId}:
+    parameters:
+      - $ref: "#/components/parameters/BuildID"
+    get:
+      operationId: getBuild
+      tags: [Builds]
+      summary: Where a build is, step by step
+      responses:
+        "200":
+          description: The build.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Build" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteBuild
+      tags: [Builds]
+      summary: Stop a build, or forget one that ended
+      description: >-
+        A build that runs is cancelled: its machine is removed, and nothing is
+        pushed. One that ended is forgotten with its log; the image it made
+        stays. Idempotent: one already gone is a `204` too.
+      responses:
+        "204":
+          description: Gone, or was already.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/builds/{buildId}/log:
+    parameters:
+      - $ref: "#/components/parameters/BuildID"
+    get:
+      operationId: readBuildLog
+      tags: [Builds]
+      summary: What the build printed, from a byte offset
+      description: >-
+        Each step begins with a line naming it, followed by what it printed,
+        stdout and stderr as they came. `?from=` is a byte offset, so a reader
+        that dropped resumes where it stopped; `?follow=true` holds the body
+        open until the build ends.
+      parameters:
+        - $ref: "#/components/parameters/FromBytesQuery"
+        - $ref: "#/components/parameters/FollowQuery"
+      responses:
+        "200":
+          description: The bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/volumes:
@@ -3889,6 +4064,13 @@ components:
         the reference. Two tags pointing at the same content are one id.
       schema: { type: string }
       example: img_9f2a1c4e7b30
+    BuildID:
+      name: buildId
+      in: path
+      required: true
+      description: As returned by `POST /v1/builds`.
+      schema: { type: string }
+      example: bld_4c1e9a7f2b06
     RuleName:
       name: ruleName
       in: path
@@ -4339,8 +4521,122 @@ components:
             config. Reported because it is what a sandbox will run unless
             `spec.entrypoint` says otherwise, and reading it from here beats
             discovering it from a machine that did something unexpected.
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: >-
+            When a sandbox was last made or booted from it, or it was last
+            pulled. A host with an image budget drops the least recently used
+            of the images no sandbox runs from when it is over it; such an
+            image is pulled again when it is next wanted.
+        recipe:
+          type: string
+          description: >-
+            The recipe this image was built from, as its label
+            `ai.runyard.recipe` says — whoever built it, here or elsewhere.
+            Absent for an image that carries none.
         createdAt: { type: string, format: date-time }
         readyAt: { type: string, format: date-time }
+
+    BuildRequest:
+      type: object
+      required: [recipe, repository]
+      properties:
+        recipe:
+          type: string
+          maxLength: 65536
+          description: The Dockerfile, with what each `RUN` may reach.
+          example: |
+            FROM debian:bookworm-slim
+            RUN --allow=deb.debian.org,security.debian.org apt-get update && apt-get install -y git
+        repository:
+          type: string
+          maxLength: 128
+          pattern: "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$"
+          description: >-
+            Where in this host's registry the image is pushed, tagged with the
+            build's id.
+          example: coder
+        args:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Values for the recipe's `ARG`s, by name. One the recipe does not
+            declare is a `422`.
+
+    Build:
+      type: object
+      required: [id, repository, recipe, state, steps, createdAt]
+      properties:
+        id: { type: string, example: bld_4c1e9a7f2b06 }
+        repository: { type: string, example: coder }
+        recipe: { type: string }
+        args:
+          type: object
+          additionalProperties: { type: string }
+        state: { $ref: "#/components/schemas/BuildState" }
+        error:
+          type: string
+          description: Why it is `failed`, for a person. Present only then.
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/BuildStep" }
+        sandboxId:
+          type: string
+          description: The machine its steps run in, while it runs.
+        image:
+          type: string
+          description: >-
+            What it pushed, pinned to its digest. Present once `succeeded`.
+          example: 127.0.0.1:5000/runyard/coder@sha256:2d1f…
+        imageId:
+          type: string
+          description: The cached image a sandbox boots, once `succeeded`.
+          example: img_9f2a1c4e7b30
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+
+    BuildState:
+      type: string
+      description: |
+        | state | what it means |
+        |---|---|
+        | `queued` | accepted, not started |
+        | `running` | pulling its `FROM`, running its steps, or pushing |
+        | `succeeded` | pushed and cached: `image` and `imageId` say what |
+        | `failed` | it will not succeed; `error` says why |
+        | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+      enum: [queued, running, succeeded, failed, cancelled]
+
+    BuildStep:
+      type: object
+      required: [index, line, instruction, state]
+      properties:
+        index:
+          type: integer
+          description: Its place among the steps, from 1.
+        line:
+          type: integer
+          description: The recipe's line it begins on, from 1.
+        instruction:
+          type: string
+          description: As written, its continuation lines joined.
+          example: RUN --allow=deb.debian.org apt-get update
+        state:
+          type: string
+          enum: [pending, running, done, failed]
+        layer:
+          type: string
+          description: >-
+            The digest of the layer it made. Absent for a step that changes
+            only the image's configuration, or no file.
+        size:
+          type: integer
+          format: int64
+          description: That layer's size, compressed, in bytes.
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
 
     ImageState:
       type: string
@@ -5997,6 +6293,16 @@ components:
               type: array
               items: { $ref: "#/components/schemas/Image" }
 
+    BuildPage:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Build" }
+
     SandboxPage:
       allOf:
         - $ref: "#/components/schemas/Page"
@@ -6041,7 +6347,7 @@ components:
         | `sandboxes.read` | see sandboxes, their state, their network and their metrics |
         | `sandboxes.write` | make, stop, start and delete sandboxes |
         | `images.read` | see the image cache |
-        | `images.write` | pull and delete images |
+        | `images.write` | pull and delete images, and build them |
         | `network.write` | change a running sandbox's egress policy and its brokers |
         | `brokers.admin` | declare, replace and withdraw the host's shared brokers |
         | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
@@ -6782,6 +7088,8 @@ components:
         - spec_conflict
         - image_unknown
         - image_in_use
+        - recipe_invalid
+        - builds_unconfigured
         - volume_in_use
         - broker_in_use
         - unsupported_spec

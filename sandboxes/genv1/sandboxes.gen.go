@@ -34,6 +34,23 @@ const (
 	BrokerKindShared BrokerKind = "shared"
 )
 
+// Defines values for BuildState.
+const (
+	BuildStateCancelled BuildState = "cancelled"
+	BuildStateFailed    BuildState = "failed"
+	BuildStateQueued    BuildState = "queued"
+	BuildStateRunning   BuildState = "running"
+	BuildStateSucceeded BuildState = "succeeded"
+)
+
+// Defines values for BuildStepState.
+const (
+	BuildStepStateDone    BuildStepState = "done"
+	BuildStepStateFailed  BuildStepState = "failed"
+	BuildStepStatePending BuildStepState = "pending"
+	BuildStepStateRunning BuildStepState = "running"
+)
+
 // Defines values for EgressRefusalKind.
 const (
 	Connect EgressRefusalKind = "connect"
@@ -44,6 +61,7 @@ const (
 const (
 	ErrorCodeBadRequest         ErrorCode = "bad_request"
 	ErrorCodeBrokerInUse        ErrorCode = "broker_in_use"
+	ErrorCodeBuildsUnconfigured ErrorCode = "builds_unconfigured"
 	ErrorCodeCapacityExceeded   ErrorCode = "capacity_exceeded"
 	ErrorCodeConflict           ErrorCode = "conflict"
 	ErrorCodeForbidden          ErrorCode = "forbidden"
@@ -54,6 +72,7 @@ const (
 	ErrorCodeNotFound           ErrorCode = "not_found"
 	ErrorCodeNotImplemented     ErrorCode = "not_implemented"
 	ErrorCodeQuotaExceeded      ErrorCode = "quota_exceeded"
+	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
 	ErrorCodeSandboxUnreachable ErrorCode = "sandbox_unreachable"
 	ErrorCodeSpecConflict       ErrorCode = "spec_conflict"
@@ -251,6 +270,93 @@ type BrokerUpstream struct {
 	// Url `https`, always. The identity this plane exists to present is a TLS client certificate, and plain http has nowhere to attach one. Only the host and port are used: the sandbox's request carries its own path.
 	Url string `json:"url"`
 }
+
+// Build defines model for Build.
+type Build struct {
+	Args      *map[string]string `json:"args,omitempty"`
+	CreatedAt time.Time          `json:"createdAt"`
+
+	// Error Why it is `failed`, for a person. Present only then.
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Id         string     `json:"id"`
+
+	// Image What it pushed, pinned to its digest. Present once `succeeded`.
+	Image *string `json:"image,omitempty"`
+
+	// ImageId The cached image a sandbox boots, once `succeeded`.
+	ImageId    *string `json:"imageId,omitempty"`
+	Recipe     string  `json:"recipe"`
+	Repository string  `json:"repository"`
+
+	// SandboxId The machine its steps run in, while it runs.
+	SandboxId *string    `json:"sandboxId,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `queued` | accepted, not started |
+	// | `running` | pulling its `FROM`, running its steps, or pushing |
+	// | `succeeded` | pushed and cached: `image` and `imageId` say what |
+	// | `failed` | it will not succeed; `error` says why |
+	// | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+	State BuildState  `json:"state"`
+	Steps []BuildStep `json:"steps"`
+}
+
+// BuildPage defines model for BuildPage.
+type BuildPage struct {
+	Items []Build `json:"items"`
+
+	// NextCursor Pass as `cursor` to continue. Absent means the end.
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// BuildRequest defines model for BuildRequest.
+type BuildRequest struct {
+	// Args Values for the recipe's `ARG`s, by name. One the recipe does not declare is a `422`.
+	Args *map[string]string `json:"args,omitempty"`
+
+	// Recipe The Dockerfile, with what each `RUN` may reach.
+	Recipe string `json:"recipe"`
+
+	// Repository Where in this host's registry the image is pushed, tagged with the build's id.
+	Repository string `json:"repository"`
+}
+
+// BuildState | state | what it means |
+// |---|---|
+// | `queued` | accepted, not started |
+// | `running` | pulling its `FROM`, running its steps, or pushing |
+// | `succeeded` | pushed and cached: `image` and `imageId` say what |
+// | `failed` | it will not succeed; `error` says why |
+// | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+type BuildState string
+
+// BuildStep defines model for BuildStep.
+type BuildStep struct {
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// Index Its place among the steps, from 1.
+	Index int `json:"index"`
+
+	// Instruction As written, its continuation lines joined.
+	Instruction string `json:"instruction"`
+
+	// Layer The digest of the layer it made. Absent for a step that changes only the image's configuration, or no file.
+	Layer *string `json:"layer,omitempty"`
+
+	// Line The recipe's line it begins on, from 1.
+	Line int `json:"line"`
+
+	// Size That layer's size, compressed, in bytes.
+	Size      *int64         `json:"size,omitempty"`
+	StartedAt *time.Time     `json:"startedAt,omitempty"`
+	State     BuildStepState `json:"state"`
+}
+
+// BuildStepState defines model for BuildStep.State.
+type BuildStepState string
 
 // CommandRequest defines model for CommandRequest.
 type CommandRequest struct {
@@ -907,9 +1013,15 @@ type Image struct {
 	Entrypoint *[]string `json:"entrypoint,omitempty"`
 
 	// Error Why it is `failed`, for a person. Present only then. A failed image is kept rather than swept, because one that vanishes is a pull nobody can diagnose.
-	Error   *string    `json:"error,omitempty"`
-	Id      string     `json:"id"`
-	ReadyAt *time.Time `json:"readyAt,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Id    string  `json:"id"`
+
+	// LastUsedAt When a sandbox was last made or booted from it, or it was last pulled. A host with an image budget drops the least recently used of the images no sandbox runs from when it is over it; such an image is pulled again when it is next wanted.
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	ReadyAt    *time.Time `json:"readyAt,omitempty"`
+
+	// Recipe The recipe this image was built from, as its label `ai.runyard.recipe` says — whoever built it, here or elsewhere. Absent for an image that carries none.
+	Recipe *string `json:"recipe,omitempty"`
 
 	// Ref The reference this was pulled from, as asked for.
 	Ref string `json:"ref"`
@@ -1956,7 +2068,7 @@ type SandboxUsagePoint struct {
 // | `sandboxes.read` | see sandboxes, their state, their network and their metrics |
 // | `sandboxes.write` | make, stop, start and delete sandboxes |
 // | `images.read` | see the image cache |
-// | `images.write` | pull and delete images |
+// | `images.write` | pull and delete images, and build them |
 // | `network.write` | change a running sandbox's egress policy and its brokers |
 // | `brokers.admin` | declare, replace and withdraw the host's shared brokers |
 // | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
@@ -2291,6 +2403,9 @@ type VolumeList struct {
 // VolumeName Lower case letters, digits, `.`, `_` and `-`, starting with a letter or a digit. It is a file name on the host, which is why it is this narrow.
 type VolumeName = string
 
+// BuildID defines model for BuildID.
+type BuildID = string
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -2390,6 +2505,24 @@ type CompleteGoogleSignInParams struct {
 
 	// Error Google's, when the person did not sign in.
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// ListBuildsParams defines parameters for ListBuilds.
+type ListBuildsParams struct {
+	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor From a previous page's `nextCursor`. Opaque: it encodes a position and a snapshot, and a caller that constructs one gets a `400`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ReadBuildLogParams defines parameters for ReadBuildLog.
+type ReadBuildLogParams struct {
+	// From Start at this byte offset.
+	From *FromBytesQuery `form:"from,omitempty" json:"from,omitempty"`
+
+	// Follow Hold the body open and keep sending as more arrives, until the thing being read ends.
+	Follow *FollowQuery `form:"follow,omitempty" json:"follow,omitempty"`
 }
 
 // GetHostMetricsHistoryParams defines parameters for GetHostMetricsHistory.
@@ -2624,6 +2757,9 @@ type SignInWithPasswordJSONRequestBody = PasswordSignIn
 // PutBrokerJSONRequestBody defines body for PutBroker for application/json ContentType.
 type PutBrokerJSONRequestBody = BrokerUpstream
 
+// CreateBuildJSONRequestBody defines body for CreateBuild for application/json ContentType.
+type CreateBuildJSONRequestBody = BuildRequest
+
 // PullImageJSONRequestBody defines body for PullImage for application/json ContentType.
 type PullImageJSONRequestBody = ImageRequest
 
@@ -2813,6 +2949,9 @@ type ClientInterface interface {
 	// GetConsole request
 	GetConsole(ctx context.Context, params *GetConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConsoleBuild request
+	GetConsoleBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConsoleSandbox request
 	GetConsoleSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2858,6 +2997,23 @@ type ClientInterface interface {
 	PutBrokerWithBody(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	PutBroker(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBuilds request
+	ListBuilds(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBuildWithBody request with any body
+	CreateBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateBuild(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteBuild request
+	DeleteBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBuild request
+	GetBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadBuildLog request
+	ReadBuildLog(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCA request
 	GetCA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3144,6 +3300,18 @@ func (c *Client) GetConsole(ctx context.Context, params *GetConsoleParams, reqEd
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetConsoleBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleBuildRequest(c.Server, buildId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetConsoleSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConsoleSandboxRequest(c.Server, sandboxId)
 	if err != nil {
@@ -3326,6 +3494,78 @@ func (c *Client) PutBrokerWithBody(ctx context.Context, brokerName BrokerName, c
 
 func (c *Client) PutBroker(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutBrokerRequest(c.Server, brokerName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListBuilds(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBuildsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBuildRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBuild(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBuildRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteBuildRequest(c.Server, buildId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBuildRequest(c.Server, buildId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadBuildLog(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadBuildLogRequest(c.Server, buildId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4516,6 +4756,40 @@ func NewGetConsoleRequest(server string, params *GetConsoleParams) (*http.Reques
 	return req, nil
 }
 
+// NewGetConsoleBuildRequest generates requests for GetConsoleBuild
+func NewGetConsoleBuildRequest(server string, buildId BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/console/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConsoleSandboxRequest generates requests for GetConsoleSandbox
 func NewGetConsoleSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
@@ -5048,6 +5322,251 @@ func NewPutBrokerRequestWithBody(server string, brokerName BrokerName, contentTy
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListBuildsRequest generates requests for ListBuilds
+func NewListBuildsRequest(server string, params *ListBuildsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBuildRequest calls the generic CreateBuild builder with application/json body
+func NewCreateBuildRequest(server string, body CreateBuildJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateBuildRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateBuildRequestWithBody generates requests for CreateBuild with any type of body
+func NewCreateBuildRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteBuildRequest generates requests for DeleteBuild
+func NewDeleteBuildRequest(server string, buildId BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBuildRequest generates requests for GetBuild
+func NewGetBuildRequest(server string, buildId BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReadBuildLogRequest generates requests for ReadBuildLog
+func NewReadBuildLogRequest(server string, buildId BuildID, params *ReadBuildLogParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s/log", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, *params.From); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Follow != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "follow", runtime.ParamLocationQuery, *params.Follow); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8795,6 +9314,9 @@ type ClientWithResponsesInterface interface {
 	// GetConsoleWithResponse request
 	GetConsoleWithResponse(ctx context.Context, params *GetConsoleParams, reqEditors ...RequestEditorFn) (*GetConsoleResponse, error)
 
+	// GetConsoleBuildWithResponse request
+	GetConsoleBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error)
+
 	// GetConsoleSandboxWithResponse request
 	GetConsoleSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error)
 
@@ -8840,6 +9362,23 @@ type ClientWithResponsesInterface interface {
 	PutBrokerWithBodyWithResponse(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
 
 	PutBrokerWithResponse(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
+
+	// ListBuildsWithResponse request
+	ListBuildsWithResponse(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error)
+
+	// CreateBuildWithBodyWithResponse request with any body
+	CreateBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
+
+	CreateBuildWithResponse(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
+
+	// DeleteBuildWithResponse request
+	DeleteBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error)
+
+	// GetBuildWithResponse request
+	GetBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error)
+
+	// ReadBuildLogWithResponse request
+	ReadBuildLogWithResponse(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error)
 
 	// GetCAWithResponse request
 	GetCAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
@@ -9139,6 +9678,27 @@ func (r GetConsoleResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetConsoleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetConsoleBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConsoleBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConsoleBuildResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -9466,6 +10026,128 @@ func (r PutBrokerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PutBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BuildPage
+	JSON401      *Unauthorized
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *Build
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *Error
+	JSON422      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Build
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReadBuildLogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadBuildLogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadBuildLogResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11453,6 +12135,15 @@ func (c *ClientWithResponses) GetConsoleWithResponse(ctx context.Context, params
 	return ParseGetConsoleResponse(rsp)
 }
 
+// GetConsoleBuildWithResponse request returning *GetConsoleBuildResponse
+func (c *ClientWithResponses) GetConsoleBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error) {
+	rsp, err := c.GetConsoleBuild(ctx, buildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConsoleBuildResponse(rsp)
+}
+
 // GetConsoleSandboxWithResponse request returning *GetConsoleSandboxResponse
 func (c *ClientWithResponses) GetConsoleSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error) {
 	rsp, err := c.GetConsoleSandbox(ctx, sandboxId, reqEditors...)
@@ -11593,6 +12284,59 @@ func (c *ClientWithResponses) PutBrokerWithResponse(ctx context.Context, brokerN
 		return nil, err
 	}
 	return ParsePutBrokerResponse(rsp)
+}
+
+// ListBuildsWithResponse request returning *ListBuildsResponse
+func (c *ClientWithResponses) ListBuildsWithResponse(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error) {
+	rsp, err := c.ListBuilds(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBuildsResponse(rsp)
+}
+
+// CreateBuildWithBodyWithResponse request with arbitrary body returning *CreateBuildResponse
+func (c *ClientWithResponses) CreateBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
+	rsp, err := c.CreateBuildWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBuildResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateBuildWithResponse(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
+	rsp, err := c.CreateBuild(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBuildResponse(rsp)
+}
+
+// DeleteBuildWithResponse request returning *DeleteBuildResponse
+func (c *ClientWithResponses) DeleteBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error) {
+	rsp, err := c.DeleteBuild(ctx, buildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteBuildResponse(rsp)
+}
+
+// GetBuildWithResponse request returning *GetBuildResponse
+func (c *ClientWithResponses) GetBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error) {
+	rsp, err := c.GetBuild(ctx, buildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBuildResponse(rsp)
+}
+
+// ReadBuildLogWithResponse request returning *ReadBuildLogResponse
+func (c *ClientWithResponses) ReadBuildLogWithResponse(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error) {
+	rsp, err := c.ReadBuildLog(ctx, buildId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadBuildLogResponse(rsp)
 }
 
 // GetCAWithResponse request returning *GetCAResponse
@@ -12449,6 +13193,22 @@ func ParseGetConsoleResponse(rsp *http.Response) (*GetConsoleResponse, error) {
 	return response, nil
 }
 
+// ParseGetConsoleBuildResponse parses an HTTP response from a GetConsoleBuildWithResponse call
+func ParseGetConsoleBuildResponse(rsp *http.Response) (*GetConsoleBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConsoleBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseGetConsoleSandboxResponse parses an HTTP response from a GetConsoleSandboxWithResponse call
 func ParseGetConsoleSandboxResponse(rsp *http.Response) (*GetConsoleSandboxResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12937,6 +13697,220 @@ func ParsePutBrokerResponse(rsp *http.Response) (*PutBrokerResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBuildsResponse parses an HTTP response from a ListBuildsWithResponse call
+func ParseListBuildsResponse(rsp *http.Response) (*ListBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BuildPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBuildResponse parses an HTTP response from a CreateBuildWithResponse call
+func ParseCreateBuildResponse(rsp *http.Response) (*CreateBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Build
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteBuildResponse parses an HTTP response from a DeleteBuildWithResponse call
+func ParseDeleteBuildResponse(rsp *http.Response) (*DeleteBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBuildResponse parses an HTTP response from a GetBuildWithResponse call
+func ParseGetBuildResponse(rsp *http.Response) (*GetBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Build
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadBuildLogResponse parses an HTTP response from a ReadBuildLogWithResponse call
+func ParseReadBuildLogResponse(rsp *http.Response) (*ReadBuildLogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadBuildLogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -16925,6 +17899,9 @@ type ServerInterface interface {
 	// The console
 	// (GET /console)
 	GetConsole(w http.ResponseWriter, r *http.Request, params GetConsoleParams)
+	// The console, on one build
+	// (GET /console/builds/{buildId})
+	GetConsoleBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
 	// The console, on one sandbox
 	// (GET /console/sandboxes/{sandboxId})
 	GetConsoleSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
@@ -16967,6 +17944,21 @@ type ServerInterface interface {
 	// Declare a shared broker, or replace its upstream
 	// (PUT /v1/brokers/{brokerName})
 	PutBroker(w http.ResponseWriter, r *http.Request, brokerName BrokerName)
+	// Every build on this host, the oldest first
+	// (GET /v1/builds)
+	ListBuilds(w http.ResponseWriter, r *http.Request, params ListBuildsParams)
+	// Build an image from a recipe
+	// (POST /v1/builds)
+	CreateBuild(w http.ResponseWriter, r *http.Request)
+	// Stop a build, or forget one that ended
+	// (DELETE /v1/builds/{buildId})
+	DeleteBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
+	// Where a build is, step by step
+	// (GET /v1/builds/{buildId})
+	GetBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
+	// What the build printed, from a byte offset
+	// (GET /v1/builds/{buildId}/log)
+	ReadBuildLog(w http.ResponseWriter, r *http.Request, buildId BuildID, params ReadBuildLogParams)
 	// The certificate authority this host's sandboxes are identified by
 	// (GET /v1/ca)
 	GetCA(w http.ResponseWriter, r *http.Request)
@@ -17238,6 +18230,31 @@ func (siw *ServerInterfaceWrapper) GetConsole(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetConsole(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetConsoleBuild operation middleware
+func (siw *ServerInterfaceWrapper) GetConsoleBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConsoleBuild(w, r, buildId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -17594,6 +18611,189 @@ func (siw *ServerInterfaceWrapper) PutBroker(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutBroker(w, r, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBuilds operation middleware
+func (siw *ServerInterfaceWrapper) ListBuilds(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBuildsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBuilds(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBuild operation middleware
+func (siw *ServerInterfaceWrapper) CreateBuild(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBuild(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBuild operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBuild(w, r, buildId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBuild operation middleware
+func (siw *ServerInterfaceWrapper) GetBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBuild(w, r, buildId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadBuildLog operation middleware
+func (siw *ServerInterfaceWrapper) ReadBuildLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadBuildLogParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "follow" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "follow", r.URL.Query(), &params.Follow)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "follow", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadBuildLog(w, r, buildId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -20732,6 +21932,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc("GET "+options.BaseURL+"/", wrapper.GetRoot)
 	m.HandleFunc("GET "+options.BaseURL+"/console", wrapper.GetConsole)
+	m.HandleFunc("GET "+options.BaseURL+"/console/builds/{buildId}", wrapper.GetConsoleBuild)
 	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}", wrapper.GetConsoleSandbox)
 	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}/{tab}", wrapper.GetConsoleSandboxTab)
 	m.HandleFunc("GET "+options.BaseURL+"/console/volumes/{volumeName}", wrapper.GetConsoleVolume)
@@ -20746,6 +21947,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.DeleteBroker)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.GetBroker)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.PutBroker)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds", wrapper.ListBuilds)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/builds", wrapper.CreateBuild)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/builds/{buildId}", wrapper.DeleteBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}", wrapper.GetBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}/log", wrapper.ReadBuildLog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/ca", wrapper.GetCA)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/counts", wrapper.GetCounts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/docs", wrapper.GetDocs)

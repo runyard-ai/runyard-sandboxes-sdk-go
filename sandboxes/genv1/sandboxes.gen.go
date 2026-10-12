@@ -75,6 +75,7 @@ const (
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
 	ErrorCodeSandboxUnreachable ErrorCode = "sandbox_unreachable"
+	ErrorCodeSealed             ErrorCode = "sealed"
 	ErrorCodeSpecConflict       ErrorCode = "spec_conflict"
 	ErrorCodeTimeout            ErrorCode = "timeout"
 	ErrorCodeTooLarge           ErrorCode = "too_large"
@@ -2037,6 +2038,20 @@ type SandboxSpec struct {
 	// reach it, and conflating them is how a service gets published by
 	// accident. Nothing is published unless it is written here.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
+
+	// Sealed Whether nothing can ever be run in it, or written into it, from
+	// outside: its own `ENTRYPOINT`/`CMD` (or `entrypoint` here) is all
+	// that runs. Every route that runs a command, writes to a process,
+	// signals or reaps one, opens a terminal, or writes or deletes a file
+	// answers `403` with code `sealed`, for every key and every session,
+	// for as long as the sandbox exists. Reading — its console, its
+	// processes and their output, its files — is not refused.
+	//
+	// Set when it is made and never changed. A sealed sandbox takes no
+	// named `disk.volume`: a volume is a disk another sandbox may have
+	// written, and booting from it would run what that one left there.
+	// Off by default.
+	Sealed *bool `json:"sealed,omitempty"`
 }
 
 // SandboxState | state | what it means | what to do |
@@ -11408,6 +11423,7 @@ type ReapProcessResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
 	JSON503      *SandboxUnreachable
@@ -11461,6 +11477,7 @@ type SignalProcessResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
 	JSON503      *SandboxUnreachable
@@ -11513,6 +11530,7 @@ type WriteProcessStdinResponse struct {
 	HTTPResponse *http.Response
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
+	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON503      *SandboxUnreachable
@@ -16389,6 +16407,13 @@ func ParseReapProcessResponse(rsp *http.Response) (*ReapProcessResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -16504,6 +16529,13 @@ func ParseSignalProcessResponse(rsp *http.Response) (*SignalProcessResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -16611,6 +16643,13 @@ func ParseWriteProcessStdinResponse(rsp *http.Response) (*WriteProcessStdinRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound

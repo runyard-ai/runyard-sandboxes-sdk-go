@@ -3233,6 +3233,8 @@ paths:
         this is a way to reclaim the buffers early rather than a thing that must
         be called.
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/NotRunning"
         "400":
@@ -3337,6 +3339,8 @@ paths:
           application/octet-stream:
             schema: { type: string, format: binary }
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "400":
           $ref: "#/components/responses/BadRequest"
         "204":
@@ -3372,6 +3376,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/SignalRequest" }
       responses:
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/NotRunning"
         "400":
@@ -4193,7 +4199,8 @@ components:
       description: >-
         The key is valid and does not hold the scope this route needs — or it
         acts only on its `own` sandboxes (`KeyReach`) and this route speaks
-        for the whole host. Distinct from `401`, which is a key that is
+        for the whole host, or the sandbox is `sealed` and this route would
+        run something in it or write to it (code `sealed`). Distinct from `401`, which is a key that is
         missing, expired or revoked.
       content:
         application/json:
@@ -4679,6 +4686,21 @@ components:
             default and asked for explicitly. A host that cannot give it refuses
             the spec rather than booting a guest that sees the CPU extension and
             finds no device — which is the most confusing way for this to fail.
+        sealed:
+          type: boolean
+          description: |
+            Whether nothing can ever be run in it, or written into it, from
+            outside: its own `ENTRYPOINT`/`CMD` (or `entrypoint` here) is all
+            that runs. Every route that runs a command, writes to a process,
+            signals or reaps one, opens a terminal, or writes or deletes a file
+            answers `403` with code `sealed`, for every key and every session,
+            for as long as the sandbox exists. Reading — its console, its
+            processes and their output, its files — is not refused.
+
+            Set when it is made and never changed. A sealed sandbox takes no
+            named `disk.volume`: a volume is a disk another sandbox may have
+            written, and booting from it would run what that one left there.
+            Off by default.
         entrypoint:
           type: array
           items: { type: string }
@@ -7086,6 +7108,7 @@ components:
         - not_found
         - conflict
         - spec_conflict
+        - sealed
         - image_unknown
         - image_in_use
         - recipe_invalid

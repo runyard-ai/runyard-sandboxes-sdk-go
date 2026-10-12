@@ -683,3 +683,139 @@ func TestTheFakeCountsAndAddsUpItsSandboxes(t *testing.T) {
 		t.Errorf("counts = %v %s", err, counted.Body)
 	}
 }
+
+// A sandbox stopped, started, labelled and found by its labels, as the
+// daemon does each.
+func TestTheFakeStopsStartsAndLabelsASandbox(t *testing.T) {
+	ctx := context.Background()
+	d := New(t, WithKey("k"))
+	client := typed(t, d, "k")
+	labels := map[string]string{"kind": "deployment", "owner": "ada"}
+	made, err := client.CreateSandboxWithResponse(ctx, &genv1.CreateSandboxParams{IdempotencyKey: "one"}, genv1.SandboxSpec{Image: "alpine", Labels: &labels})
+	if err != nil || made.JSON202 == nil {
+		t.Fatalf("create = %v %s", err, made.Body)
+	}
+	if _, err := client.CreateSandboxWithResponse(ctx, &genv1.CreateSandboxParams{IdempotencyKey: "two"}, genv1.SandboxSpec{Image: "alpine"}); err != nil {
+		t.Fatal(err)
+	}
+	id := made.JSON202.Id
+
+	listed, err := client.ListSandboxesWithResponse(ctx, &genv1.ListSandboxesParams{Label: &[]string{"kind=deployment", "owner=ada"}})
+	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Items) != 1 || listed.JSON200.Items[0].Id != id {
+		t.Fatalf("the labelled ones = %v %s", err, listed.Body)
+	}
+	if listed, _ := client.ListSandboxesWithResponse(ctx, &genv1.ListSandboxesParams{Label: &[]string{"owner"}}); listed.StatusCode() != http.StatusBadRequest {
+		t.Errorf("a filter without = answered %d", listed.StatusCode())
+	}
+	if listed, _ := client.ListSandboxesWithResponse(ctx, &genv1.ListSandboxesParams{}); listed.JSON200 == nil || len(listed.JSON200.Items) != 2 {
+		t.Errorf("every one = %s", listed.Body)
+	}
+
+	if started, _ := client.StartSandboxWithResponse(ctx, id); started.StatusCode() != http.StatusConflict {
+		t.Errorf("starting a running sandbox = %d", started.StatusCode())
+	}
+	stopped, err := client.StopSandboxWithResponse(ctx, id)
+	if err != nil || stopped.JSON202 == nil || stopped.JSON202.State != genv1.SandboxStateStopped {
+		t.Fatalf("stop = %v %s", err, stopped.Body)
+	}
+	if again, _ := client.StopSandboxWithResponse(ctx, id); again.JSON202 == nil || again.JSON202.State != genv1.SandboxStateStopped {
+		t.Errorf("stopping a stopped sandbox = %s", again.Body)
+	}
+	started, err := client.StartSandboxWithResponse(ctx, id)
+	if err != nil || started.JSON202 == nil || started.JSON202.State != genv1.SandboxStateReady {
+		t.Fatalf("start = %v %s", err, started.Body)
+	}
+
+	set, err := client.SetSandboxLabelsWithResponse(ctx, id, genv1.SetSandboxLabelsJSONRequestBody{Labels: map[string]string{"kind": "other"}})
+	if err != nil || set.StatusCode() != http.StatusNoContent {
+		t.Fatalf("labels = %v %d", err, set.StatusCode())
+	}
+	got, _ := client.GetSandboxWithResponse(ctx, id)
+	if got.JSON200 == nil || got.JSON200.Labels == nil || (*got.JSON200.Labels)["kind"] != "other" || (*got.JSON200.Labels)["owner"] != "" {
+		t.Errorf("labelled = %s", got.Body)
+	}
+	if set, _ := client.SetSandboxLabelsWithBodyWithResponse(ctx, id, "application/json", strings.NewReader(`{}`)); set.StatusCode() != http.StatusBadRequest {
+		t.Errorf("no labels = %d", set.StatusCode())
+	}
+	missing := genv1.SandboxID{}
+	for name, status := range map[string]int{
+		"stop":   statusOf(client.StopSandboxWithResponse(ctx, missing)),
+		"start":  statusOf(client.StartSandboxWithResponse(ctx, missing)),
+		"labels": statusOf(client.SetSandboxLabelsWithResponse(ctx, missing, genv1.SetSandboxLabelsJSONRequestBody{Labels: map[string]string{}})),
+	} {
+		if status != http.StatusNotFound {
+			t.Errorf("%s of a sandbox that is not there = %d", name, status)
+		}
+	}
+}
+
+func statusOf[R interface{ StatusCode() int }](r R, err error) int {
+	if err != nil {
+		return 0
+	}
+	return r.StatusCode()
+}
+
+// A sealed sandbox refuses what runs or writes, and its processes' output
+// is read as any sandbox's.
+func TestTheFakeHoldsASealedSandboxSealedAndServesItsOutput(t *testing.T) {
+	ctx := context.Background()
+	d := New(t, WithKey("k"))
+	client := typed(t, d, "k")
+	made, err := client.CreateSandboxWithResponse(ctx, &genv1.CreateSandboxParams{IdempotencyKey: "s"}, genv1.SandboxSpec{Image: "alpine", Sealed: new(true)})
+	if err != nil || made.JSON202 == nil {
+		t.Fatalf("create = %v %s", err, made.Body)
+	}
+	id := made.JSON202.Id
+
+	run, _ := client.RunCommandWithResponse(ctx, id, genv1.CommandRequest{Argv: []string{"true"}})
+	write, _ := client.WriteFileWithBodyWithResponse(ctx, id, &genv1.WriteFileParams{Path: "/x"}, "application/octet-stream", strings.NewReader("x"))
+	for name, body := range map[string][]byte{"command": run.Body, "file": write.Body} {
+		if !strings.Contains(string(body), `"sealed"`) {
+			t.Errorf("a %s on a sealed sandbox = %s", name, body)
+		}
+	}
+	if len(d.Commands()) != 0 {
+		t.Errorf("commands ran: %v", d.Commands())
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.URL+"/v1/sandboxes/"+id.String()+"/terminal", http.NoBody)
+	req.Header.Set("Authorization", "Bearer k")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("a terminal on a sealed sandbox = %d", res.StatusCode)
+	}
+
+	d.SetOutput(id, "entrypoint", "stdout", "listening on :8080\n")
+	d.SetOutput(id, "entrypoint", "stderr", "warning\n")
+	d.SetOutput(genv1.SandboxID{}, "entrypoint", "stdout", "nobody")
+	from := int64(13)
+	out, err := client.ReadProcessStdoutWithResponse(ctx, id, "entrypoint", &genv1.ReadProcessStdoutParams{From: &from})
+	if err != nil || string(out.Body) != ":8080\n" {
+		t.Errorf("stdout from 13 = %v %q", err, out.Body)
+	}
+	past := int64(100)
+	if out, _ := client.ReadProcessStdoutWithResponse(ctx, id, "entrypoint", &genv1.ReadProcessStdoutParams{From: &past}); out.StatusCode() != http.StatusOK || len(out.Body) != 0 {
+		t.Errorf("stdout past its end = %d %q", out.StatusCode(), out.Body)
+	}
+	errs, _ := client.ReadProcessStderrWithResponse(ctx, id, "entrypoint", &genv1.ReadProcessStderrParams{})
+	if string(errs.Body) != "warning\n" {
+		t.Errorf("stderr = %q", errs.Body)
+	}
+	if out, _ := client.ReadProcessStdoutWithResponse(ctx, id, "other", &genv1.ReadProcessStdoutParams{}); out.StatusCode() != http.StatusNotFound {
+		t.Errorf("a process that is not there = %d", out.StatusCode())
+	}
+	req, _ = http.NewRequestWithContext(ctx, http.MethodGet, d.URL+"/v1/sandboxes/"+id.String()+"/processes/entrypoint/stdout?from=x", http.NoBody)
+	req.Header.Set("Authorization", "Bearer k")
+	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != http.StatusBadRequest {
+		t.Errorf("from=x = %v %v", err, res)
+	} else {
+		_ = res.Body.Close()
+	}
+	if out, _ := client.ReadProcessStdoutWithResponse(ctx, genv1.SandboxID{}, "entrypoint", &genv1.ReadProcessStdoutParams{}); out.StatusCode() != http.StatusNotFound {
+		t.Errorf("a sandbox that is not there = %d", out.StatusCode())
+	}
+}

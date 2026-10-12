@@ -164,6 +164,8 @@ type sandbox struct {
 	files   map[string][]byte
 	modes   map[string]string
 	console string
+	// output is what each process wrote, by "<process>/<stdout|stderr>".
+	output  map[string]string
 	events  []genv1.SandboxEvent
 	changed chan struct{}
 }
@@ -246,8 +248,13 @@ func (d *Daemon) routes() http.Handler {
 	handle("POST /v1/sandboxes", "createSandbox", d.createSandbox)
 	handle("GET /v1/sandboxes/{id}", "getSandbox", d.getSandbox)
 	handle("DELETE /v1/sandboxes/{id}", "deleteSandbox", d.deleteSandbox)
+	handle("POST /v1/sandboxes/{id}/stop", "stopSandbox", d.stopSandbox)
+	handle("POST /v1/sandboxes/{id}/start", "startSandbox", d.startSandbox)
+	handle("PUT /v1/sandboxes/{id}/labels", "setSandboxLabels", d.setSandboxLabels)
 	handle("GET /v1/sandboxes/{id}/events", "streamSandboxEvents", d.streamEvents)
 	handle("GET /v1/sandboxes/{id}/console", "getSandboxConsole", d.console)
+	handle("GET /v1/sandboxes/{id}/processes/{process}/stdout", "readProcessStdout", d.processOutput("stdout"))
+	handle("GET /v1/sandboxes/{id}/processes/{process}/stderr", "readProcessStderr", d.processOutput("stderr"))
 	handle("GET /v1/sandboxes/{id}/terminal", "openTerminal", d.openTerminal)
 	handle("GET /v1/sandboxes/{id}/brokers", "listSandboxBrokers", d.listSandboxBrokers)
 	handle("PUT /v1/sandboxes/{id}/brokers/{broker}", "attachSandboxBroker", d.attachSandboxBroker)
@@ -530,9 +537,83 @@ func (d *Daemon) getInfo(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, info)
 }
 
-func (d *Daemon) listSandboxes(w http.ResponseWriter, _ *http.Request) {
-	items := d.Sandboxes()
+func (d *Daemon) listSandboxes(w http.ResponseWriter, r *http.Request) {
+	wanted := map[string]string{}
+	for _, pair := range r.URL.Query()["label"] {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a label filter is written `key=value`")
+			return
+		}
+		wanted[key] = value
+	}
+	items := []genv1.Sandbox{}
+	for _, item := range d.Sandboxes() {
+		if item.Labels != nil && carries(*item.Labels, wanted) || item.Labels == nil && len(wanted) == 0 {
+			items = append(items, item)
+		}
+	}
 	reply(w, http.StatusOK, genv1.SandboxPage{Items: items, Total: len(items)})
+}
+
+// stopSandbox switches a machine off and keeps its disk, as a real one does.
+func (d *Daemon) stopSandbox(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.lookup(w, r)
+	if !ok {
+		return
+	}
+	if s.record.State != genv1.SandboxStateStopped {
+		d.settle(s, genv1.SandboxStateStopped, "")
+	}
+	reply(w, http.StatusAccepted, s.record)
+}
+
+// startSandbox boots a stopped machine again, on the disk it had.
+func (d *Daemon) startSandbox(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.lookup(w, r)
+	if !ok {
+		return
+	}
+	if s.record.State != genv1.SandboxStateStopped {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "the sandbox is "+string(s.record.State)+", not stopped")
+		return
+	}
+	d.settle(s, genv1.SandboxStateReady, "")
+	reply(w, http.StatusAccepted, s.record)
+}
+
+// setSandboxLabels replaces what a sandbox is labelled now.
+func (d *Daemon) setSandboxLabels(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Labels *map[string]string `json:"labels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Labels == nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is {\"labels\": {…}}")
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.lookup(w, r)
+	if !ok {
+		return
+	}
+	labels := maps.Clone(*body.Labels)
+	s.record.Labels = &labels
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// sealed answers a call that would run something in, or write into, a
+// sealed sandbox as the daemon does, and reports whether it did.
+func sealed(w http.ResponseWriter, s *sandbox) bool {
+	if s.record.Spec.Sealed == nil || !*s.record.Spec.Sealed {
+		return false
+	}
+	refuse(w, http.StatusForbidden, genv1.ErrorCodeSealed, "this sandbox is sealed: nothing is run in it or written into it but what its image runs")
+	return true
 }
 
 func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
@@ -756,6 +837,51 @@ func (d *Daemon) console(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SetOutput is what a process of a sandbox has written to stream, stdout
+// or stderr: the process `entrypoint` is the image's own.
+func (d *Daemon) SetOutput(id genv1.SandboxID, process, stream, text string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s, ok := d.sandboxes[id]; ok {
+		if s.output == nil {
+			s.output = map[string]string{}
+		}
+		s.output[process+"/"+stream] = text
+	}
+}
+
+// processOutput answers what a process wrote to stream from ?from=. A
+// followed read ends with what there is: this double's processes write
+// nothing more.
+func (d *Daemon) processOutput(stream string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		from := 0
+		if value := r.URL.Query().Get("from"); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "from is a byte offset")
+				return
+			}
+			from = n
+		}
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		s, ok := d.lookup(w, r)
+		if !ok {
+			return
+		}
+		text, ok := s.output[r.PathValue("process")+"/"+stream]
+		if !ok {
+			refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no process "+r.PathValue("process"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		if from < len(text) {
+			_, _ = io.WriteString(w, text[from:])
+		}
+	}
+}
+
 func (d *Daemon) runCommand(w http.ResponseWriter, r *http.Request) {
 	var request genv1.CommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Argv) == 0 {
@@ -765,6 +891,10 @@ func (d *Daemon) runCommand(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	s, ok := d.lookup(w, r)
 	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if sealed(w, s) {
 		d.mu.Unlock()
 		return
 	}
@@ -808,7 +938,7 @@ func (d *Daemon) writeFile(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
-	if !ok {
+	if !ok || sealed(w, s) {
 		return
 	}
 	s.files[path] = body

@@ -16,7 +16,7 @@ func withTunnel(t *testing.T, opts ...Option) (*Daemon, *genv1.ClientWithRespons
 	t.Helper()
 	d := New(t, append([]Option{WithKey("k")}, opts...)...)
 	client := typed(t, d, "k")
-	created, err := client.CreateSandboxWithResponse(context.Background(), &genv1.CreateSandboxParams{IdempotencyKey: "t"},
+	created, err := client.CreateSandboxWithResponse(context.Background(), DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "t"},
 		genv1.SandboxSpec{Image: "alpine:3.20"})
 	if err != nil || created.JSON202 == nil {
 		t.Fatalf("create = %v %s", err, created.Body)
@@ -30,7 +30,7 @@ func TestTheFakeServesATunnelAsTheDaemonReportsOne(t *testing.T) {
 	start := time.Now()
 	clock.Store(&start)
 	d, client, id := withTunnel(t, WithClock(func() time.Time { return *clock.Load() }))
-	put, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 3000})
+	put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 3000})
 	if put.JSON201 == nil || !strings.HasPrefix(put.JSON201.Slug, "web-") || put.JSON201.Status.State != genv1.Served {
 		t.Fatalf("put = %d %s", put.StatusCode(), put.Body)
 	}
@@ -44,7 +44,7 @@ func TestTheFakeServesATunnelAsTheDaemonReportsOne(t *testing.T) {
 	}
 	d.Settle(id, genv1.SandboxStateReady, "")
 	soon := start.Add(time.Minute)
-	if again, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 3000, ExpiresAt: &soon}); again.JSON200 == nil {
+	if again, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 3000, ExpiresAt: &soon}); again.JSON200 == nil {
 		t.Fatalf("replace = %d %s", again.StatusCode(), again.Body)
 	}
 	if got := d.Tunnels(id)[0].Status.State; got != genv1.Served {
@@ -75,52 +75,52 @@ func TestTheFakeRefusesATunnelAsTheDaemonDoes(t *testing.T) {
 		"a time that has been":     {"web", `{"port":1,"expiresAt":"` + past.Format(time.RFC3339) + `"}`, 400},
 	} {
 		t.Run(name, func(t *testing.T) {
-			res, err := client.PutTunnelWithBodyWithResponse(ctx, id, c.tunnel, "application/json", strings.NewReader(c.body))
+			res, err := client.PutTunnelWithBodyWithResponse(ctx, DefaultNamespace, id, c.tunnel, "application/json", strings.NewReader(c.body))
 			if err != nil || res.StatusCode() != c.status {
 				t.Errorf("= %d %s, %v", res.StatusCode(), res.Body, err)
 			}
 		})
 	}
 	for i := range 16 {
-		if put, _ := client.PutTunnelWithResponse(ctx, id, fmt.Sprintf("t%d", i), genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
+		if put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, fmt.Sprintf("t%d", i), genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
 			t.Fatalf("tunnel %d = %d", i, put.StatusCode())
 		}
 	}
-	if put, _ := client.PutTunnelWithResponse(ctx, id, "one-more", genv1.TunnelSpec{Port: 1}); put.StatusCode() != http.StatusConflict {
+	if put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "one-more", genv1.TunnelSpec{Port: 1}); put.StatusCode() != http.StatusConflict {
 		t.Errorf("a seventeenth = %d", put.StatusCode())
 	}
 	for i := range 16 {
-		if made, _ := client.CreateTunnelTokenWithResponse(ctx, id, "t0", genv1.TunnelTokenRequest{Comment: "x"}); made.JSON201 == nil {
+		if made, _ := client.CreateTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", genv1.TunnelTokenRequest{Comment: "x"}); made.JSON201 == nil {
 			t.Fatalf("token %d = %d", i, made.StatusCode())
 		}
 	}
-	if made, _ := client.CreateTunnelTokenWithResponse(ctx, id, "t0", genv1.TunnelTokenRequest{Comment: "x"}); made.StatusCode() != http.StatusConflict {
+	if made, _ := client.CreateTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", genv1.TunnelTokenRequest{Comment: "x"}); made.StatusCode() != http.StatusConflict {
 		t.Errorf("a seventeenth token = %d", made.StatusCode())
 	}
-	if made, _ := client.CreateTunnelTokenWithResponse(ctx, id, "t0", genv1.TunnelTokenRequest{}); made.StatusCode() != http.StatusBadRequest {
+	if made, _ := client.CreateTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", genv1.TunnelTokenRequest{}); made.StatusCode() != http.StatusBadRequest {
 		t.Errorf("a token with no comment = %d", made.StatusCode())
 	}
-	if revoked, _ := client.RevokeTunnelTokenWithResponse(ctx, id, "t0", "BAD", nil); revoked.StatusCode() != http.StatusBadRequest {
+	if revoked, _ := client.RevokeTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", "BAD", nil); revoked.StatusCode() != http.StatusBadRequest {
 		t.Errorf("a token id that is not one = %d", revoked.StatusCode())
 	}
-	if revoked, _ := client.RevokeTunnelTokenWithResponse(ctx, id, "t0", "zzzzzzzz", nil); revoked.StatusCode() != http.StatusNotFound {
+	if revoked, _ := client.RevokeTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", "zzzzzzzz", nil); revoked.StatusCode() != http.StatusNotFound {
 		t.Errorf("a token that is not there = %d", revoked.StatusCode())
 	}
 	token := d.Tunnels(id)[0].Tokens[0].Id
-	first, _ := client.RevokeTunnelTokenWithResponse(ctx, id, "t0", token, nil)
-	second, _ := client.RevokeTunnelTokenWithResponse(ctx, id, "t0", token, &genv1.RevokeTunnelTokenParams{Reason: new("late")})
+	first, _ := client.RevokeTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", token, nil)
+	second, _ := client.RevokeTunnelTokenWithResponse(ctx, DefaultNamespace, id, "t0", token, &genv1.RevokeTunnelTokenParams{Reason: new("late")})
 	if first.JSON200 == nil || second.JSON200 == nil || !second.JSON200.RevokedAt.Equal(*first.JSON200.RevokedAt) || second.JSON200.RevokedReason != nil {
 		t.Errorf("revoking twice changed the record: %s then %s", first.Body, second.Body)
 	}
-	if missing, _ := client.GetTunnelWithResponse(ctx, id, "nope"); missing.StatusCode() != http.StatusNotFound {
+	if missing, _ := client.GetTunnelWithResponse(ctx, DefaultNamespace, id, "nope"); missing.StatusCode() != http.StatusNotFound {
 		t.Errorf("a tunnel that is not there = %d", missing.StatusCode())
 	}
 	other := genv1.SandboxID{}
-	if missing, _ := client.ListTunnelsWithResponse(ctx, other); missing.StatusCode() != http.StatusNotFound {
+	if missing, _ := client.ListTunnelsWithResponse(ctx, DefaultNamespace, other); missing.StatusCode() != http.StatusNotFound {
 		t.Errorf("a sandbox that is not there = %d", missing.StatusCode())
 	}
 	d.Settle(id, genv1.SandboxStateGone, "")
-	if put, _ := client.PutTunnelWithResponse(ctx, id, "late", genv1.TunnelSpec{Port: 1}); put.StatusCode() != http.StatusConflict {
+	if put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "late", genv1.TunnelSpec{Port: 1}); put.StatusCode() != http.StatusConflict {
 		t.Errorf("a tunnel on a gone sandbox = %d", put.StatusCode())
 	}
 }
@@ -129,7 +129,7 @@ func TestTheFakeListsEveryTunnelAndWhatVisitorsDidNewestFirst(t *testing.T) {
 	ctx := context.Background()
 	d, client, id := withTunnel(t)
 	for _, name := range []string{"web", "api"} {
-		if put, _ := client.PutTunnelWithResponse(ctx, id, name, genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
+		if put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, name, genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
 			t.Fatal(put.StatusCode())
 		}
 	}
@@ -137,21 +137,21 @@ func TestTheFakeListsEveryTunnelAndWhatVisitorsDidNewestFirst(t *testing.T) {
 	d.RecordVisit(id, "web", genv1.TunnelRequest{Path: "/second"})
 	d.RecordVisit(id, "nope", genv1.TunnelRequest{Path: "/nowhere"})
 	d.RecordVisit(genv1.SandboxID{}, "web", genv1.TunnelRequest{Path: "/nobody"})
-	page, _ := client.GetTunnelActivityWithResponse(ctx, id, "web", nil)
+	page, _ := client.GetTunnelActivityWithResponse(ctx, DefaultNamespace, id, "web", nil)
 	if page.JSON200 == nil || len(page.JSON200.Items) != 2 || page.JSON200.Items[0].Path != "/second" {
 		t.Fatalf("activity = %s", page.Body)
 	}
-	host, _ := client.ListHostTunnelsWithResponse(ctx, nil)
+	host, _ := client.ListHostTunnelsWithResponse(ctx, DefaultNamespace, nil)
 	if host.JSON200 == nil || len(host.JSON200.Items) != 2 || *host.JSON200.Items[0].SandboxId != id || !host.JSON200.Relay.Docked ||
 		host.JSON200.NextCursor != nil {
 		t.Fatalf("host = %s", host.Body)
 	}
 	one := 1
-	first, _ := client.ListHostTunnelsWithResponse(ctx, &genv1.ListHostTunnelsParams{Limit: &one})
+	first, _ := client.ListHostTunnelsWithResponse(ctx, DefaultNamespace, &genv1.ListHostTunnelsParams{Limit: &one})
 	if first.JSON200 == nil || len(first.JSON200.Items) != 1 || first.JSON200.NextCursor == nil {
 		t.Fatalf("first page = %s", first.Body)
 	}
-	rest, _ := client.ListHostTunnelsWithResponse(ctx, &genv1.ListHostTunnelsParams{Limit: &one, Cursor: first.JSON200.NextCursor})
+	rest, _ := client.ListHostTunnelsWithResponse(ctx, DefaultNamespace, &genv1.ListHostTunnelsParams{Limit: &one, Cursor: first.JSON200.NextCursor})
 	// The last page reaches the end, and says so by carrying no cursor.
 	if rest.JSON200 == nil || len(rest.JSON200.Items) != 1 || rest.JSON200.Items[0].Slug == first.JSON200.Items[0].Slug ||
 		rest.JSON200.NextCursor != nil {
@@ -159,17 +159,17 @@ func TestTheFakeListsEveryTunnelAndWhatVisitorsDidNewestFirst(t *testing.T) {
 	}
 	zero, forged := 0, "forged"
 	for _, params := range []*genv1.ListHostTunnelsParams{{Limit: &zero}, {Cursor: &forged}} {
-		if refused, _ := client.ListHostTunnelsWithResponse(ctx, params); refused.StatusCode() != http.StatusBadRequest {
+		if refused, _ := client.ListHostTunnelsWithResponse(ctx, DefaultNamespace, params); refused.StatusCode() != http.StatusBadRequest {
 			t.Errorf("%+v = %d", params, refused.StatusCode())
 		}
 	}
-	if paused, _ := client.PauseTunnelWithResponse(ctx, id, "api"); paused.JSON200 == nil || paused.JSON200.Status.State != genv1.Paused {
+	if paused, _ := client.PauseTunnelWithResponse(ctx, DefaultNamespace, id, "api"); paused.JSON200 == nil || paused.JSON200.Status.State != genv1.Paused {
 		t.Errorf("paused = %s", paused.Body)
 	}
-	if deleted, _ := client.DeleteTunnelWithResponse(ctx, id, "web"); deleted.StatusCode() != http.StatusNoContent {
+	if deleted, _ := client.DeleteTunnelWithResponse(ctx, DefaultNamespace, id, "web"); deleted.StatusCode() != http.StatusNoContent {
 		t.Errorf("delete = %d", deleted.StatusCode())
 	}
-	if list, _ := client.ListTunnelsWithResponse(ctx, id); list.JSON200 == nil || len(list.JSON200.Items) != 1 || list.JSON200.Items[0].Name != "api" {
+	if list, _ := client.ListTunnelsWithResponse(ctx, DefaultNamespace, id); list.JSON200 == nil || len(list.JSON200.Items) != 1 || list.JSON200.Items[0].Name != "api" {
 		t.Errorf("list = %s", list.Body)
 	}
 }
@@ -177,22 +177,22 @@ func TestTheFakeListsEveryTunnelAndWhatVisitorsDidNewestFirst(t *testing.T) {
 func TestTheFakeSpellsATunnelsShareButtonOutAndKeepsWhatItWasGiven(t *testing.T) {
 	ctx := context.Background()
 	_, client, id := withTunnel(t)
-	put, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 1})
+	put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 1})
 	if put.JSON201 == nil || put.JSON201.Overlay.Hidden == nil || *put.JSON201.Overlay.Hidden ||
 		put.JSON201.Overlay.Corner == nil || *put.JSON201.Overlay.Corner != genv1.BottomRight {
 		t.Fatalf("a tunnel put without one = %s", put.Body)
 	}
 	corner := genv1.TopLeft
 	hidden := true
-	again, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 1, Overlay: &genv1.TunnelOverlay{Hidden: &hidden, Corner: &corner}})
+	again, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 1, Overlay: &genv1.TunnelOverlay{Hidden: &hidden, Corner: &corner}})
 	if again.JSON200 == nil || !*again.JSON200.Overlay.Hidden || *again.JSON200.Overlay.Corner != genv1.TopLeft {
 		t.Fatalf("a tunnel put with one = %s", again.Body)
 	}
-	if got, _ := client.GetTunnelWithResponse(ctx, id, "web"); got.JSON200 == nil || *got.JSON200.Overlay.Corner != genv1.TopLeft {
+	if got, _ := client.GetTunnelWithResponse(ctx, DefaultNamespace, id, "web"); got.JSON200 == nil || *got.JSON200.Overlay.Corner != genv1.TopLeft {
 		t.Fatalf("read back = %s", got.Body)
 	}
 	// A tunnel is put whole: one put without it goes back to the default.
-	reset, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 1})
+	reset, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 1})
 	if reset.JSON200 == nil || *reset.JSON200.Overlay.Hidden || *reset.JSON200.Overlay.Corner != genv1.BottomRight {
 		t.Fatalf("put again without one = %s", reset.Body)
 	}
@@ -202,7 +202,7 @@ func TestTheFakeSpellsATunnelsShareButtonOutAndKeepsWhatItWasGiven(t *testing.T)
 		"hidden that is not a boolean": `{"port":1,"overlay":{"hidden":"yes"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			res, err := client.PutTunnelWithBodyWithResponse(ctx, id, "web", "application/json", strings.NewReader(body))
+			res, err := client.PutTunnelWithBodyWithResponse(ctx, DefaultNamespace, id, "web", "application/json", strings.NewReader(body))
 			if err != nil || res.StatusCode() != http.StatusBadRequest {
 				t.Errorf("= %d %s, %v", res.StatusCode(), res.Body, err)
 			}
@@ -213,10 +213,10 @@ func TestTheFakeSpellsATunnelsShareButtonOutAndKeepsWhatItWasGiven(t *testing.T)
 func TestTheFakeListsATunnelsGuestsOldestFirstAndTakesThemBackOut(t *testing.T) {
 	ctx := context.Background()
 	d, client, id := withTunnel(t)
-	if put, _ := client.PutTunnelWithResponse(ctx, id, "web", genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
+	if put, _ := client.PutTunnelWithResponse(ctx, DefaultNamespace, id, "web", genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
 		t.Fatal(put.StatusCode())
 	}
-	empty, _ := client.ListTunnelGuestsWithResponse(ctx, id, "web")
+	empty, _ := client.ListTunnelGuestsWithResponse(ctx, DefaultNamespace, id, "web")
 	if empty.JSON200 == nil || empty.JSON200.Items == nil || len(empty.JSON200.Items) != 0 {
 		t.Fatalf("no guests = %s", empty.Body)
 	}
@@ -224,18 +224,18 @@ func TestTheFakeListsATunnelsGuestsOldestFirstAndTakesThemBackOut(t *testing.T) 
 	d.AddTunnelGuest(id, "web", "linus@example.com", "ada@example.com")
 	d.AddTunnelGuest(id, "nope", "nobody@example.com", "ada@example.com")
 	d.AddTunnelGuest(genv1.SandboxID{}, "web", "nobody@example.com", "ada@example.com")
-	list, _ := client.ListTunnelGuestsWithResponse(ctx, id, "web")
+	list, _ := client.ListTunnelGuestsWithResponse(ctx, DefaultNamespace, id, "web")
 	if list.JSON200 == nil || len(list.JSON200.Items) != 2 || list.JSON200.Items[0].Email != "grace@example.com" ||
 		list.JSON200.Items[0].By != "ada@example.com" || list.JSON200.Items[0].At.IsZero() {
 		t.Fatalf("guests = %s", list.Body)
 	}
-	if gone, _ := client.RevokeTunnelGuestWithResponse(ctx, id, "web", "GRACE@example.com"); gone.StatusCode() != http.StatusNoContent {
+	if gone, _ := client.RevokeTunnelGuestWithResponse(ctx, DefaultNamespace, id, "web", "GRACE@example.com"); gone.StatusCode() != http.StatusNoContent {
 		t.Fatalf("revoke = %d %s", gone.StatusCode(), gone.Body)
 	}
-	if again, _ := client.RevokeTunnelGuestWithResponse(ctx, id, "web", "grace@example.com"); again.StatusCode() != http.StatusNotFound {
+	if again, _ := client.RevokeTunnelGuestWithResponse(ctx, DefaultNamespace, id, "web", "grace@example.com"); again.StatusCode() != http.StatusNotFound {
 		t.Errorf("revoked twice = %d", again.StatusCode())
 	}
-	if left, _ := client.ListTunnelGuestsWithResponse(ctx, id, "web"); left.JSON200 == nil || len(left.JSON200.Items) != 1 ||
+	if left, _ := client.ListTunnelGuestsWithResponse(ctx, DefaultNamespace, id, "web"); left.JSON200 == nil || len(left.JSON200.Items) != 1 ||
 		left.JSON200.Items[0].Email != "linus@example.com" {
 		t.Fatalf("left = %s", left.Body)
 	}
@@ -249,15 +249,42 @@ func TestTheFakeListsATunnelsGuestsOldestFirstAndTakesThemBackOut(t *testing.T) 
 		"an address past its max": {"web", strings.Repeat("a", 250) + "@b.cd", http.StatusBadRequest},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if res, _ := client.RevokeTunnelGuestWithResponse(ctx, id, c.tunnel, c.email); res.StatusCode() != c.status {
+			if res, _ := client.RevokeTunnelGuestWithResponse(ctx, DefaultNamespace, id, c.tunnel, c.email); res.StatusCode() != c.status {
 				t.Errorf("= %d %s", res.StatusCode(), res.Body)
 			}
 		})
 	}
-	if missing, _ := client.ListTunnelGuestsWithResponse(ctx, id, "nope"); missing.StatusCode() != http.StatusNotFound {
+	if missing, _ := client.ListTunnelGuestsWithResponse(ctx, DefaultNamespace, id, "nope"); missing.StatusCode() != http.StatusNotFound {
 		t.Errorf("guests of a tunnel that is not there = %d", missing.StatusCode())
 	}
-	if missing, _ := client.ListTunnelGuestsWithResponse(ctx, genv1.SandboxID{}, "web"); missing.StatusCode() != http.StatusNotFound {
+	if missing, _ := client.ListTunnelGuestsWithResponse(ctx, DefaultNamespace, genv1.SandboxID{}, "web"); missing.StatusCode() != http.StatusNotFound {
 		t.Errorf("guests on a sandbox that is not there = %d", missing.StatusCode())
+	}
+}
+
+// The tunnels a namespace lists are its sandboxes' and nobody else's.
+func TestTheFakeListsANamespacesTunnelsAlone(t *testing.T) {
+	ctx := t.Context()
+	d := New(t, WithKey("k"), WithNamespaces("acme", "globex"), WithGlobalKeys())
+	client := typed(t, d, "k")
+	made, err := client.CreateSandboxWithResponse(ctx, "acme", &genv1.CreateSandboxParams{IdempotencyKey: "one"}, genv1.SandboxSpec{Image: "alpine"})
+	if err != nil || made.JSON202 == nil {
+		t.Fatalf("create = %v %s", err, made.Body)
+	}
+	if put, _ := client.PutTunnelWithResponse(ctx, "acme", made.JSON202.Id, "web", genv1.TunnelSpec{Port: 1}); put.JSON201 == nil {
+		t.Fatalf("put = %d %s", put.StatusCode(), put.Body)
+	}
+	for namespace, want := range map[string]int{"acme": 1, "globex": 0} {
+		listed, _ := client.ListHostTunnelsWithResponse(ctx, namespace, nil)
+		if listed.JSON200 == nil || len(listed.JSON200.Items) != want {
+			t.Errorf("%s's tunnels = %s, want %d", namespace, listed.Body, want)
+		}
+	}
+	// One deleted is still in the order sandboxes were made in.
+	if got, _ := client.DeleteSandboxWithResponse(ctx, "acme", made.JSON202.Id, nil); got.StatusCode() != http.StatusNoContent {
+		t.Fatalf("delete = %d", got.StatusCode())
+	}
+	if listed, _ := client.ListHostTunnelsWithResponse(ctx, "acme", nil); listed.JSON200 == nil || len(listed.JSON200.Items) != 0 {
+		t.Errorf("a sandbox that is gone still has tunnels: %s", listed.Body)
 	}
 }

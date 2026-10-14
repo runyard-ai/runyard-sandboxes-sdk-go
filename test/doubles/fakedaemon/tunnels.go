@@ -158,6 +158,7 @@ func (d *Daemon) listHostTunnels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	in := r.PathValue("namespace")
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	gateway, agent, namespace := "https://gateway.invalid", TunnelNamespace, TunnelNamespace
@@ -167,7 +168,10 @@ func (d *Daemon) listHostTunnels(w http.ResponseWriter, r *http.Request) {
 			Agent: &agent, Domain: &domain, Namespace: &namespace}}
 	var all []genv1.Tunnel
 	for _, id := range d.order {
-		s := d.sandboxes[id]
+		s, ok := d.sandboxes[id]
+		if !ok || !s.in(in) {
+			continue
+		}
 		for _, t := range s.tunnels {
 			view := d.viewOf(s, t)
 			sandboxID := id

@@ -69,7 +69,7 @@ const brokerPortHeader = "Runyard-Broker-Port"
 // workload has finished asking; five minutes after either end has finished
 // writing, the connection is closed altogether.
 func (s *Sandbox) ServeBroker(ctx context.Context, name string) (*BrokerListener, error) {
-	address := s.client.baseURL + "/v1/sandboxes/" + url.PathEscape(s.ID.String()) + "/brokers/" + url.PathEscape(name) + "/serve"
+	address := s.client.baseURL + "/v1/namespaces/" + url.PathEscape(s.Namespace) + "/sandboxes/" + url.PathEscape(s.ID.String()) + "/brokers/" + url.PathEscape(name) + "/serve"
 	socket, answer, err := s.client.upgrade(ctx, address, brokerProtocol)
 	if err != nil {
 		if _, refusal := errors.AsType[*Error](err); refusal {

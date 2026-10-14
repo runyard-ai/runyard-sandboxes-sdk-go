@@ -76,5 +76,6 @@ pin the image by digest, or `/reset`.
 
 The console's **Volumes** page lists every volume on the host: the sandbox
 holding it, the image it belongs to, and what it holds. A volume no sandbox
-holds can be deleted there. `GET /v1/volumes` and `DELETE /v1/volumes/{name}`
-are the same thing through the API.
+holds can be deleted there. `GET /v1/namespaces/{namespace}/volumes` and
+`DELETE /v1/namespaces/{namespace}/volumes/{name}` are the same thing through
+the API.

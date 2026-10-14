@@ -79,10 +79,12 @@ func hello(ctx context.Context, o options, stdout, stderr io.Writer) error {
 		return fmt.Errorf("asking the host what it is: %w", err)
 	}
 	fmt.Fprintf(stdout, "host %s — %s\n", info.Id, info.Hypervisor.Version)
-	if info.Brokers != nil {
-		for _, declared := range *info.Brokers {
-			fmt.Fprintf(stdout, "  broker %s → %s\n", declared.Name, declared.Url)
-		}
+	declared, err := client.Brokers(ctx)
+	if err != nil {
+		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+	}
+	for _, broker := range declared {
+		fmt.Fprintf(stdout, "  broker %s → %s\n", broker.Name, broker.Url)
 	}
 
 	spec := sdk.Spec{Image: image}

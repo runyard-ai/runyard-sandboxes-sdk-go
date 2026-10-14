@@ -56,7 +56,7 @@ func (d *Daemon) openTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	s, ok := d.lookup(w, r)
-	if !ok || sealed(w, s) {
+	if !ok || d.entered(w, r, s) {
 		d.mu.Unlock()
 		return
 	}

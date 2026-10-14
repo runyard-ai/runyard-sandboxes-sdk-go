@@ -67,7 +67,7 @@ func (s *Sandbox) Terminal(ctx context.Context, opts TerminalOptions) (*Terminal
 	if opts.User != "" {
 		query.Set("user", opts.User)
 	}
-	address := s.client.baseURL + "/v1/sandboxes/" + url.PathEscape(s.ID.String()) + "/terminal"
+	address := s.client.baseURL + "/v1/namespaces/" + url.PathEscape(s.Namespace) + "/sandboxes/" + url.PathEscape(s.ID.String()) + "/terminal"
 	if len(query) > 0 {
 		address += "?" + query.Encode()
 	}

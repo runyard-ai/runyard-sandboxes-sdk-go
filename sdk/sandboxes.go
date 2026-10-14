@@ -22,6 +22,11 @@
 //     `*http.Response` and a pointer to a struct with eleven optional fields —
 //     and of the two routes that are WebSockets, nothing past the handshake.
 //
+// A sandbox, a volume and a tunnel are each in a namespace, and so is every
+// call about one: a client is bound to the namespace its key is bound to, or
+// to the one it is told (Client.Namespace, WithNamespace), and a sandbox's
+// handle to the one the sandbox is in.
+//
 // It adds no behaviour of its own. Anything it can do is something the contract
 // describes, and anything it cannot is not there — a convenience that talked to
 // a route the document does not have would be a second, undocumented API. The
@@ -58,14 +63,23 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	key        string
-	// What is told of a sandbox on its way to ready: WithProgress.
-	progress func(message string)
 	// How often the daemon is asked whether it is still there, while a
 	// broker is served.
 	brokerKeepAlive time.Duration
 	// WaitTimeout bounds Create's wait for a machine to answer. Zero uses three
 	// minutes, which is a large image on a cold cache.
 	WaitTimeout time.Duration
+
+	// namespace is the one this client was told its calls are about, by
+	// WithNamespace or Namespace; empty is the one its key is bound to.
+	namespace string
+	// trusted is a namespace named by WithNamespace, which the caller knows:
+	// the daemon is not asked about the key, and holds it to the namespace
+	// itself. One named by Namespace is checked against the key first.
+	trusted bool
+	// me is who the daemon says the key is, shared by every client made from
+	// this one by Namespace: one key, asked about once.
+	me *whoami
 }
 
 // Option configures a client.
@@ -74,7 +88,7 @@ type Option func(*options)
 type options struct {
 	httpClient *http.Client
 	key        string
-	progress   func(message string)
+	namespace  string
 }
 
 // WithKey attaches the API key every request carries.
@@ -88,17 +102,14 @@ func WithHTTPClient(client *http.Client) Option {
 	return func(o *options) { o.httpClient = client }
 }
 
-// WithProgress is told what the daemon says a sandbox is doing while Create
-// waits for it to be ready — the image being pulled, layer by layer, its disk
-// made, the machine booting — as the daemon words it, each thing once and in
-// order. It is how a program says something through a first create from an
-// image, which takes as long as the image takes to pull. It is called on the
-// goroutine that called Create.
-func WithProgress(told func(message string)) Option {
-	return func(o *options) { o.progress = told }
-}
-
 // New points a client at a daemon.
+//
+// Sandboxes, volumes and tunnels are each in a namespace, and a call about one
+// goes to that namespace. Which one is the key's to say: the first such call
+// asks the daemon once who the key is (`GET /v1/me`), and a key bound to a
+// namespace binds the client to it. A global key binds it to none, and those
+// calls return ErrNamespaceRequired until a namespace is named — with
+// Namespace, or WithNamespace, which also spares the question.
 //
 // The address is checked here rather than on the first call: `127.0.0.1:8099`
 // with no scheme parses as a URL, and every call made with it would fail with
@@ -129,7 +140,10 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	// NewClient's error is its options', and none of these can fail.
 	baseURL = strings.TrimSuffix(baseURL, "/")
 	api, _ := genv1.NewClientWithResponses(baseURL, clientOpts...)
-	return &Client{api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key, progress: settings.progress, brokerKeepAlive: brokerKeepAlive}, nil
+	return &Client{
+		api: api, baseURL: baseURL, httpClient: httpClient, key: settings.key, brokerKeepAlive: brokerKeepAlive,
+		namespace: settings.namespace, trusted: settings.namespace != "", me: &whoami{},
+	}, nil
 }
 
 // API is the generated client this one is built on, for every operation the
@@ -142,7 +156,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // unread; the `…WithResponse` methods read a body to its end before returning.
 func (c *Client) API() *genv1.ClientWithResponses { return c.api }
 
-// Info is what the host says about itself, including what brokers it declares.
+// Info is what the host says about itself.
 func (c *Client) Info(ctx context.Context) (*genv1.HostInfo, error) {
 	res, err := c.api.GetInfoWithResponse(ctx)
 	if err != nil {
@@ -152,6 +166,24 @@ func (c *Client) Info(ctx context.Context) (*genv1.HostInfo, error) {
 		return nil, refused(res.HTTPResponse, res.Body)
 	}
 	return res.JSON200, nil
+}
+
+// Brokers is the shared brokers the client's namespace declares: what a
+// spec in it may name without writing out an upstream. Another namespace's
+// are not this one's to name, or to read.
+func (c *Client) Brokers(ctx context.Context) ([]genv1.Broker, error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.api.ListBrokersWithResponse(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if res.JSON200 == nil {
+		return nil, refused(res.HTTPResponse, res.Body)
+	}
+	return res.JSON200.Items, nil
 }
 
 // Spec is what a sandbox should be. It is the contract's own type: a second
@@ -175,6 +207,9 @@ type Sandbox struct {
 	Brokers map[string]int
 	// Identity is what an upstream sees when this sandbox calls it.
 	Identity *genv1.Identity
+	// Namespace is the namespace it is in, which every call about it goes
+	// to: what a caller of the generated client passes beside its ID.
+	Namespace string
 
 	client *Client
 }
@@ -195,6 +230,10 @@ type Sandbox struct {
 // caller that got nil could not drop it: `if sandbox != nil { sandbox.Close }`
 // belongs on the error path too.
 func (c *Client) Create(ctx context.Context, name string, spec Spec) (*Sandbox, error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if name != "" {
 		labels := map[string]string{}
 		if spec.Labels != nil {
@@ -211,10 +250,9 @@ func (c *Client) Create(ctx context.Context, name string, spec Spec) (*Sandbox, 
 	// way — which, retried, made a second attempt of a create the daemon had
 	// already answered.
 	var raw *http.Response
-	var err error
 	pause := backoff{first: 250 * time.Millisecond, most: time.Second}
 	for attempt := 1; ; attempt++ {
-		raw, err = c.api.CreateSandbox(ctx, params, spec)
+		raw, err = c.api.CreateSandbox(ctx, namespace, params, spec)
 		if err == nil || attempt == createAttempts || !pause.wait(ctx) {
 			break
 		}
@@ -238,7 +276,7 @@ func (c *Client) Create(ctx context.Context, name string, spec Spec) (*Sandbox, 
 	if created == nil {
 		return nil, refused(res.HTTPResponse, res.Body)
 	}
-	return c.wait(ctx, *created)
+	return c.wait(ctx, namespace, *created)
 }
 
 // createAttempts bounds Create's retries. Enough to ride out a daemon
@@ -248,19 +286,27 @@ const createAttempts = 4
 
 // Open returns a handle to a sandbox that already exists.
 func (c *Client) Open(ctx context.Context, id genv1.SandboxID) (*Sandbox, error) {
-	res, err := c.api.GetSandboxWithResponse(ctx, id)
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.api.GetSandboxWithResponse(ctx, namespace, id)
 	if err != nil {
 		return nil, err
 	}
 	if res.JSON200 == nil {
 		return nil, refused(res.HTTPResponse, res.Body)
 	}
-	return c.handle(*res.JSON200), nil
+	return c.handle(namespace, *res.JSON200), nil
 }
 
-// List is every sandbox on the host.
+// List is every sandbox in the client's namespace.
 func (c *Client) List(ctx context.Context) ([]genv1.Sandbox, error) {
-	res, err := c.api.ListSandboxesWithResponse(ctx, &genv1.ListSandboxesParams{})
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.api.ListSandboxesWithResponse(ctx, namespace, &genv1.ListSandboxesParams{})
 	if err != nil {
 		return nil, err
 	}
@@ -289,20 +335,17 @@ func (c *Client) waitTimeout() time.Duration {
 //
 // Every return after the create was accepted carries a handle, the last one
 // the daemon described: see Create.
-func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, error) {
+func (c *Client) wait(ctx context.Context, namespace string, created genv1.Sandbox) (*Sandbox, error) {
 	id := created.Id
-	last := c.handle(created)
+	last := c.handle(namespace, created)
 	waiting, cancel := context.WithTimeout(ctx, c.waitTimeout())
 	defer cancel()
 	pause := backoff{first: 50 * time.Millisecond, most: 2 * time.Second}
-	// The last event told of: a stream followed again starts over, and what
-	// it already said is not said twice.
-	var told int64
 	for {
-		told = c.untilSettled(waiting, id, told)
+		c.untilSettled(waiting, namespace, id)
 		// Asked in ctx rather than waiting: one that has run out is still
 		// told what the sandbox is, to say what it was still.
-		res, err := c.api.GetSandboxWithResponse(ctx, id)
+		res, err := c.api.GetSandboxWithResponse(ctx, namespace, id)
 		if err != nil {
 			return last, err
 		}
@@ -310,7 +353,7 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 			return last, refused(res.HTTPResponse, res.Body)
 		}
 		sandbox := *res.JSON200
-		last = c.handle(sandbox)
+		last = c.handle(namespace, sandbox)
 		switch sandbox.State {
 		case genv1.SandboxStateReady:
 			return last, nil
@@ -344,31 +387,21 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 // untilSettled follows a sandbox's events until one says it has reached a
 // state waiting will not change, or until they cannot be followed. It says
 // nothing about which: the state is read after, from the sandbox itself.
-//
-// What the daemon says the sandbox is doing on the way is passed on
-// (WithProgress), past the event told is the sequence of: it returns the
-// sequence of the last one it passed on, or told.
-func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID, told int64) int64 {
+func (c *Client) untilSettled(ctx context.Context, namespace string, id genv1.SandboxID) {
 	follow := genv1.FollowQuery(true)
-	res, err := c.api.StreamSandboxEvents(ctx, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
+	res, err := c.api.StreamSandboxEvents(ctx, namespace, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
 	if err != nil {
-		return told
+		return
 	}
 	defer closeBody(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return told
+		return
 	}
 	decoder := json.NewDecoder(res.Body)
 	for {
 		var event genv1.SandboxEvent
 		if err := decoder.Decode(&event); err != nil {
-			return told
-		}
-		if event.Type == genv1.SandboxEventTypeProgress && event.Message != nil && event.Seq > told {
-			told = event.Seq
-			if c.progress != nil {
-				c.progress(*event.Message)
-			}
+			return
 		}
 		if event.State == nil {
 			continue
@@ -376,14 +409,19 @@ func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID, told int6
 		switch *event.State {
 		case genv1.SandboxStateReady, genv1.SandboxStateFailed, genv1.SandboxStateGone, genv1.SandboxStateStopped,
 			genv1.SandboxStatePaused:
-			return told
+			return
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
 		}
 	}
 }
 
-func (c *Client) handle(sandbox genv1.Sandbox) *Sandbox {
-	handle := &Sandbox{ID: sandbox.Id, State: sandbox.State, client: c, Identity: sandbox.Identity}
+// handle is a sandbox's handle. Its namespace is the one its body says, and
+// the one it was asked of when a daemon's body does not say.
+func (c *Client) handle(namespace string, sandbox genv1.Sandbox) *Sandbox {
+	if sandbox.Namespace != nil && *sandbox.Namespace != "" {
+		namespace = *sandbox.Namespace
+	}
+	handle := &Sandbox{ID: sandbox.Id, State: sandbox.State, Namespace: namespace, client: c, Identity: sandbox.Identity}
 	if sandbox.Labels != nil {
 		handle.Name = (*sandbox.Labels)["name"]
 	}
@@ -424,7 +462,7 @@ func (s *Sandbox) Run(ctx context.Context, argv ...string) (*Result, error) {
 // RunWith is Run with the rest of the contract's options: a directory, an
 // environment, a user, a deadline.
 func (s *Sandbox) RunWith(ctx context.Context, request genv1.CommandRequest) (*Result, error) {
-	res, err := s.client.api.RunCommandWithResponse(ctx, s.ID, request)
+	res, err := s.client.api.RunCommandWithResponse(ctx, s.Namespace, s.ID, request)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +490,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path string, body []byte, mode 
 	if mode != "" {
 		params.Mode = &mode
 	}
-	res, err := s.client.api.WriteFileWithBodyWithResponse(ctx, s.ID, params,
+	res, err := s.client.api.WriteFileWithBodyWithResponse(ctx, s.Namespace, s.ID, params,
 		"application/octet-stream", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -462,7 +500,7 @@ func (s *Sandbox) WriteFile(ctx context.Context, path string, body []byte, mode 
 
 // ReadFile takes bytes out. A directory comes back as a tar.
 func (s *Sandbox) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	res, err := s.client.api.ReadFileWithResponse(ctx, s.ID, &genv1.ReadFileParams{Path: path})
+	res, err := s.client.api.ReadFileWithResponse(ctx, s.Namespace, s.ID, &genv1.ReadFileParams{Path: path})
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +534,7 @@ type Rule = genv1.EgressRuleSpec
 // firewall and the sandbox's resolver enforce it. The other rules are left as
 // they are, and sending the same rule again changes nothing.
 func (s *Sandbox) PutRule(ctx context.Context, name string, rule Rule) (bool, error) {
-	res, err := s.client.api.PutEgressRuleWithResponse(ctx, s.ID, name, rule)
+	res, err := s.client.api.PutEgressRuleWithResponse(ctx, s.Namespace, s.ID, name, rule)
 	if err != nil {
 		return false, err
 	}
@@ -514,7 +552,7 @@ func (s *Sandbox) PutRule(ctx context.Context, name string, rule Rule) (bool, er
 // paused is answered as it is. A rule the sandbox does not have is an error
 // with the code `not_found`.
 func (s *Sandbox) PauseRule(ctx context.Context, name string) (*genv1.EgressRule, error) {
-	res, err := s.client.api.PauseEgressRuleWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.PauseEgressRuleWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +564,7 @@ func (s *Sandbox) PauseRule(ctx context.Context, name string) (*genv1.EgressRule
 
 // ResumeRule puts a paused egress rule back in force, as it was written.
 func (s *Sandbox) ResumeRule(ctx context.Context, name string) (*genv1.EgressRule, error) {
-	res, err := s.client.api.ResumeEgressRuleWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.ResumeEgressRuleWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +578,7 @@ func (s *Sandbox) ResumeRule(ctx context.Context, name string) (*genv1.EgressRul
 // once. A rule the sandbox does not have is an error with the code
 // `not_found`.
 func (s *Sandbox) DeleteRule(ctx context.Context, name string) error {
-	res, err := s.client.api.DeleteEgressRuleWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.DeleteEgressRuleWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return err
 	}
@@ -556,7 +594,7 @@ type Kill = genv1.KillConnections
 // still allows the destination lets the workload connect again: pause or
 // delete the rule first to close it for good.
 func (s *Sandbox) KillConnections(ctx context.Context, kill Kill) ([]genv1.Connection, error) {
-	res, err := s.client.api.KillConnectionsWithResponse(ctx, s.ID, kill)
+	res, err := s.client.api.KillConnectionsWithResponse(ctx, s.Namespace, s.ID, kill)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +616,7 @@ type Tunnel = genv1.Tunnel
 // name, and says whether it was made. A replaced tunnel keeps its address and
 // its tokens; a tunnel made again after a delete is at a new address.
 func (s *Sandbox) PutTunnel(ctx context.Context, name string, spec TunnelSpec) (*Tunnel, bool, error) {
-	res, err := s.client.api.PutTunnelWithResponse(ctx, s.ID, name, spec)
+	res, err := s.client.api.PutTunnelWithResponse(ctx, s.Namespace, s.ID, name, spec)
 	if err != nil {
 		return nil, false, err
 	}
@@ -593,7 +631,7 @@ func (s *Sandbox) PutTunnel(ctx context.Context, name string, spec TunnelSpec) (
 
 // Tunnels is every tunnel the sandbox has, in the order they were made.
 func (s *Sandbox) Tunnels(ctx context.Context) ([]Tunnel, error) {
-	res, err := s.client.api.ListTunnelsWithResponse(ctx, s.ID)
+	res, err := s.client.api.ListTunnelsWithResponse(ctx, s.Namespace, s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +644,7 @@ func (s *Sandbox) Tunnels(ctx context.Context) ([]Tunnel, error) {
 // Tunnel is one of the sandbox's tunnels. One it does not have is an error
 // with the code `not_found`.
 func (s *Sandbox) Tunnel(ctx context.Context, name string) (*Tunnel, error) {
-	res, err := s.client.api.GetTunnelWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.GetTunnelWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +657,7 @@ func (s *Sandbox) Tunnel(ctx context.Context, name string) (*Tunnel, error) {
 // PauseTunnel stops serving a tunnel and keeps it, address and tokens; the
 // connections open through it are ended.
 func (s *Sandbox) PauseTunnel(ctx context.Context, name string) (*Tunnel, error) {
-	res, err := s.client.api.PauseTunnelWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.PauseTunnelWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +669,7 @@ func (s *Sandbox) PauseTunnel(ctx context.Context, name string) (*Tunnel, error)
 
 // ResumeTunnel serves a paused tunnel again, at the address it had.
 func (s *Sandbox) ResumeTunnel(ctx context.Context, name string) (*Tunnel, error) {
-	res, err := s.client.api.ResumeTunnelWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.ResumeTunnelWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -644,7 +682,7 @@ func (s *Sandbox) ResumeTunnel(ctx context.Context, name string) (*Tunnel, error
 // DeleteTunnel takes a tunnel away: its address answers nothing and the
 // connections through it are ended.
 func (s *Sandbox) DeleteTunnel(ctx context.Context, name string) error {
-	res, err := s.client.api.DeleteTunnelWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.DeleteTunnelWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return err
 	}
@@ -655,7 +693,7 @@ func (s *Sandbox) DeleteTunnel(ctx context.Context, name string) error {
 // `Authorization: Bearer <token>`. The answer is the only time the token
 // exists outside the caller.
 func (s *Sandbox) MintTunnelToken(ctx context.Context, name, comment string) (*genv1.TunnelTokenCreated, error) {
-	res, err := s.client.api.CreateTunnelTokenWithResponse(ctx, s.ID, name, genv1.TunnelTokenRequest{Comment: comment})
+	res, err := s.client.api.CreateTunnelTokenWithResponse(ctx, s.Namespace, s.ID, name, genv1.TunnelTokenRequest{Comment: comment})
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +709,7 @@ func (s *Sandbox) RevokeTunnelToken(ctx context.Context, name, tokenID, reason s
 	if reason != "" {
 		params.Reason = &reason
 	}
-	res, err := s.client.api.RevokeTunnelTokenWithResponse(ctx, s.ID, name, tokenID, params)
+	res, err := s.client.api.RevokeTunnelTokenWithResponse(ctx, s.Namespace, s.ID, name, tokenID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +730,7 @@ func (s *Sandbox) TunnelActivity(ctx context.Context, name string, limit int, cu
 	if cursor != "" {
 		params.Cursor = &cursor
 	}
-	res, err := s.client.api.GetTunnelActivityWithResponse(ctx, s.ID, name, params)
+	res, err := s.client.api.GetTunnelActivityWithResponse(ctx, s.Namespace, s.ID, name, params)
 	if err != nil {
 		return nil, err
 	}
@@ -711,7 +749,7 @@ type TunnelGuest = genv1.TunnelGuest
 // by the gateway and read through the host's relay, so while either is away
 // this is an error with the code `upstream_error` that says which.
 func (s *Sandbox) TunnelGuests(ctx context.Context, name string) ([]TunnelGuest, error) {
-	res, err := s.client.api.ListTunnelGuestsWithResponse(ctx, s.ID, name)
+	res, err := s.client.api.ListTunnelGuestsWithResponse(ctx, s.Namespace, s.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +763,7 @@ func (s *Sandbox) TunnelGuests(ctx context.Context, name string) ([]TunnelGuest,
 // next request on. An admin is not a guest; take them out of the tunnel's
 // access.emails with PutTunnel instead.
 func (s *Sandbox) RevokeTunnelGuest(ctx context.Context, name, email string) error {
-	res, err := s.client.api.RevokeTunnelGuestWithResponse(ctx, s.ID, name, email)
+	res, err := s.client.api.RevokeTunnelGuestWithResponse(ctx, s.Namespace, s.ID, name, email)
 	if err != nil {
 		return err
 	}
@@ -733,10 +771,14 @@ func (s *Sandbox) RevokeTunnelGuest(ctx context.Context, name, email string) err
 }
 
 // Counts is how many sandboxes, tunnels, volumes, images and shared brokers
-// the host has — each only if this client's key may read the list it counts,
-// and nil otherwise.
+// the client's namespace has — each only if this client's key may read the
+// list it counts, and nil otherwise.
 func (c *Client) Counts(ctx context.Context) (*genv1.HostCounts, error) {
-	res, err := c.api.GetCountsWithResponse(ctx)
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.api.GetCountsWithResponse(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -759,15 +801,20 @@ func (c *Client) HostCommitments(ctx context.Context) (*genv1.HostCommitments, e
 	return res.JSON200, nil
 }
 
-// HostTunnels is every tunnel on the host, and the relay that serves them.
+// HostTunnels is every tunnel in the client's namespace, and the relay that
+// serves them.
 func (c *Client) HostTunnels(ctx context.Context) (*genv1.HostTunnels, error) {
 	return c.HostTunnelsPage(ctx, 0, "")
 }
 
-// HostTunnelsPage is a page of the host's tunnels, oldest first, and the relay
-// that serves them. limit 0 is every one that is left; cursor is the last
+// HostTunnelsPage is a page of the namespace's tunnels, oldest first, and the
+// relay that serves them. limit 0 is every one that is left; cursor is the last
 // page's NextCursor, or empty for the first.
 func (c *Client) HostTunnelsPage(ctx context.Context, limit int, cursor string) (*genv1.HostTunnels, error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
 	params := &genv1.ListHostTunnelsParams{}
 	if limit > 0 {
 		params.Limit = &limit
@@ -775,7 +822,7 @@ func (c *Client) HostTunnelsPage(ctx context.Context, limit int, cursor string) 
 	if cursor != "" {
 		params.Cursor = &cursor
 	}
-	res, err := c.api.ListHostTunnelsWithResponse(ctx, params)
+	res, err := c.api.ListHostTunnelsWithResponse(ctx, namespace, params)
 	if err != nil {
 		return nil, err
 	}
@@ -789,7 +836,7 @@ func (c *Client) HostTunnelsPage(ctx context.Context, limit int, cursor string) 
 // its names are pinned to, what it has open, and what it tried to reach and
 // was refused.
 func (s *Sandbox) Egress(ctx context.Context) (*genv1.EgressStatus, error) {
-	res, err := s.client.api.GetSandboxEgressWithResponse(ctx, s.ID)
+	res, err := s.client.api.GetSandboxEgressWithResponse(ctx, s.Namespace, s.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -817,21 +864,21 @@ func (s *Sandbox) Release(ctx context.Context) error {
 
 func (s *Sandbox) drop(ctx context.Context, what string) error {
 	disk := genv1.DeleteSandboxParamsDisk(what)
-	res, err := s.client.api.DeleteSandboxWithResponse(ctx, s.ID, &genv1.DeleteSandboxParams{Disk: &disk})
+	res, err := s.client.api.DeleteSandboxWithResponse(ctx, s.Namespace, s.ID, &genv1.DeleteSandboxParams{Disk: &disk})
 	if err != nil {
 		return err
 	}
 	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
 
-// Volumes is every volume on the host, with the sandbox holding each: those
-// carrying every label given, written `key=value`, when some are.
-func (c *Client) Volumes(ctx context.Context, labels ...string) ([]genv1.Volume, error) {
-	params := &genv1.ListVolumesParams{}
-	if len(labels) > 0 {
-		params.Label = &labels
+// Volumes is every volume in the client's namespace, with the sandbox holding
+// each.
+func (c *Client) Volumes(ctx context.Context) ([]genv1.Volume, error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
 	}
-	res, err := c.api.ListVolumesWithResponse(ctx, params)
+	res, err := c.api.ListVolumesWithResponse(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -841,24 +888,14 @@ func (c *Client) Volumes(ctx context.Context, labels ...string) ([]genv1.Volume,
 	return res.JSON200.Items, nil
 }
 
-// SetVolumeLabels replaces a volume's labels, whether or not a sandbox holds
-// it. Nil clears them, as an empty set does.
-func (c *Client) SetVolumeLabels(ctx context.Context, name string, labels map[string]string) error {
-	if labels == nil {
-		// Sent as null, it is a body without them, which is refused.
-		labels = map[string]string{}
-	}
-	res, err := c.api.SetVolumeLabelsWithResponse(ctx, name, genv1.SetVolumeLabelsJSONRequestBody{Labels: labels})
-	if err != nil {
-		return err
-	}
-	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
-}
-
 // DeleteVolume lets a volume go, and what was written on it. Deleting one that
 // is not there succeeds; one a sandbox holds is refused with `volume_in_use`.
 func (c *Client) DeleteVolume(ctx context.Context, name string) error {
-	res, err := c.api.DeleteVolumeWithResponse(ctx, name)
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return err
+	}
+	res, err := c.api.DeleteVolumeWithResponse(ctx, namespace, name)
 	if err != nil {
 		return err
 	}
@@ -868,7 +905,7 @@ func (c *Client) DeleteVolume(ctx context.Context, name string) error {
 // Console is what the guest wrote to its serial port: the whole diagnosis when
 // a machine never reaches its agent.
 func (s *Sandbox) Console(ctx context.Context) (string, error) {
-	res, err := s.client.api.GetSandboxConsoleWithResponse(ctx, s.ID, &genv1.GetSandboxConsoleParams{})
+	res, err := s.client.api.GetSandboxConsoleWithResponse(ctx, s.Namespace, s.ID, &genv1.GetSandboxConsoleParams{})
 	if err != nil {
 		return "", err
 	}

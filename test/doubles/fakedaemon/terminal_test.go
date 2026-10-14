@@ -15,7 +15,7 @@ import (
 func ready(t *testing.T, opts ...Option) (*Daemon, string) {
 	t.Helper()
 	d := New(t, append([]Option{WithKey("k")}, opts...)...)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, d.URL+"/v1/sandboxes", strings.NewReader(`{"image":"x"}`))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, d.URL+"/v1/namespaces/default/sandboxes", strings.NewReader(`{"image":"x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func ready(t *testing.T, opts ...Option) (*Daemon, string) {
 	if err := json.NewDecoder(res.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
-	return d, d.URL + "/v1/sandboxes/" + created.Id.String() + "/terminal"
+	return d, d.URL + "/v1/namespaces/default/sandboxes/" + created.Id.String() + "/terminal"
 }
 
 // dial opens a terminal, and is the status it was answered with.
@@ -59,7 +59,7 @@ func TestATerminalIsRefusedWhatTheRouteRefuses(t *testing.T) {
 	}{
 		{"too wide", url + "?cols=1001", http.StatusBadRequest},
 		{"not a number", url + "?rows=many", http.StatusBadRequest},
-		{"no such sandbox", d.URL + "/v1/sandboxes/00000000-0000-0000-0000-000000000000/terminal", http.StatusNotFound},
+		{"no such sandbox", d.URL + "/v1/namespaces/default/sandboxes/00000000-0000-0000-0000-000000000000/terminal", http.StatusNotFound},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			conn, status, err := dial(t, c.url)

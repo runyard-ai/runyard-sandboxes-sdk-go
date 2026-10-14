@@ -60,6 +60,31 @@ files, egress rules, tunnels, volumes and serving a client broker. Everything
 else in the API is on `client.API()`, the client generated from the OpenAPI
 document, on the same address and key.
 
+## Namespaces
+
+Every sandbox, volume and tunnel is in a namespace, and so is every call about
+one. A key bound to a namespace binds the client to it: the first such call
+asks the daemon once who the key is (`GET /v1/me`), and every call after goes
+to that namespace with nothing more said.
+
+A global key reaches several, so a call about a sandbox returns
+`sdk.ErrNamespaceRequired`, without sending anything, until the client is told
+which:
+
+```go
+acme := client.Namespace("acme") // the same client, bound to acme
+sandbox, err := acme.Create(ctx, "hello", sdk.Spec{Image: "debian:bookworm-slim"})
+
+reached, err := client.Namespaces(ctx) // what the key reaches
+```
+
+`sdk.WithNamespace("acme")` names it in `New`, and spares the question. Naming
+a namespace other than the one a key is bound to fails at the first call, in
+the SDK, with an error naming both. A sandbox's handle carries the namespace
+it is in (`sandbox.Namespace`), and `client.ResolveNamespace(ctx)` is the one a
+client's calls go to: both are what a caller of `client.API()` passes beside
+an id.
+
 ## Answering a sandbox from your own program
 
 A sandbox reaches its brokers and nothing else: each is a port on
@@ -115,11 +140,6 @@ go run github.com/runyard-ai/runyard-sandboxes-sdk-go/examples/hello@latest \
   -addr https://sandboxes.example.com -key "$RUNYARD_KEY"
 ```
 
-Built on this SDK too, and published on their own: the ry harnesses —
-`ryclaude`, `rycodex` and `ryopencode`, an agent's CLI in your terminal running
-in a sandbox — in
-[runyard-harnesses](https://github.com/runyard-ai/runyard-harnesses).
-
 ## Packages
 
 | Package | What it is |
@@ -150,7 +170,9 @@ func TestHello(t *testing.T) {
 }
 ```
 
-`fakedaemon.WithRun` decides what a command prints, and `Intercept` makes one
+The fake's key is bound to its namespace, `fakedaemon.DefaultNamespace`;
+`fakedaemon.WithNamespaces` gives it others, and `fakedaemon.WithGlobalKeys`
+makes its keys global. `fakedaemon.WithRun` decides what a command prints, and `Intercept` makes one
 operation fail the way you want to test. For a client broker your code serves,
 `DialBroker` is a connection as the workload would make it, and `BrokerServed`
 waits until your code is serving it.

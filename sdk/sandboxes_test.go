@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,13 +41,13 @@ type slowDaemon struct {
 	queries atomic.Int32
 }
 
-func newSlowDaemon(t *testing.T, cut int32, opts ...Option) (*slowDaemon, *Client) {
+func newSlowDaemon(t *testing.T, cut int32) (*slowDaemon, *Client) {
 	t.Helper()
 	d := &slowDaemon{id: "0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53", ready: make(chan struct{}), following: make(chan struct{}, 16)}
 	d.cut.Store(cut)
 	server := httptest.NewServer(d)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, append([]Option{WithKey("k")}, opts...)...)
+	client, err := New(server.URL, WithKey("k"), WithNamespace("default"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +72,12 @@ func (d *slowDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"id":%q,"state":%q}`, d.id, d.state())
 	}
 	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/default/sandboxes":
 		sandbox(http.StatusAccepted)
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes/"+d.id:
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/default/sandboxes/"+d.id:
 		d.queries.Add(1)
 		sandbox(http.StatusOK)
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes/"+d.id+"/events":
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/default/sandboxes/"+d.id+"/events":
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		fmt.Fprintln(w, `{"seq":1,"type":"state","state":"creating","at":"2026-09-26T00:00:00Z"}`)
 		fmt.Fprintln(w, `{"seq":2,"type":"progress","message":"forking a disk","at":"2026-09-26T00:00:00Z"}`)
@@ -160,64 +159,6 @@ func TestCreateFollowsTheEventsAgainWhenTheyEndEarly(t *testing.T) {
 	}
 }
 
-// What the daemon says a sandbox is doing on the way is passed on while
-// Create waits, in order, and once: a stream that was cut and followed again
-// says it all again, and none of that is told twice.
-func TestCreateTellsWhatTheDaemonSaysItIsDoingOnce(t *testing.T) {
-	for _, cut := range []int32{0, 2} {
-		var told []string
-		daemon, client := newSlowDaemon(t, cut, WithProgress(func(message string) { told = append(told, message) }))
-		done := create(t, client)
-		for range cut + 1 {
-			<-daemon.following
-		}
-		daemon.makeReady()
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(told, []string{"forking a disk"}) {
-			t.Errorf("cut %d times: told %q", cut, told)
-		}
-	}
-}
-
-// Every progress the daemon gives is told, in the order it gave it, and
-// nothing else is: not a state, not an error's sentence.
-func TestCreateTellsEveryProgressInOrderAndNothingElse(t *testing.T) {
-	said := []string{"pulling example", "layer 1 of 2 (10MB)", "layer 2 of 2 (3MB)", "booting"}
-	var told []string
-	d := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{Progress: said}
-	}))
-	client, err := New(d.URL, WithKey("k"), WithProgress(func(message string) { told = append(told, message) }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Create(t.Context(), "", Spec{Image: "example"}); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(told, said) {
-		t.Errorf("told %q", told)
-	}
-
-	// One that fails says why in an error, which is Create's to return and
-	// not progress.
-	told = nil
-	failing := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "no such image", Progress: []string{"pulling example"}}
-	}))
-	client, err = New(failing.URL, WithKey("k"), WithProgress(func(message string) { told = append(told, message) }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.Create(t.Context(), "", Spec{Image: "example"}); err == nil || !strings.Contains(err.Error(), "no such image") {
-		t.Fatalf("Create: %v", err)
-	}
-	if !slices.Equal(told, []string{"pulling example"}) {
-		t.Errorf("of one that failed, told %q", told)
-	}
-}
-
 // fake is a daemon that answers the way the contract says, and a client
 // pointed at it with the key it wants.
 func fake(t *testing.T, opts ...fakedaemon.Option) (*fakedaemon.Daemon, *Client) {
@@ -277,14 +218,26 @@ func TestNewRefusesAnAddressThatIsNotADaemons(t *testing.T) {
 	}
 }
 
-func TestInfoSaysWhatTheHostIsAndWhatItDeclares(t *testing.T) {
-	_, client := fake(t, fakedaemon.WithBrokers("claude", "github"))
+func TestInfoSaysWhatTheHostIs(t *testing.T) {
+	_, client := fake(t)
 	info, err := client.Info(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Id != "fake-host" || info.Brokers == nil || len(*info.Brokers) != 2 || (*info.Brokers)[0].Name != "claude" {
+	if info.Id != "fake-host" {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+// The shared brokers are the namespace's, read from its own path.
+func TestBrokersAreTheNamespaces(t *testing.T) {
+	_, client := fake(t, fakedaemon.WithBrokers("claude", "github"))
+	declared, err := client.Brokers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 2 || declared[0].Name != "claude" {
+		t.Fatalf("brokers = %+v", declared)
 	}
 }
 
@@ -326,8 +279,9 @@ func TestWithHTTPClientIsTheTransportEveryCallUses(t *testing.T) {
 	if _, err := client.List(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := transport.calls.Load(); got != 2 {
-		t.Fatalf("the caller's transport carried %d requests, want 2", got)
+	// The info, the list, and who the key is, which the list needed first.
+	if got := transport.calls.Load(); got != 3 {
+		t.Fatalf("the caller's transport carried %d requests, want 3", got)
 	}
 }
 
@@ -790,30 +744,6 @@ func TestVolumesAreListedAndLetGo(t *testing.T) {
 	}
 }
 
-// Volumes are listed by label, and their labels set.
-func TestVolumesAreFoundAndLabelledByLabel(t *testing.T) {
-	d, client := fake(t)
-	d.PutVolumeWith("chat", 1, map[string]string{"runyard.harness": "ryclaude"}, nil, time.Time{})
-	d.PutVolumeWith("other", 1, nil, nil, time.Time{})
-	volumes, err := client.Volumes(context.Background(), "runyard.harness=ryclaude")
-	if err != nil || len(volumes) != 1 || volumes[0].Name != "chat" {
-		t.Fatalf("Volumes = %+v, %v", volumes, err)
-	}
-	if err := client.SetVolumeLabels(context.Background(), "chat", map[string]string{"runyard.title": "x"}); err != nil {
-		t.Fatal(err)
-	}
-	if labels, _ := d.VolumeLabels("chat"); labels["runyard.title"] != "x" || len(labels) != 1 {
-		t.Errorf("labels %v", labels)
-	}
-	if err := client.SetVolumeLabels(context.Background(), "never-was", nil); CodeOf(err) != "not_found" {
-		t.Errorf("labelling a volume that is not there = %v", err)
-	}
-	d.Intercept("setVolumeLabels", fakedaemon.HangUp())
-	if err := client.SetVolumeLabels(context.Background(), "chat", nil); err == nil {
-		t.Error("a hang-up was a success")
-	}
-}
-
 func TestConsoleIsWhatTheGuestWrote(t *testing.T) {
 	_, client := fake(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
 		return fakedaemon.Outcome{Console: "[    0.000000] Linux version 6.12\n"}
@@ -1003,7 +933,7 @@ func TestAPIIsTheGeneratedClientOnTheSameDaemonAndKey(t *testing.T) {
 	sandbox := ready(t, client)
 	ctx := context.Background()
 
-	got, err := client.API().GetSandboxWithResponse(ctx, sandbox.ID)
+	got, err := client.API().GetSandboxWithResponse(ctx, fakedaemon.DefaultNamespace, sandbox.ID)
 	if err != nil || got.JSON200 == nil || got.JSON200.Id != sandbox.ID {
 		t.Fatalf("GetSandbox through API() = %v %d %s", err, got.StatusCode(), got.Body)
 	}
@@ -1021,7 +951,7 @@ func TestAPIIsTheGeneratedClientOnTheSameDaemonAndKey(t *testing.T) {
 // and what a `…WithResponse` method, reading to the end first, could not do.
 func TestAFollowedStreamThroughAPIIsNotBuffered(t *testing.T) {
 	d, client := fake(t, fakedaemon.WithBoot(holding))
-	created, err := client.API().CreateSandboxWithResponse(context.Background(), &genv1.CreateSandboxParams{IdempotencyKey: "k"}, Spec{Image: "alpine"})
+	created, err := client.API().CreateSandboxWithResponse(context.Background(), fakedaemon.DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "k"}, Spec{Image: "alpine"})
 	if err != nil || created.JSON202 == nil {
 		t.Fatalf("create = %v", err)
 	}
@@ -1030,7 +960,7 @@ func TestAFollowedStreamThroughAPIIsNotBuffered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	follow := genv1.FollowQuery(true)
-	res, err := client.API().StreamSandboxEvents(ctx, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
+	res, err := client.API().StreamSandboxEvents(ctx, fakedaemon.DefaultNamespace, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
 	if err != nil {
 		t.Fatal(err)
 	}

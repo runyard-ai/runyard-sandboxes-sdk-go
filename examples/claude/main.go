@@ -80,10 +80,14 @@ func ask(ctx context.Context, o options, stdout io.Writer) (err error) {
 	if err != nil {
 		return fmt.Errorf("asking the host what it is: %w", err)
 	}
-	if !declares(info, broker) {
+	declared, err := client.Brokers(ctx)
+	if err != nil {
+		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+	}
+	if !declares(declared, broker) {
 		// Said before a machine is made, rather than discovered from a create
 		// that is refused — and with what to do about it.
-		return fmt.Errorf("%s declares no shared broker %q; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
+		return fmt.Errorf("%s declares no shared broker %q in this namespace; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
 	}
 
 	started := time.Now()
@@ -151,7 +155,7 @@ func ask(ctx context.Context, o options, stdout io.Writer) (err error) {
 		}
 		fmt.Fprintf(stdout, "\nopen   %s/console#/sandboxes/%s\n", strings.TrimSuffix(console, "/"), created.ID)
 		fmt.Fprintln(stdout, "then   Terminal → Open a terminal, and type: claude")
-		fmt.Fprintf(stdout, "it stays up until it is deleted — from the console, or DELETE /v1/sandboxes/%s\n", created.ID)
+		fmt.Fprintf(stdout, "it stays up until it is deleted — from the console, or DELETE /v1/namespaces/%s/sandboxes/%s\n", created.Namespace, created.ID)
 	}
 	return nil
 }
@@ -178,12 +182,9 @@ func seconds(d time.Duration) *int {
 	return new(int((d + time.Second - 1) / time.Second))
 }
 
-func declares(info *genv1.HostInfo, name string) bool {
-	if info.Brokers == nil {
-		return false
-	}
-	for _, declared := range *info.Brokers {
-		if declared.Name == name {
+func declares(declared []genv1.Broker, name string) bool {
+	for _, broker := range declared {
+		if broker.Name == name {
 			return true
 		}
 	}

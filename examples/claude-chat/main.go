@@ -105,8 +105,12 @@ func chat(ctx context.Context, o options, input io.Reader, stdout, stderr io.Wri
 	if err != nil {
 		return fmt.Errorf("asking the host what it is: %w", err)
 	}
-	if !declares(info, broker) {
-		return fmt.Errorf("%s declares no shared broker %q; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
+	declared, err := client.Brokers(ctx)
+	if err != nil {
+		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+	}
+	if !declares(declared, broker) {
+		return fmt.Errorf("%s declares no shared broker %q in this namespace; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
 	}
 
 	if o.volume == "" {
@@ -294,12 +298,9 @@ func holds(ctx context.Context, client *sdk.Client, name string) string {
 	return ""
 }
 
-func declares(info *genv1.HostInfo, name string) bool {
-	if info.Brokers == nil {
-		return false
-	}
-	for _, declared := range *info.Brokers {
-		if declared.Name == name {
+func declares(declared []genv1.Broker, name string) bool {
+	for _, broker := range declared {
+		if broker.Name == name {
 			return true
 		}
 	}

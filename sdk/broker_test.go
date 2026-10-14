@@ -785,7 +785,7 @@ func TestAServeTheDaemonRefusesIsItsError(t *testing.T) {
 			return err
 		}, http.StatusBadRequest, "bad_request"},
 		{"a sandbox that is not there", func(_ *fakedaemon.Daemon, s *Sandbox) error {
-			_, err := (&Sandbox{ID: uuid.New(), client: s.client}).ServeBroker(t.Context(), "llm")
+			_, err := (&Sandbox{ID: uuid.New(), Namespace: s.Namespace, client: s.client}).ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusNotFound, "not_found"},
 		{"a sandbox that is not running", func(d *fakedaemon.Daemon, s *Sandbox) error {
@@ -953,7 +953,7 @@ func TestTheDaemonHangsUpWhenItTakesTheBrokerAway(t *testing.T) {
 		}, "conflict"},
 		{"the broker is detached", func(t *testing.T, _ *fakedaemon.Daemon, s *Sandbox) {
 			t.Helper()
-			res, err := s.client.API().DetachSandboxBrokerWithResponse(t.Context(), s.ID, "llm")
+			res, err := s.client.API().DetachSandboxBrokerWithResponse(t.Context(), fakedaemon.DefaultNamespace, s.ID, "llm")
 			if err != nil || res.StatusCode() != http.StatusNoContent {
 				t.Fatalf("%v %s", err, res.Body)
 			}

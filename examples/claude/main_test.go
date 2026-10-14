@@ -194,6 +194,9 @@ func TestKeepLeavesTheSandboxUpAndSaysWhereItIs(t *testing.T) {
 	if !strings.Contains(stdout, "open   http://localhost:9000/console#/sandboxes/"+left[0].Id.String()) {
 		t.Fatalf("the console link is wrong:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "DELETE /v1/namespaces/"+fakedaemon.DefaultNamespace+"/sandboxes/"+left[0].Id.String()) {
+		t.Fatalf("the path that deletes it is wrong:\n%s", stdout)
+	}
 	if len(d.Commands()) != 0 || strings.Contains(stdout, "> ") {
 		t.Fatalf("an empty prompt was asked:\n%s", stdout)
 	}

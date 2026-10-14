@@ -155,11 +155,11 @@ func TestATerminalTheDaemonRefusesIsItsError(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := client.API().CreateSandboxWithResponse(t.Context(), &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{Image: "x"})
+		res, err := client.API().CreateSandboxWithResponse(t.Context(), fakedaemon.DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{Image: "x"})
 		if err != nil || res.JSON202 == nil {
 			t.Fatalf("%v %s", err, res.Body)
 		}
-		_, err = client.handle(*res.JSON202).Terminal(t.Context(), TerminalOptions{})
+		_, err = client.handle(fakedaemon.DefaultNamespace, *res.JSON202).Terminal(t.Context(), TerminalOptions{})
 		if CodeOf(err) != "conflict" {
 			t.Fatalf("%v", err)
 		}

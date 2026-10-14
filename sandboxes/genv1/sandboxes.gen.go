@@ -1300,9 +1300,6 @@ type KeyRequest struct {
 	// Text a person can read as it is written: not blank, and with no control or formatting character (Unicode `Cc` and `Cf` — a NUL, a newline, the marks that reverse the direction text reads in or take no width) and no line or paragraph separator. A name is shown in every list of keys, and those are how one is made to read as something it is not.
 	Name string `json:"name"`
 
-	// Namespace The namespace the key is bound to, for its life: it reaches that namespace and nothing outside it. Left out, the key is a global key, bound to none. A key bound to a namespace mints only keys bound to the same one; a global caller mints one for a namespace it reaches, for an owner who is a member there (or an administrator). A key bound to a namespace can never hold `namespaces.read` or `namespaces.write`, and a global key can never hold `members.admin`.
-	Namespace *NamespaceName `json:"namespace,omitempty"`
-
 	// Owner Whose it is. The caller, when left out; only an administrator may name somebody else.
 	Owner *openapi_types.Email `json:"owner,omitempty"`
 
@@ -2669,6 +2666,18 @@ type ListImagesParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListNamespaceKeysParams defines parameters for ListNamespaceKeys.
+type ListNamespaceKeysParams struct {
+	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor From a previous page's `nextCursor`. Opaque: it encodes a position and a snapshot, and a caller that constructs one gets a `400`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Owner Only this person's keys. A caller who is not an administrator may name only themselves.
+	Owner *openapi_types.Email `form:"owner,omitempty" json:"owner,omitempty"`
+}
+
 // PutNamespaceMemberJSONBody defines parameters for PutNamespaceMember.
 type PutNamespaceMemberJSONBody struct {
 	// Scopes A scope named twice is held once.
@@ -2874,6 +2883,9 @@ type CreateBuildJSONRequestBody = BuildRequest
 
 // PullImageJSONRequestBody defines body for PullImage for application/json ContentType.
 type PullImageJSONRequestBody = ImageRequest
+
+// CreateNamespaceKeyJSONRequestBody defines body for CreateNamespaceKey for application/json ContentType.
+type CreateNamespaceKeyJSONRequestBody = KeyRequest
 
 // PutNamespaceMemberJSONRequestBody defines body for PutNamespaceMember for application/json ContentType.
 type PutNamespaceMemberJSONRequestBody PutNamespaceMemberJSONBody
@@ -3186,6 +3198,17 @@ type ClientInterface interface {
 
 	// GetImage request
 	GetImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListNamespaceKeys request
+	ListNamespaceKeys(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateNamespaceKeyWithBody request with any body
+	CreateNamespaceKeyWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateNamespaceKey(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeNamespaceKey request
+	RevokeNamespaceKey(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListNamespaceMembers request
 	ListNamespaceMembers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3979,6 +4002,54 @@ func (c *Client) DeleteImage(ctx context.Context, namespace NamespaceInPath, ima
 
 func (c *Client) GetImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetImageRequest(c.Server, namespace, imageId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListNamespaceKeys(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListNamespaceKeysRequest(c.Server, namespace, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateNamespaceKeyWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNamespaceKeyRequestWithBody(c.Server, namespace, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateNamespaceKey(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateNamespaceKeyRequest(c.Server, namespace, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeNamespaceKey(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeNamespaceKeyRequest(c.Server, namespace, keyId)
 	if err != nil {
 		return nil, err
 	}
@@ -6764,6 +6835,182 @@ func NewGetImageRequest(server string, namespace NamespaceInPath, imageId ImageI
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListNamespaceKeysRequest generates requests for ListNamespaceKeys
+func NewListNamespaceKeysRequest(server string, namespace NamespaceInPath, params *ListNamespaceKeysParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Owner != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "owner", runtime.ParamLocationQuery, *params.Owner); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateNamespaceKeyRequest calls the generic CreateNamespaceKey builder with application/json body
+func NewCreateNamespaceKeyRequest(server string, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateNamespaceKeyRequestWithBody(server, namespace, "application/json", bodyReader)
+}
+
+// NewCreateNamespaceKeyRequestWithBody generates requests for CreateNamespaceKey with any type of body
+func NewCreateNamespaceKeyRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeNamespaceKeyRequest generates requests for RevokeNamespaceKey
+func NewRevokeNamespaceKeyRequest(server string, namespace NamespaceInPath, keyId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "keyId", runtime.ParamLocationPath, keyId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -10522,6 +10769,17 @@ type ClientWithResponsesInterface interface {
 	// GetImageWithResponse request
 	GetImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
 
+	// ListNamespaceKeysWithResponse request
+	ListNamespaceKeysWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*ListNamespaceKeysResponse, error)
+
+	// CreateNamespaceKeyWithBodyWithResponse request with any body
+	CreateNamespaceKeyWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error)
+
+	CreateNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error)
+
+	// RevokeNamespaceKeyWithResponse request
+	RevokeNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*RevokeNamespaceKeyResponse, error)
+
 	// ListNamespaceMembersWithResponse request
 	ListNamespaceMembersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListNamespaceMembersResponse, error)
 
@@ -11764,6 +12022,81 @@ func (r GetImageResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListNamespaceKeysResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *KeyPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r ListNamespaceKeysResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListNamespaceKeysResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateNamespaceKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *KeyCreated
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateNamespaceKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateNamespaceKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeNamespaceKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeNamespaceKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeNamespaceKeyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13899,6 +14232,41 @@ func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, namespac
 		return nil, err
 	}
 	return ParseGetImageResponse(rsp)
+}
+
+// ListNamespaceKeysWithResponse request returning *ListNamespaceKeysResponse
+func (c *ClientWithResponses) ListNamespaceKeysWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*ListNamespaceKeysResponse, error) {
+	rsp, err := c.ListNamespaceKeys(ctx, namespace, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListNamespaceKeysResponse(rsp)
+}
+
+// CreateNamespaceKeyWithBodyWithResponse request with arbitrary body returning *CreateNamespaceKeyResponse
+func (c *ClientWithResponses) CreateNamespaceKeyWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error) {
+	rsp, err := c.CreateNamespaceKeyWithBody(ctx, namespace, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateNamespaceKeyResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error) {
+	rsp, err := c.CreateNamespaceKey(ctx, namespace, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateNamespaceKeyResponse(rsp)
+}
+
+// RevokeNamespaceKeyWithResponse request returning *RevokeNamespaceKeyResponse
+func (c *ClientWithResponses) RevokeNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*RevokeNamespaceKeyResponse, error) {
+	rsp, err := c.RevokeNamespaceKey(ctx, namespace, keyId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeNamespaceKeyResponse(rsp)
 }
 
 // ListNamespaceMembersWithResponse request returning *ListNamespaceMembersResponse
@@ -16257,6 +16625,147 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListNamespaceKeysResponse parses an HTTP response from a ListNamespaceKeysWithResponse call
+func ParseListNamespaceKeysResponse(rsp *http.Response) (*ListNamespaceKeysResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListNamespaceKeysResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest KeyPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateNamespaceKeyResponse parses an HTTP response from a CreateNamespaceKeyWithResponse call
+func ParseCreateNamespaceKeyResponse(rsp *http.Response) (*CreateNamespaceKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateNamespaceKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest KeyCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeNamespaceKeyResponse parses an HTTP response from a RevokeNamespaceKeyWithResponse call
+func ParseRevokeNamespaceKeyResponse(rsp *http.Response) (*RevokeNamespaceKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeNamespaceKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -20114,13 +20623,13 @@ type ServerInterface interface {
 	// What this host is and what it can do
 	// (GET /v1/info)
 	GetInfo(w http.ResponseWriter, r *http.Request)
-	// The keys this daemon will accept
+	// The global keys this daemon will accept
 	// (GET /v1/keys)
 	ListKeys(w http.ResponseWriter, r *http.Request, params ListKeysParams)
-	// Mint a key
+	// Mint a global key
 	// (POST /v1/keys)
 	CreateKey(w http.ResponseWriter, r *http.Request)
-	// Revoke a key
+	// Revoke a global key
 	// (DELETE /v1/keys/{keyId})
 	RevokeKey(w http.ResponseWriter, r *http.Request, keyId string)
 	// Who is calling
@@ -20186,6 +20695,15 @@ type ServerInterface interface {
 	// Whether this image is ready, and why it is not
 	// (GET /v1/namespaces/{namespace}/images/{imageId})
 	GetImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, imageId ImageID)
+	// The keys bound to a namespace
+	// (GET /v1/namespaces/{namespace}/keys)
+	ListNamespaceKeys(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListNamespaceKeysParams)
+	// Mint a key bound to a namespace
+	// (POST /v1/namespaces/{namespace}/keys)
+	CreateNamespaceKey(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
+	// Revoke a key bound to a namespace
+	// (DELETE /v1/namespaces/{namespace}/keys/{keyId})
+	RevokeNamespaceKey(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, keyId string)
 	// List a namespace's members
 	// (GET /v1/namespaces/{namespace}/members)
 	ListNamespaceMembers(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
@@ -21795,6 +22313,141 @@ func (siw *ServerInterfaceWrapper) GetImage(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetImage(w, r, namespace, imageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNamespaceKeys operation middleware
+func (siw *ServerInterfaceWrapper) ListNamespaceKeys(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListNamespaceKeysParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "owner" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "owner", r.URL.Query(), &params.Owner)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNamespaceKeys(w, r, namespace, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNamespaceKey operation middleware
+func (siw *ServerInterfaceWrapper) CreateNamespaceKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNamespaceKey(w, r, namespace)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeNamespaceKey operation middleware
+func (siw *ServerInterfaceWrapper) RevokeNamespaceKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "keyId" -------------
+	var keyId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "keyId", r.PathValue("keyId"), &keyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "keyId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeNamespaceKey(w, r, namespace, keyId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25177,6 +25830,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/images", wrapper.PullImage)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/images/{imageId}", wrapper.DeleteImage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/images/{imageId}", wrapper.GetImage)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/keys", wrapper.ListNamespaceKeys)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/keys", wrapper.CreateNamespaceKey)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/keys/{keyId}", wrapper.RevokeNamespaceKey)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/members", wrapper.ListNamespaceMembers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.DeleteNamespaceMember)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.PutNamespaceMember)

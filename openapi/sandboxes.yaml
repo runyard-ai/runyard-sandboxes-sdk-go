@@ -597,15 +597,17 @@ paths:
         required: true
         schema:
           type: string
-          enum: [sandboxes, tunnels, volumes, images, builds, brokers]
+          enum: [overview, usage, keys, sandboxes, tunnels, volumes, images, builds, brokers]
     get:
       operationId: getConsoleNamespacePage
       tags: [Meta]
       security: []
       summary: One of the console's pages, in one namespace
       description: >-
-        As `GET /console/namespaces/{namespace}`, on one of the pages about
-        what is in a namespace. A page the console does not have is a `404`.
+        As `GET /console/namespaces/{namespace}`, on one of its pages: those
+        about what is in a namespace, and the ones about the whole control
+        plane, read without leaving it. Its keys are the namespace's. A page
+        the console does not have is a `404`.
       responses:
         "200":
           description: The console.
@@ -3764,10 +3766,12 @@ paths:
     get:
       operationId: listKeys
       tags: [Keys]
-      summary: The keys this daemon will accept
+      summary: The global keys this daemon will accept
       description: >-
-        The caller's own keys; an administrator's call lists everybody's,
-        each with its owner, and may ask for one person's.
+        The caller's own global keys, bound to no namespace; an
+        administrator's call lists everybody's, each with its owner, and may
+        ask for one person's. A namespace's keys are listed in it
+        (`GET /v1/namespaces/{namespace}/keys`).
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -3790,8 +3794,15 @@ paths:
     post:
       operationId: createKey
       tags: [Keys]
-      summary: Mint a key
+      summary: Mint a global key
       description: >-
+        A key bound to no namespace: it reaches every namespace its owner
+        does, and can never hold `members.admin`, which is held in one. A key
+        for one namespace is minted in it
+        (`POST /v1/namespaces/{namespace}/keys`), and a key bound to a
+        namespace mints no global key.
+
+
         Needs `keys.admin`, and may only grant scopes the caller already has.
         Otherwise `keys.admin` is `*`, spelled at one remove. Nor may it grant
         a wider reach than the caller's: a key that acts only on its `own`
@@ -3834,11 +3845,13 @@ paths:
     delete:
       operationId: revokeKey
       tags: [Keys]
-      summary: Revoke a key
+      summary: Revoke a global key
       description: >-
         In force at once, on every daemon in front of the same database: a
         key revoked in a minute is a key that is not revoked. Idempotent.
-        The caller's own keys, or anybody's for an administrator.
+        The caller's own keys, or anybody's for an administrator. A key bound
+        to a namespace is revoked in it, and is not one here: revoking it
+        here revokes nothing.
       responses:
         "204":
           description: Revoked, or was already.
@@ -4189,6 +4202,93 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NamespaceNotEmpty" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/namespaces/{namespace}/keys:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+    get:
+      operationId: listNamespaceKeys
+      tags: [Keys]
+      summary: The keys bound to a namespace
+      description: >-
+        `keys.admin` in this namespace. The caller's own keys bound to it;
+        an administrator's call lists everybody's, and may ask for one
+        person's. Global keys are not here (`GET /v1/keys`).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: owner
+          in: query
+          description: >-
+            Only this person's keys. A caller who is not an administrator
+            may name only themselves.
+          schema: { type: string, format: email }
+      responses:
+        "200":
+          description: The keys, without their secrets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyPage" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createNamespaceKey
+      tags: [Keys]
+      summary: Mint a key bound to a namespace
+      description: >-
+        A key that reaches this namespace, for its life, and nothing outside
+        it. As `POST /v1/keys`, with what the caller holds here: it needs
+        `keys.admin` in this namespace and grants only scopes it holds here.
+        The owner must be a member of the namespace, or an administrator.
+        Such a key can never hold `namespaces.read` or `namespaces.write`,
+        which are about every namespace; and a key bound to a namespace
+        mints only keys bound to the same one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeyRequest" }
+      responses:
+        "201":
+          description: Minted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KeyCreated" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/namespaces/{namespace}/keys/{keyId}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - name: keyId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokeNamespaceKey
+      tags: [Keys]
+      summary: Revoke a key bound to a namespace
+      description: >-
+        As `DELETE /v1/keys/{keyId}`, for a key bound to this namespace. One
+        that is not bound to it is not one here: revoking it here revokes
+        nothing.
+      responses:
+        "204":
+          description: Revoked, or was already.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/namespaces/{namespace}/members:
@@ -6749,17 +6849,6 @@ components:
             Which sandboxes it acts on. `all`, when left out. A caller that
             is itself a key acting only on its `own` may ask for nothing
             wider.
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          description: >-
-            The namespace the key is bound to, for its life: it reaches that
-            namespace and nothing outside it. Left out, the key is a global
-            key, bound to none. A key bound to a namespace mints only keys
-            bound to the same one; a global caller mints one for a namespace
-            it reaches, for an owner who is a member there (or an
-            administrator). A key bound to a namespace can never hold
-            `namespaces.read` or `namespaces.write`, and a global key can
-            never hold `members.admin`.
 
     KeyReach:
       type: string

@@ -788,6 +788,23 @@ func (c *Client) Counts(ctx context.Context) (*genv1.HostCounts, error) {
 	return res.JSON200, nil
 }
 
+// Costs is what this client's namespace used and cost over window, and the
+// hourly cost of what it holds now: of a key held to its own, what it made.
+func (c *Client) Costs(ctx context.Context, window genv1.CostWindow) (*genv1.CostReport, error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.api.GetNamespaceCostsWithResponse(ctx, namespace, &genv1.GetNamespaceCostsParams{Window: &window})
+	if err != nil {
+		return nil, err
+	}
+	if res.JSON200 == nil {
+		return nil, refused(res.HTTPResponse, res.Body)
+	}
+	return res.JSON200, nil
+}
+
 // HostCommitments is what the host's sandboxes were made with, added up: the
 // vCPUs and memory of those with a machine, and the disks of all of them.
 func (c *Client) HostCommitments(ctx context.Context) (*genv1.HostCommitments, error) {

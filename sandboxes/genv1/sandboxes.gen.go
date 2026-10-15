@@ -51,6 +51,28 @@ const (
 	BuildStepStateRunning BuildStepState = "running"
 )
 
+// Defines values for CostKind.
+const (
+	CostKindImage   CostKind = "image"
+	CostKindSandbox CostKind = "sandbox"
+	CostKindTunnel  CostKind = "tunnel"
+	CostKindVolume  CostKind = "volume"
+)
+
+// Defines values for CostReportStep.
+const (
+	CostStepDay  CostReportStep = "day"
+	CostStepHour CostReportStep = "hour"
+)
+
+// Defines values for CostWindow.
+const (
+	CostWindow24h CostWindow = "24h"
+	CostWindow30d CostWindow = "30d"
+	CostWindow7d  CostWindow = "7d"
+	CostWindow90d CostWindow = "90d"
+)
+
 // Defines values for EgressRefusalKind.
 const (
 	Connect EgressRefusalKind = "connect"
@@ -424,6 +446,151 @@ type Connection struct {
 	// State A TCP connection's state, as conntrack names it.
 	State *string `json:"state,omitempty"`
 }
+
+// CostAmounts An amount, in the report's currency, by what it was for.
+type CostAmounts struct {
+	Images float64 `json:"images"`
+
+	// Sandboxes Running sandboxes: their vCPUs and memory.
+	Sandboxes float64 `json:"sandboxes"`
+
+	// Total The four together.
+	Total   float64 `json:"total"`
+	Tunnels float64 `json:"tunnels"`
+
+	// Volumes Volumes, every sandbox's disk among them.
+	Volumes float64 `json:"volumes"`
+}
+
+// CostBucket What was spent in one step of the window, from `at`.
+type CostBucket struct {
+	// Amounts An amount, in the report's currency, by what it was for.
+	Amounts CostAmounts `json:"amounts"`
+	At      time.Time   `json:"at"`
+}
+
+// CostCharge What each part of a use cost, at the rates of the moment it was used.
+type CostCharge struct {
+	Disk   float64 `json:"disk"`
+	Memory float64 `json:"memory"`
+	Tunnel float64 `json:"tunnel"`
+	Vcpu   float64 `json:"vcpu"`
+}
+
+// CostKind defines model for CostKind.
+type CostKind string
+
+// CostRates What an hour of each thing costs now, in `currency`, as the daemon's configuration names it.
+type CostRates struct {
+	Currency string `json:"currency"`
+
+	// DiskGiBHour A GiB of a volume, at the size it may grow to, or of an image, for an hour.
+	DiskGiBHour float64 `json:"diskGiBHour"`
+
+	// MemoryGiBHour A GiB of a running sandbox's memory, for an hour.
+	MemoryGiBHour float64 `json:"memoryGiBHour"`
+
+	// TunnelHour A tunnel served, for an hour.
+	TunnelHour float64 `json:"tunnelHour"`
+
+	// VcpuHour A vCPU of a running sandbox, not a paused one, for an hour.
+	VcpuHour float64 `json:"vcpuHour"`
+}
+
+// CostReport What was spent over a window, step by step and thing by thing, and what is spent an hour now.
+type CostReport struct {
+	Currency string `json:"currency"`
+
+	// From The first step's start.
+	From time.Time `json:"from"`
+
+	// Namespaces Each namespace's, the most expensive first.
+	Namespaces []NamespaceCost `json:"namespaces"`
+
+	// Rates What an hour of each thing costs now, in `currency`, as the daemon's configuration names it.
+	Rates CostRates `json:"rates"`
+
+	// Resources Everything that cost anything in the window, or was held in it, live or not, the most expensive first: at most 500.
+	Resources []CostResource `json:"resources"`
+
+	// Running What is held now costs an hour, at today's rates.
+	Running CostAmounts `json:"running"`
+
+	// Series Every step of the window, oldest first, those nothing was spent in too.
+	Series []CostBucket   `json:"series"`
+	Step   CostReportStep `json:"step"`
+
+	// To Now.
+	To time.Time `json:"to"`
+
+	// Total What was spent over the window.
+	Total CostAmounts `json:"total"`
+
+	// Window How far back. `24h` is hour by hour; the others are day by day, each day in UTC.
+	Window CostWindow `json:"window"`
+}
+
+// CostReportStep defines model for CostReport.Step.
+type CostReportStep string
+
+// CostResource One thing that cost anything in the window, or was held in it: what it was when it was last seen, what it used and cost, and, while it is held, what it costs an hour.
+type CostResource struct {
+	// Charge What each part of a use cost, at the rates of the moment it was used.
+	Charge CostCharge `json:"charge"`
+
+	// Cost What it cost over the window.
+	Cost float64 `json:"cost"`
+
+	// Cpus A sandbox's vCPUs.
+	Cpus *int `json:"cpus,omitempty"`
+
+	// DiskBytes A volume's or an image's size.
+	DiskBytes   *int64    `json:"diskBytes,omitempty"`
+	FirstSeenAt time.Time `json:"firstSeenAt"`
+
+	// Id A sandbox's id, a volume's name, an image's id, and a tunnel's sandbox id and name, as `<sandbox>/<tunnel>`.
+	Id   string   `json:"id"`
+	Kind CostKind `json:"kind"`
+
+	// Labels A sandbox's labels, as it was last seen.
+	Labels     map[string]string `json:"labels"`
+	LastSeenAt time.Time         `json:"lastSeenAt"`
+
+	// Live Whether it is charged for now. A sandbox stopped or deleted, a volume let go, is not.
+	Live bool `json:"live"`
+
+	// MemoryBytes A sandbox's memory.
+	MemoryBytes *int64 `json:"memoryBytes,omitempty"`
+
+	// Name What a person knows it by, when its id is not that — an image's reference, a tunnel's name.
+	Name *string `json:"name,omitempty"`
+
+	// Namespace A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
+	Namespace NamespaceName `json:"namespace"`
+
+	// Paused A sandbox paused now, charged for its memory and not its vCPUs: a pause stops them and keeps the memory.
+	Paused *bool `json:"paused,omitempty"`
+
+	// PerHour What it costs an hour now, at today's rates; 0 when it is not live.
+	PerHour float64 `json:"perHour"`
+
+	// Use What something used over the window: each quantity it held, times the hours it held it.
+	Use CostUse `json:"use"`
+}
+
+// CostUse What something used over the window: each quantity it held, times the hours it held it.
+type CostUse struct {
+	DiskGiBHours   float64 `json:"diskGiBHours"`
+	MemoryGiBHours float64 `json:"memoryGiBHours"`
+
+	// Seconds How long it was charged for.
+	Seconds     float64 `json:"seconds"`
+	TunnelHours float64 `json:"tunnelHours"`
+	VcpuHours   float64 `json:"vcpuHours"`
+}
+
+// CostWindow How far back. `24h` is hour by hour; the others are day by day, each day in UTC.
+type CostWindow string
 
 // Creator Who made a sandbox or a volume: the person, and the key when the call carried one. Written down when it is made and never changed, so it still names a key that has since been revoked.
 type Creator struct {
@@ -1445,6 +1612,18 @@ type Namespace struct {
 
 // NamespaceState `deleting` from the moment a delete is asked for: from then on nothing under it answers, every key bound to it is refused, and what it holds is being destroyed. Once nothing is left it is in no answer at all, and its name stays its own.
 type NamespaceState string
+
+// NamespaceCost defines model for NamespaceCost.
+type NamespaceCost struct {
+	// Namespace A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
+	Namespace NamespaceName `json:"namespace"`
+
+	// PerHour What it costs an hour now.
+	PerHour float64 `json:"perHour"`
+
+	// Total An amount, in the report's currency, by what it was for.
+	Total CostAmounts `json:"total"`
+}
 
 // NamespaceHoldings What a namespace holds, counted by kind: everything a forced delete destroys. Its tunnels are its sandboxes', and go with them.
 type NamespaceHoldings struct {
@@ -2496,6 +2675,9 @@ type VolumeName = string
 // BuildID defines model for BuildID.
 type BuildID = string
 
+// CostWindowInQuery How far back. `24h` is hour by hour; the others are day by day, each day in UTC.
+type CostWindowInQuery = CostWindow
+
 // Cursor defines model for Cursor.
 type Cursor = string
 
@@ -2600,6 +2782,12 @@ type CompleteGoogleSignInParams struct {
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
+// GetCostsParams defines parameters for GetCosts.
+type GetCostsParams struct {
+	// Window How far back to go. `7d` when it is not said.
+	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
+}
+
 // GetHostMetricsHistoryParams defines parameters for GetHostMetricsHistory.
 type GetHostMetricsHistoryParams struct {
 	// Window How far back to go.
@@ -2655,6 +2843,12 @@ type ReadBuildLogParams struct {
 
 	// Follow Hold the body open and keep sending as more arrives, until the thing being read ends.
 	Follow *FollowQuery `form:"follow,omitempty" json:"follow,omitempty"`
+}
+
+// GetNamespaceCostsParams defines parameters for GetNamespaceCosts.
+type GetNamespaceCostsParams struct {
+	// Window How far back to go. `7d` when it is not said.
+	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
 }
 
 // ListImagesParams defines parameters for ListImages.
@@ -3070,6 +3264,9 @@ type ClientInterface interface {
 	// GetConsoleBuild request
 	GetConsoleBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConsoleImage request
+	GetConsoleImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConsoleSandbox request
 	GetConsoleSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3104,6 +3301,9 @@ type ClientInterface interface {
 
 	// SignOut request
 	SignOut(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCosts request
+	GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDocs request
 	GetDocs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3181,6 +3381,9 @@ type ClientInterface interface {
 
 	// GetCA request
 	GetCA(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetNamespaceCosts request
+	GetNamespaceCosts(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCounts request
 	GetCounts(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3472,6 +3675,18 @@ func (c *Client) GetConsoleBuild(ctx context.Context, namespace NamespaceInPath,
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetConsoleImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleImageRequest(c.Server, namespace, imageId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetConsoleSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConsoleSandboxRequest(c.Server, namespace, sandboxId)
 	if err != nil {
@@ -3606,6 +3821,18 @@ func (c *Client) SignInWithPassword(ctx context.Context, body SignInWithPassword
 
 func (c *Client) SignOut(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSignOutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCostsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3930,6 +4157,18 @@ func (c *Client) ReadBuildLog(ctx context.Context, namespace NamespaceInPath, bu
 
 func (c *Client) GetCA(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCARequest(c.Server, namespace)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetNamespaceCosts(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetNamespaceCostsRequest(c.Server, namespace, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5111,6 +5350,47 @@ func NewGetConsoleBuildRequest(server string, namespace NamespaceInPath, buildId
 	return req, nil
 }
 
+// NewGetConsoleImageRequest generates requests for GetConsoleImage
+func NewGetConsoleImageRequest(server string, namespace NamespaceInPath, imageId ImageID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/console/namespaces/%s/images/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConsoleSandboxRequest generates requests for GetConsoleSandbox
 func NewGetConsoleSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
 	var err error
@@ -5560,6 +5840,55 @@ func NewSignOutRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCostsRequest generates requests for GetCosts
+func NewGetCostsRequest(server string, params *GetCostsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/costs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Window != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "window", runtime.ParamLocationQuery, *params.Window); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -6597,6 +6926,62 @@ func NewGetCARequest(server string, namespace NamespaceInPath) (*http.Request, e
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetNamespaceCostsRequest generates requests for GetNamespaceCosts
+func NewGetNamespaceCostsRequest(server string, namespace NamespaceInPath, params *GetNamespaceCostsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/costs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Window != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "window", runtime.ParamLocationQuery, *params.Window); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -10640,6 +11025,9 @@ type ClientWithResponsesInterface interface {
 	// GetConsoleBuildWithResponse request
 	GetConsoleBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error)
 
+	// GetConsoleImageWithResponse request
+	GetConsoleImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error)
+
 	// GetConsoleSandboxWithResponse request
 	GetConsoleSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error)
 
@@ -10674,6 +11062,9 @@ type ClientWithResponsesInterface interface {
 
 	// SignOutWithResponse request
 	SignOutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SignOutResponse, error)
+
+	// GetCostsWithResponse request
+	GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error)
 
 	// GetDocsWithResponse request
 	GetDocsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDocsResponse, error)
@@ -10751,6 +11142,9 @@ type ClientWithResponsesInterface interface {
 
 	// GetCAWithResponse request
 	GetCAWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
+
+	// GetNamespaceCostsWithResponse request
+	GetNamespaceCostsWithResponse(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*GetNamespaceCostsResponse, error)
 
 	// GetCountsWithResponse request
 	GetCountsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCountsResponse, error)
@@ -11079,6 +11473,27 @@ func (r GetConsoleBuildResponse) StatusCode() int {
 	return 0
 }
 
+type GetConsoleImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConsoleImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConsoleImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetConsoleSandboxResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11321,6 +11736,32 @@ func (r SignOutResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r SignOutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCostsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CostReport
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCostsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCostsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11892,6 +12333,33 @@ func (r GetCAResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetNamespaceCostsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CostReport
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetNamespaceCostsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetNamespaceCostsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13835,6 +14303,15 @@ func (c *ClientWithResponses) GetConsoleBuildWithResponse(ctx context.Context, n
 	return ParseGetConsoleBuildResponse(rsp)
 }
 
+// GetConsoleImageWithResponse request returning *GetConsoleImageResponse
+func (c *ClientWithResponses) GetConsoleImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error) {
+	rsp, err := c.GetConsoleImage(ctx, namespace, imageId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConsoleImageResponse(rsp)
+}
+
 // GetConsoleSandboxWithResponse request returning *GetConsoleSandboxResponse
 func (c *ClientWithResponses) GetConsoleSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error) {
 	rsp, err := c.GetConsoleSandbox(ctx, namespace, sandboxId, reqEditors...)
@@ -13940,6 +14417,15 @@ func (c *ClientWithResponses) SignOutWithResponse(ctx context.Context, reqEditor
 		return nil, err
 	}
 	return ParseSignOutResponse(rsp)
+}
+
+// GetCostsWithResponse request returning *GetCostsResponse
+func (c *ClientWithResponses) GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error) {
+	rsp, err := c.GetCosts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCostsResponse(rsp)
 }
 
 // GetDocsWithResponse request returning *GetDocsResponse
@@ -14179,6 +14665,15 @@ func (c *ClientWithResponses) GetCAWithResponse(ctx context.Context, namespace N
 		return nil, err
 	}
 	return ParseGetCAResponse(rsp)
+}
+
+// GetNamespaceCostsWithResponse request returning *GetNamespaceCostsResponse
+func (c *ClientWithResponses) GetNamespaceCostsWithResponse(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*GetNamespaceCostsResponse, error) {
+	rsp, err := c.GetNamespaceCosts(ctx, namespace, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetNamespaceCostsResponse(rsp)
 }
 
 // GetCountsWithResponse request returning *GetCountsResponse
@@ -15006,6 +15501,22 @@ func ParseGetConsoleBuildResponse(rsp *http.Response) (*GetConsoleBuildResponse,
 	return response, nil
 }
 
+// ParseGetConsoleImageResponse parses an HTTP response from a GetConsoleImageWithResponse call
+func ParseGetConsoleImageResponse(rsp *http.Response) (*GetConsoleImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConsoleImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
 // ParseGetConsoleSandboxResponse parses an HTTP response from a GetConsoleSandboxWithResponse call
 func ParseGetConsoleSandboxResponse(rsp *http.Response) (*GetConsoleSandboxResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15326,6 +15837,60 @@ func ParseSignOutResponse(rsp *http.Response) (*SignOutResponse, error) {
 	response := &SignOutResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseGetCostsResponse parses an HTTP response from a GetCostsWithResponse call
+func ParseGetCostsResponse(rsp *http.Response) (*GetCostsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCostsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CostReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -16375,6 +16940,67 @@ func ParseGetCAResponse(rsp *http.Response) (*GetCAResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetNamespaceCostsResponse parses an HTTP response from a GetNamespaceCostsWithResponse call
+func ParseGetNamespaceCostsResponse(rsp *http.Response) (*GetNamespaceCostsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetNamespaceCostsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CostReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -20578,6 +21204,9 @@ type ServerInterface interface {
 	// The console, on one build
 	// (GET /console/namespaces/{namespace}/builds/{buildId})
 	GetConsoleBuild(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, buildId BuildID)
+	// The console, on one image
+	// (GET /console/namespaces/{namespace}/images/{imageId})
+	GetConsoleImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, imageId ImageID)
 	// The console, on one sandbox
 	// (GET /console/namespaces/{namespace}/sandboxes/{sandboxId})
 	GetConsoleSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
@@ -20611,6 +21240,9 @@ type ServerInterface interface {
 	// Sign out
 	// (POST /v1/auth/signout)
 	SignOut(w http.ResponseWriter, r *http.Request)
+	// What the namespaces the caller reaches have cost
+	// (GET /v1/costs)
+	GetCosts(w http.ResponseWriter, r *http.Request, params GetCostsParams)
 	// This document, rendered
 	// (GET /v1/docs)
 	GetDocs(w http.ResponseWriter, r *http.Request)
@@ -20680,6 +21312,9 @@ type ServerInterface interface {
 	// The certificate authority this namespace's sandboxes are identified by
 	// (GET /v1/namespaces/{namespace}/ca)
 	GetCA(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
+	// What a namespace has cost
+	// (GET /v1/namespaces/{namespace}/costs)
+	GetNamespaceCosts(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params GetNamespaceCostsParams)
 	// How many of each thing this host has
 	// (GET /v1/namespaces/{namespace}/counts)
 	GetCounts(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
@@ -21004,6 +21639,40 @@ func (siw *ServerInterfaceWrapper) GetConsoleBuild(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetConsoleImage operation middleware
+func (siw *ServerInterfaceWrapper) GetConsoleImage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "imageId" -------------
+	var imageId ImageID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "imageId", r.PathValue("imageId"), &imageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "imageId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetConsoleImage(w, r, namespace, imageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetConsoleSandbox operation middleware
 func (siw *ServerInterfaceWrapper) GetConsoleSandbox(w http.ResponseWriter, r *http.Request) {
 
@@ -21291,6 +21960,41 @@ func (siw *ServerInterfaceWrapper) SignOut(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SignOut(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCosts operation middleware
+func (siw *ServerInterfaceWrapper) GetCosts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCostsParams
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCosts(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -22111,6 +22815,50 @@ func (siw *ServerInterfaceWrapper) GetCA(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCA(w, r, namespace)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetNamespaceCosts operation middleware
+func (siw *ServerInterfaceWrapper) GetNamespaceCosts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetNamespaceCostsParams
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetNamespaceCosts(w, r, namespace, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25791,6 +26539,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/console", wrapper.GetConsole)
 	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}", wrapper.GetConsoleNamespace)
 	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/builds/{buildId}", wrapper.GetConsoleBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/images/{imageId}", wrapper.GetConsoleImage)
 	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.GetConsoleSandbox)
 	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/sandboxes/{sandboxId}/{tab}", wrapper.GetConsoleSandboxTab)
 	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/volumes/{volumeName}", wrapper.GetConsoleVolume)
@@ -25802,6 +26551,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google/callback", wrapper.CompleteGoogleSignIn)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/password", wrapper.SignInWithPassword)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/signout", wrapper.SignOut)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/costs", wrapper.GetCosts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/docs", wrapper.GetDocs)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/commitments", wrapper.GetHostCommitments)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/metrics/history", wrapper.GetHostMetricsHistory)
@@ -25825,6 +26575,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/builds/{buildId}", wrapper.GetBuild)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/builds/{buildId}/log", wrapper.ReadBuildLog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/ca", wrapper.GetCA)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/costs", wrapper.GetNamespaceCosts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/counts", wrapper.GetCounts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/images", wrapper.ListImages)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/images", wrapper.PullImage)

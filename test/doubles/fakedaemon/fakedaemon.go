@@ -122,6 +122,8 @@ type Daemon struct {
 	brokerKeepAlive time.Duration
 	now             func() time.Time
 	created         chan genv1.SandboxID
+	// costRates price what each namespace holds (WithCostRates).
+	costRates genv1.CostRates
 
 	mu        sync.Mutex
 	sandboxes map[genv1.SandboxID]*sandbox
@@ -294,6 +296,7 @@ func (d *Daemon) routes() http.Handler {
 	namespaced("GET /v1/sandboxes/{id}/tunnels/{tunnel}/guests", "listTunnelGuests", d.listTunnelGuests)
 	namespaced("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
 	namespaced("GET /v1/volumes", "listVolumes", d.listVolumes)
+	namespaced("GET /v1/costs", "getNamespaceCosts", d.getNamespaceCosts)
 	namespaced("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
 	handle("GET /v1/me", "getMe", d.getMe)
 	return mux

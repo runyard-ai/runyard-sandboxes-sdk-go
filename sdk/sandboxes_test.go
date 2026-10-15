@@ -1250,6 +1250,10 @@ func TestATunnelIsPublishedPausedTokenedAndTakenAwayByItsName(t *testing.T) {
 	if err != nil || counted.Sandboxes == nil || *counted.Sandboxes < 1 || *counted.Tunnels != 1 {
 		t.Fatalf("Counts = %+v, %v", counted, err)
 	}
+	spent, err := client.Costs(ctx, genv1.CostWindow24h)
+	if err != nil || spent.Window != genv1.CostWindow24h || len(spent.Resources) < 1 {
+		t.Fatalf("Costs = %+v, %v", spent, err)
+	}
 	promised, err := client.HostCommitments(ctx)
 	if err != nil || promised.Volumes < 1 || promised.Running < 1 {
 		t.Fatalf("HostCommitments = %+v, %v", promised, err)
@@ -1346,6 +1350,7 @@ func TestTunnelCallsThatNeverReachTheDaemonSaySo(t *testing.T) {
 		"HostTunnelsPage":   func() error { _, err := client.HostTunnelsPage(ctx, 1, "c"); return err }(),
 		"Counts":            func() error { _, err := client.Counts(ctx); return err }(),
 		"HostCommitments":   func() error { _, err := client.HostCommitments(ctx); return err }(),
+		"Costs":             func() error { _, err := client.Costs(ctx, genv1.CostWindow7d); return err }(),
 	} {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("%s = %v", name, err)

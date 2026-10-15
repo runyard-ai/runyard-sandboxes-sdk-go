@@ -295,6 +295,12 @@ security:
 tags:
   - name: Meta
     description: Liveness, protocol, and what this host can do.
+  - name: Costs
+    description: >-
+      What each namespace's sandboxes, volumes, images and tunnels used and
+      cost, at the rates the daemon's configuration names: metered every
+      minute, kept an hour at a time, and kept after what it was about is
+      deleted.
   - name: Images
     description: >-
       OCI references turned into the rootfs a VM boots, and the cache of them.
@@ -549,7 +555,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [usage, keys]
+          enum: [usage, costs, keys]
     get:
       operationId: getConsolePage
       tags: [Meta]
@@ -597,7 +603,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [overview, usage, keys, sandboxes, tunnels, volumes, images, builds, brokers]
+          enum: [overview, usage, costs, keys, sandboxes, tunnels, volumes, images, builds, brokers]
     get:
       operationId: getConsoleNamespacePage
       tags: [Meta]
@@ -662,6 +668,28 @@ paths:
               schema: { type: string, format: binary }
         "400":
           $ref: "#/components/responses/BadRequest"
+
+  /console/namespaces/{namespace}/images/{imageId}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/ImageID"
+    get:
+      operationId: getConsoleImage
+      tags: [Meta]
+      security: []
+      summary: The console, on one image
+      description: >-
+        The console, as `GET /console` answers it, showing one image: what it
+        is, what it holds of the disk, and its recipe. Whether that image
+        exists is not checked here, for the reason
+        `GET /console/namespaces/{namespace}/sandboxes/{sandboxId}` does not check its sandbox: the
+        page asks, with the key the person gave it.
+      responses:
+        "200":
+          description: The console.
+          content:
+            text/html:
+              schema: { type: string, format: binary }
 
   /console/namespaces/{namespace}/builds/{buildId}:
     parameters:
@@ -1085,6 +1113,112 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           description: The volumes could not be read, and the message says why.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/costs:
+    get:
+      operationId: getCosts
+      tags: [Costs]
+      summary: What the namespaces the caller reaches have cost
+      description: |
+        Every namespace the caller reaches, together and each on its own: an
+        administrator, every namespace there ever was, deleted ones too; a
+        member, the namespaces they are a member of.
+
+        **What is charged for.** A sandbox running — `creating`, `booting`,
+        `ready`, `unreachable` or `paused`, a paused one still holding its
+        memory — for its vCPUs and its memory. A volume, every sandbox's disk
+        among them, for its size, whatever its sandbox is doing: what it may
+        grow to, as a disk is reserved. An image, for its filesystem's size.
+        A tunnel, for each hour it is served: its sandbox `ready`, and the
+        tunnel neither paused nor expired.
+
+        **What it is priced at.** The daemon looks every minute and keeps,
+        for each thing, an hour at a time, what it used — vCPU-hours,
+        GiB-hours of memory and of disk, tunnel-hours — and what each of
+        those cost at the rates of that moment. A rate changed later prices
+        what comes after, and does not rewrite what was. The time the daemon
+        was not running is not charged.
+
+        **Nothing is forgotten with what it was about**: a sandbox deleted, a
+        volume let go and a namespace deleted keep what they cost, and are
+        listed with `live: false`.
+
+        Refused, `403`, to a key that acts only on its `own` sandboxes, and
+        to a key bound to a namespace: it reads its namespace's at
+        `GET /v1/namespaces/{namespace}/costs`.
+      parameters:
+        - $ref: "#/components/parameters/CostWindowInQuery"
+      responses:
+        "200":
+          description: What was spent over the window, and what is spent an hour now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostReport" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The control plane's database did not answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/namespaces/{namespace}/costs:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+    get:
+      operationId: getNamespaceCosts
+      tags: [Costs]
+      summary: What a namespace has cost
+      description: |
+        What a namespace's sandboxes, volumes, images and tunnels used and
+        cost over a window, hour by hour or day by day, and what each costs
+        an hour now.
+
+        **What is charged for.** A sandbox running — `creating`, `booting`,
+        `ready`, `unreachable` or `paused`, a paused one still holding its
+        memory — for its vCPUs and its memory. A volume, every sandbox's disk
+        among them, for its size, whatever its sandbox is doing: what it may
+        grow to, as a disk is reserved. An image, for its filesystem's size.
+        A tunnel, for each hour it is served: its sandbox `ready`, and the
+        tunnel neither paused nor expired.
+
+        **What it is priced at.** The daemon looks every minute and keeps,
+        for each thing, an hour at a time, what it used — vCPU-hours,
+        GiB-hours of memory and of disk, tunnel-hours — and what each of
+        those cost at the rates of that moment. A rate changed later prices
+        what comes after, and does not rewrite what was. The time the daemon
+        was not running is not charged.
+
+        **Nothing is forgotten with what it was about**: a sandbox deleted, a
+        volume let go and a namespace deleted keep what they cost, and are
+        listed with `live: false`.
+
+        **A key that acts only on its `own` sandboxes** is shown what it made
+        — its sandboxes, their tunnels, its volumes — and the namespace's
+        images, which every sandbox in it boots from.
+      parameters:
+        - $ref: "#/components/parameters/CostWindowInQuery"
+      responses:
+        "200":
+          description: What was spent over the window, and what is spent an hour now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostReport" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: The control plane's database did not answer.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4425,6 +4559,11 @@ components:
         again, into the same outage.
 
   parameters:
+    CostWindowInQuery:
+      name: window
+      in: query
+      description: How far back to go. `7d` when it is not said.
+      schema: { $ref: "#/components/schemas/CostWindow" }
     NamespaceInPath:
       name: namespace
       in: path
@@ -6413,6 +6552,182 @@ components:
           type: integer
           format: int64
           description: What their disks have allocated.
+
+    CostWindow:
+      type: string
+      enum: ["24h", "7d", "30d", "90d"]
+      x-enum-varnames: [CostWindow24h, CostWindow7d, CostWindow30d, CostWindow90d]
+      description: >-
+        How far back. `24h` is hour by hour; the others are day by day, each
+        day in UTC.
+
+    CostRates:
+      type: object
+      description: >-
+        What an hour of each thing costs now, in `currency`, as the daemon's
+        configuration names it.
+      required: [currency, vcpuHour, memoryGiBHour, diskGiBHour, tunnelHour]
+      properties:
+        currency: { type: string, example: USD }
+        vcpuHour:
+          type: number
+          format: double
+          minimum: 0
+          description: A vCPU of a running sandbox, not a paused one, for an hour.
+          example: 0.04
+        memoryGiBHour:
+          type: number
+          format: double
+          minimum: 0
+          description: A GiB of a running sandbox's memory, for an hour.
+          example: 0.005
+        diskGiBHour:
+          type: number
+          format: double
+          minimum: 0
+          description: A GiB of a volume, at the size it may grow to, or of an image, for an hour.
+          example: 0.0001
+        tunnelHour:
+          type: number
+          format: double
+          minimum: 0
+          description: A tunnel served, for an hour.
+          example: 0.01
+
+    CostAmounts:
+      type: object
+      description: An amount, in the report's currency, by what it was for.
+      required: [sandboxes, volumes, images, tunnels, total]
+      properties:
+        sandboxes: { type: number, format: double, description: "Running sandboxes: their vCPUs and memory." }
+        volumes: { type: number, format: double, description: "Volumes, every sandbox's disk among them." }
+        images: { type: number, format: double }
+        tunnels: { type: number, format: double }
+        total: { type: number, format: double, description: The four together. }
+
+    CostBucket:
+      type: object
+      description: What was spent in one step of the window, from `at`.
+      required: [at, amounts]
+      properties:
+        at: { type: string, format: date-time }
+        amounts: { $ref: "#/components/schemas/CostAmounts" }
+
+    CostKind:
+      type: string
+      enum: [sandbox, volume, image, tunnel]
+      x-enum-varnames: [CostKindSandbox, CostKindVolume, CostKindImage, CostKindTunnel]
+
+    CostUse:
+      type: object
+      description: >-
+        What something used over the window: each quantity it held, times the
+        hours it held it.
+      required: [seconds, vcpuHours, memoryGiBHours, diskGiBHours, tunnelHours]
+      properties:
+        seconds: { type: number, format: double, description: How long it was charged for. }
+        vcpuHours: { type: number, format: double }
+        memoryGiBHours: { type: number, format: double }
+        diskGiBHours: { type: number, format: double }
+        tunnelHours: { type: number, format: double }
+
+    CostCharge:
+      type: object
+      description: What each part of a use cost, at the rates of the moment it was used.
+      required: [vcpu, memory, disk, tunnel]
+      properties:
+        vcpu: { type: number, format: double }
+        memory: { type: number, format: double }
+        disk: { type: number, format: double }
+        tunnel: { type: number, format: double }
+
+    CostResource:
+      type: object
+      description: >-
+        One thing that cost anything in the window, or was held in it: what
+        it was when it was last seen, what it used and cost, and, while it is
+        held, what it costs an hour.
+      required: [namespace, kind, id, labels, live, perHour, firstSeenAt, lastSeenAt, use, charge, cost]
+      properties:
+        namespace: { $ref: "#/components/schemas/NamespaceName" }
+        kind: { $ref: "#/components/schemas/CostKind" }
+        id:
+          type: string
+          description: >-
+            A sandbox's id, a volume's name, an image's id, and a tunnel's
+            sandbox id and name, as `<sandbox>/<tunnel>`.
+        name:
+          type: string
+          description: What a person knows it by, when its id is not that — an image's reference, a tunnel's name.
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: A sandbox's labels, as it was last seen.
+        cpus: { type: integer, minimum: 0, description: "A sandbox's vCPUs." }
+        memoryBytes: { type: integer, format: int64, minimum: 0, description: "A sandbox's memory." }
+        diskBytes: { type: integer, format: int64, minimum: 0, description: "A volume's or an image's size." }
+        live:
+          type: boolean
+          description: Whether it is charged for now. A sandbox stopped or deleted, a volume let go, is not.
+        paused:
+          type: boolean
+          description: >-
+            A sandbox paused now, charged for its memory and not its vCPUs: a
+            pause stops them and keeps the memory.
+        perHour:
+          type: number
+          format: double
+          description: What it costs an hour now, at today's rates; 0 when it is not live.
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        use: { $ref: "#/components/schemas/CostUse" }
+        charge: { $ref: "#/components/schemas/CostCharge" }
+        cost: { type: number, format: double, description: What it cost over the window. }
+
+    NamespaceCost:
+      type: object
+      required: [namespace, total, perHour]
+      properties:
+        namespace: { $ref: "#/components/schemas/NamespaceName" }
+        total: { $ref: "#/components/schemas/CostAmounts" }
+        perHour: { type: number, format: double, description: What it costs an hour now. }
+
+    CostReport:
+      type: object
+      description: >-
+        What was spent over a window, step by step and thing by thing, and
+        what is spent an hour now.
+      required: [currency, rates, window, from, to, step, total, running, series, resources, namespaces]
+      properties:
+        currency: { type: string, example: USD }
+        rates: { $ref: "#/components/schemas/CostRates" }
+        window: { $ref: "#/components/schemas/CostWindow" }
+        from: { type: string, format: date-time, description: The first step's start. }
+        to: { type: string, format: date-time, description: Now. }
+        step:
+          type: string
+          enum: [hour, day]
+          x-enum-varnames: [CostStepHour, CostStepDay]
+        total:
+          description: What was spent over the window.
+          allOf: [{ $ref: "#/components/schemas/CostAmounts" }]
+        running:
+          description: What is held now costs an hour, at today's rates.
+          allOf: [{ $ref: "#/components/schemas/CostAmounts" }]
+        series:
+          type: array
+          description: Every step of the window, oldest first, those nothing was spent in too.
+          items: { $ref: "#/components/schemas/CostBucket" }
+        resources:
+          type: array
+          description: >-
+            Everything that cost anything in the window, or was held in it,
+            live or not, the most expensive first: at most 500.
+          items: { $ref: "#/components/schemas/CostResource" }
+        namespaces:
+          type: array
+          description: Each namespace's, the most expensive first.
+          items: { $ref: "#/components/schemas/NamespaceCost" }
 
     MetricsWindow:
       type: string

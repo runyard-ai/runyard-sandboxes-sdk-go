@@ -2,7 +2,9 @@ package fakedaemon
 
 import (
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
@@ -41,6 +43,19 @@ func (d *Daemon) getNamespaceCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	namespace := r.PathValue("namespace")
+	// Narrowed to one workload, as the daemon narrows it: the sandboxes
+	// carrying every label asked for, and the volumes named.
+	wanted := map[string]string{}
+	for _, pair := range r.URL.Query()["label"] {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok || key == "" {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a label filter is written `key=value`")
+			return
+		}
+		wanted[key] = value
+	}
+	volumes := r.URL.Query()["volume"]
+	selected := len(wanted) > 0 || len(volumes) > 0
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rates := d.costRates
@@ -75,12 +90,15 @@ func (d *Daemon) getNamespaceCosts(w http.ResponseWriter, r *http.Request) {
 		if s.record.Labels != nil {
 			labels = *s.record.Labels
 		}
+		if selected && (len(wanted) == 0 || !carries(labels, wanted)) {
+			continue
+		}
 		out.Running.Sandboxes += perHour
 		out.Resources = append(out.Resources, genv1.CostResource{Namespace: namespace, Kind: genv1.CostKindSandbox, Id: s.record.Id.String(),
 			Labels: labels, Cpus: &cpus, MemoryBytes: &memory, Live: true, PerHour: perHour, FirstSeenAt: to, LastSeenAt: to})
 	}
 	for key, v := range d.volumes {
-		if key.namespace != namespace {
+		if key.namespace != namespace || selected && !slices.Contains(volumes, key.name) {
 			continue
 		}
 		bytes, name := v.bytes, key.name
@@ -89,13 +107,24 @@ func (d *Daemon) getNamespaceCosts(w http.ResponseWriter, r *http.Request) {
 		out.Resources = append(out.Resources, genv1.CostResource{Namespace: namespace, Kind: genv1.CostKindVolume, Id: name, Name: &name,
 			Labels: map[string]string{}, DiskBytes: &bytes, Live: true, PerHour: perHour, FirstSeenAt: to, LastSeenAt: to})
 	}
+	// The namespace's images, which are no workload's.
+	for key, image := range d.images {
+		if key.namespace != namespace || selected {
+			continue
+		}
+		size, ref := *image.Size, image.Ref
+		perHour := float64(size) / gib * rates.DiskGiBHour
+		out.Running.Images += perHour
+		out.Resources = append(out.Resources, genv1.CostResource{Namespace: namespace, Kind: genv1.CostKindImage, Id: key.name, Name: &ref,
+			Labels: map[string]string{}, DiskBytes: &size, Live: true, PerHour: perHour, FirstSeenAt: to, LastSeenAt: to})
+	}
 	sort.Slice(out.Resources, func(i, j int) bool {
 		if out.Resources[i].PerHour != out.Resources[j].PerHour {
 			return out.Resources[i].PerHour > out.Resources[j].PerHour
 		}
 		return out.Resources[i].Id < out.Resources[j].Id
 	})
-	out.Running.Total = out.Running.Sandboxes + out.Running.Volumes
+	out.Running.Total = out.Running.Sandboxes + out.Running.Volumes + out.Running.Images
 	out.Namespaces = append(out.Namespaces, genv1.NamespaceCost{Namespace: namespace, PerHour: out.Running.Total})
 	reply(w, http.StatusOK, out)
 }

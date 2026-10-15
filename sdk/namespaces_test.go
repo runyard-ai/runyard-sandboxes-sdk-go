@@ -25,7 +25,7 @@ func namespacedCalls(ctx context.Context, client *Client) map[string]func() erro
 		"Open":    func() error { _, err := client.Open(ctx, uuid.New()); return err },
 		"List":    func() error { _, err := client.List(ctx); return err },
 		"Counts":  func() error { _, err := client.Counts(ctx); return err },
-		"Costs":   func() error { _, err := client.Costs(ctx, genv1.CostWindow24h); return err },
+		"Costs":   func() error { _, err := client.Costs(ctx, genv1.CostWindow24h, CostsOf{}); return err },
 		"Brokers": func() error { _, err := client.Brokers(ctx); return err },
 		"HostTunnels": func() error {
 			_, err := client.HostTunnels(ctx)

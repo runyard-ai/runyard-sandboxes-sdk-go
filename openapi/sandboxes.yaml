@@ -1201,8 +1201,34 @@ paths:
         **A key that acts only on its `own` sandboxes** is shown what it made
         — its sandboxes, their tunnels, its volumes — and the namespace's
         images, which every sandbox in it boots from.
+
+        **Narrowed to one workload**, by `label` and `volume`: the sandboxes
+        carrying every label asked for, and their tunnels, together with the
+        volumes named — what a program that labels its sandboxes and names
+        their disks reads as one thing's cost. Labels are matched as each
+        thing was last seen.
       parameters:
         - $ref: "#/components/parameters/CostWindowInQuery"
+        - name: label
+          in: query
+          description: >-
+            Only the sandboxes carrying this label, written `key=value`, and
+            their tunnels. Repeat to require several; they are ANDed. With
+            `volume`, what either names.
+          schema:
+            type: array
+            items: { type: string }
+          explode: true
+          example: ["runyard-agents-agent=0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53"]
+        - name: volume
+          in: query
+          description: >-
+            Only this volume, by name. Repeat for several. With `label`, what
+            either names.
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/VolumeName" }
+          explode: true
       responses:
         "200":
           description: What was spent over the window, and what is spent an hour now.

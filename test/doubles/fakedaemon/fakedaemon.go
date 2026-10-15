@@ -129,6 +129,8 @@ type Daemon struct {
 	sandboxes map[genv1.SandboxID]*sandbox
 	order     []genv1.SandboxID
 	volumes   map[volumeKey]*volume
+	// images is each namespace's cache, by namespace and id (PutImage).
+	images map[volumeKey]*genv1.Image
 	// idempotent is what each create's key made, by namespace and key.
 	idempotent   map[[2]string]idempotent
 	keys         []string
@@ -191,6 +193,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 		created:         make(chan genv1.SandboxID, 128),
 		sandboxes:       map[genv1.SandboxID]*sandbox{},
 		volumes:         map[volumeKey]*volume{},
+		images:          map[volumeKey]*genv1.Image{},
 		idempotent:      map[[2]string]idempotent{},
 		calls:           map[string]int{},
 		intercepts:      map[string][]Interceptor{},
@@ -296,6 +299,9 @@ func (d *Daemon) routes() http.Handler {
 	namespaced("GET /v1/sandboxes/{id}/tunnels/{tunnel}/guests", "listTunnelGuests", d.listTunnelGuests)
 	namespaced("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
 	namespaced("GET /v1/volumes", "listVolumes", d.listVolumes)
+	namespaced("GET /v1/images", "listImages", d.listImages)
+	namespaced("GET /v1/images/{imageId}", "getImage", d.getImage)
+	namespaced("DELETE /v1/images/{imageId}", "deleteImage", d.deleteImage)
 	namespaced("GET /v1/costs", "getNamespaceCosts", d.getNamespaceCosts)
 	namespaced("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
 	handle("GET /v1/me", "getMe", d.getMe)
@@ -972,7 +978,7 @@ func (d *Daemon) listBrokers(w http.ResponseWriter, _ *http.Request) {
 }
 
 // getCounts counts what the double holds in a namespace. Its keys may read
-// everything, and it has no image cache: its images are none.
+// everything.
 func (d *Daemon) getCounts(w http.ResponseWriter, r *http.Request) {
 	namespace := r.PathValue("namespace")
 	d.mu.Lock()
@@ -990,9 +996,15 @@ func (d *Daemon) getCounts(w http.ResponseWriter, r *http.Request) {
 			volumes++
 		}
 	}
+	images := 0
+	for key := range d.images {
+		if key.namespace == namespace {
+			images++
+		}
+	}
 	reply(w, http.StatusOK, genv1.HostCounts{
 		Sandboxes: count(sandboxes), Tunnels: count(tunnels), Volumes: count(volumes),
-		Images: count(0), Brokers: count(len(d.brokers)),
+		Images: count(images), Brokers: count(len(d.brokers)),
 	})
 }
 

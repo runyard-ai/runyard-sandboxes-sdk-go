@@ -2849,6 +2849,12 @@ type ReadBuildLogParams struct {
 type GetNamespaceCostsParams struct {
 	// Window How far back to go. `7d` when it is not said.
 	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
+
+	// Label Only the sandboxes carrying this label, written `key=value`, and their tunnels. Repeat to require several; they are ANDed. With `volume`, what either names.
+	Label *[]string `form:"label,omitempty" json:"label,omitempty"`
+
+	// Volume Only this volume, by name. Repeat for several. With `label`, what either names.
+	Volume *[]VolumeName `form:"volume,omitempty" json:"volume,omitempty"`
 }
 
 // ListImagesParams defines parameters for ListImages.
@@ -6968,6 +6974,38 @@ func NewGetNamespaceCostsRequest(server string, namespace NamespaceInPath, param
 		if params.Window != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "window", runtime.ParamLocationQuery, *params.Window); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Label != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "label", runtime.ParamLocationQuery, *params.Label); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Volume != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "volume", runtime.ParamLocationQuery, *params.Volume); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -22854,6 +22892,22 @@ func (siw *ServerInterfaceWrapper) GetNamespaceCosts(w http.ResponseWriter, r *h
 	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "label" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "label", r.URL.Query(), &params.Label)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "volume" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "volume", r.URL.Query(), &params.Volume)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volume", Err: err})
 		return
 	}
 

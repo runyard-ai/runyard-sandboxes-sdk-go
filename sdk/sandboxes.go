@@ -48,6 +48,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -788,14 +789,35 @@ func (c *Client) Counts(ctx context.Context) (*genv1.HostCounts, error) {
 	return res.JSON200, nil
 }
 
+// CostsOf narrows Costs to one workload: the sandboxes carrying every one
+// of Labels, and their tunnels, together with the volumes named. Neither is
+// everything.
+type CostsOf struct {
+	Labels  map[string]string
+	Volumes []string
+}
+
 // Costs is what this client's namespace used and cost over window, and the
-// hourly cost of what it holds now: of a key held to its own, what it made.
-func (c *Client) Costs(ctx context.Context, window genv1.CostWindow) (*genv1.CostReport, error) {
+// hourly cost of what it holds now: of a key held to its own, what it made;
+// of what costs of, that alone.
+func (c *Client) Costs(ctx context.Context, window genv1.CostWindow, of CostsOf) (*genv1.CostReport, error) {
 	namespace, err := c.ResolveNamespace(ctx)
 	if err != nil {
 		return nil, err
 	}
-	res, err := c.api.GetNamespaceCostsWithResponse(ctx, namespace, &genv1.GetNamespaceCostsParams{Window: &window})
+	params := &genv1.GetNamespaceCostsParams{Window: &window}
+	if len(of.Labels) > 0 {
+		labels := make([]string, 0, len(of.Labels))
+		for k, v := range of.Labels {
+			labels = append(labels, k+"="+v)
+		}
+		slices.Sort(labels)
+		params.Label = &labels
+	}
+	if len(of.Volumes) > 0 {
+		params.Volume = &of.Volumes
+	}
+	res, err := c.api.GetNamespaceCostsWithResponse(ctx, namespace, params)
 	if err != nil {
 		return nil, err
 	}

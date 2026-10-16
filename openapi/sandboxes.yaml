@@ -420,6 +420,64 @@ tags:
       `-broker-allow-private`, and `GET /v1/info` says which it is. A shared
       broker, declared by whoever holds `brokers.admin`, may point anywhere.
 
+      **What a sandbox presents says which sandbox it is, and whom it acts
+      for.** Its certificate's first URI is
+      `runyard-sandbox://<host>/<sandbox id>`, as it always was. A sandbox
+      acting for a principal (`spec.principal`, see Principals) carries two
+      more after it: `runyard-principal://<host>/<namespace>/<principal id>`
+      and `runyard-subject://<host>/<namespace>/<subject>`. An upstream that
+      knows nothing of principals reads the first and nothing else.
+
+      **A shared broker may have a trusted plane** (`trustedUrl`): a second
+      address of the broker that only this daemon dials, presenting a
+      principal's trusted certificate —
+      `runyard-trusted://<host>/<namespace>/<principal id>` and the subject,
+      and no `runyard-sandbox` URI. A sandbox's certificate never carries
+      `runyard-trusted`, so a trusted plane that requires it is never reached
+      by a workload, and a data plane that refuses it is never reached with
+      a principal's certificate. What this daemon reads there is a broker's
+      `.well-known/` documents about a principal, and nothing else.
+
+  - name: Principals
+    description: |
+      An identity that outlives a sandbox, as a volume is a disk that
+      outlives one.
+
+      A principal is `{id, subject}` in a namespace. `subject` is **who it
+      acts for**: opaque — this daemon never interprets it, and a broker only
+      compares it — and fixed for the principal's life, so a certificate
+      never carries a subject that has since changed. Making one needs
+      `principals.write`, which is separate from `sandboxes.write` because
+      choosing a subject is vouching for somebody to every broker.
+
+      **A sandbox may act for one** (`spec.principal`), fixed for the life
+      of the sandbox. Its certificate then carries, after its own
+      `runyard-sandbox://<host>/<sandbox id>` URI, the principal's and the
+      subject's: `runyard-principal://<host>/<namespace>/<principal id>` and
+      `runyard-subject://<host>/<namespace>/<subject>`. Several sandboxes can
+      act for one principal, one after another or at once, and a broker sees
+      the same principal whichever is calling. A broker that knows nothing
+      of principals reads the first URI as it always has.
+
+      **A volume follows its principal.** The first sandbox acting for one
+      that attaches a volume binds the volume to it, and from then on only
+      sandboxes acting for that principal attach it (`volume_principal`):
+      what is on the disk is what that subject's grants fetched, and what a
+      principal boots on is what it runs with its own grants. Moving a volume
+      to another principal is explicit: `PUT
+      /v1/namespaces/{namespace}/volumes/{volumeName}/principal`.
+
+      **A broker may have a trusted plane** (`trustedUrl`), which only this
+      daemon reaches, with a certificate of the principal's own —
+      `runyard-trusted://<host>/<namespace>/<principal id>` and the subject,
+      and no sandbox — minted from the principal's record, so no machine has
+      to be running. `GET .../principals/{id}/brokers/{name}/trusted/{path}`
+      reads the broker's `.well-known/` documents about a principal through
+      it, and nothing else.
+
+      A key that acts only on its `own` sandboxes reaches the principals it
+      made and no others: another's is answered as one that is not there.
+
   - name: Files
     description: The bytes inside a sandbox, by absolute path.
   - name: System
@@ -1020,6 +1078,224 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/namespaces/{namespace}/principals:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+    get:
+      operationId: listPrincipals
+      tags: [Principals]
+      summary: The principals in this namespace
+      description: >-
+        In id order. A key that acts only on its `own` sandboxes is listed
+        the principals it made.
+      responses:
+        "200":
+          description: The principals.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrincipalPage" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: >-
+            Its record could not be read or written down on this host, and
+            the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/namespaces/{namespace}/principals/{principalId}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/PrincipalID"
+    get:
+      operationId: getPrincipal
+      tags: [Principals]
+      summary: One principal
+      responses:
+        "200":
+          description: The principal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Principal" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: >-
+            Its record could not be read or written down on this host, and
+            the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      operationId: putPrincipal
+      tags: [Principals]
+      summary: Make a principal, or replace its labels
+      description: |
+        By id, and idempotent: the id is the caller's to choose, and a repeat
+        with the same subject is the same principal, with its labels replaced
+        by the ones sent. **The subject never changes**: a repeat with another
+        is refused, `409 principal_subject`, because a different subject is a
+        different principal.
+
+        Written down before it is answered, and kept across restarts of the
+        daemon. A principal being deleted is refused, `409
+        principal_deleting`. A key that acts only on its `own` sandboxes is
+        answered for another's as for one that is not there and cannot be
+        made: `404`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrincipalSpec" }
+      responses:
+        "200":
+          description: It was there, with this subject, and its labels are replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Principal" }
+        "201":
+          description: Made.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Principal" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            It is there with another subject (`principal_subject`), or it is
+            being deleted (`principal_deleting`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: >-
+            Its record could not be read or written down on this host, and
+            the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deletePrincipal
+      tags: [Principals]
+      summary: Delete a principal
+      description: |
+        Refused, `409 principal_in_use`, while any sandbox acts for it or any
+        volume is bound to it: delete or release those, or move the volumes,
+        first. Once it is gone nothing is minted for it, and certificates
+        already out lapse within their lifetime, as a deleted sandbox's do.
+
+        Deleting one that is not there succeeds, as every delete here does —
+        and so does deleting another's, for a key that acts only on its `own`
+        sandboxes, which leaves it there.
+      responses:
+        "204":
+          description: Gone, or was never here.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            A sandbox acts for it or a volume is bound to it
+            (`principal_in_use`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: >-
+            Its record could not be read or written down on this host, and
+            the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/PrincipalID"
+      - $ref: "#/components/parameters/BrokerName"
+      - $ref: "#/components/parameters/TrustedPath"
+    get:
+      operationId: getBrokerTrusted
+      tags: [Principals]
+      summary: Read a shared broker's document about a principal, through its trusted plane
+      description: |
+        This daemon sends `GET` to the broker's `trustedUrl` + `/` + `path`,
+        presenting the principal's trusted certificate, and answers with the
+        broker's status, `Content-Type` and body. It is a way of reading a
+        broker's documents about a principal and not a second door to the
+        broker: only `GET`, and only under `.well-known/`.
+
+        **What the broker answered carries `Runyard-Broker-Answered: true`**,
+        whatever its status; a refusal of this daemon's own never does. So a
+        `404` the broker sent ("there is none") is told apart from this
+        daemon's ("no such principal").
+
+        `400` when `path` does not start with `.well-known/` or has a `..`
+        segment. `404 no_trusted_plane` when the broker has no `trustedUrl`.
+        `502 upstream_error` when the broker cannot be reached, or answers
+        with more than 1 MiB.
+      responses:
+        "200":
+          description: The broker's answer.
+          headers:
+            Runyard-Broker-Answered:
+              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              schema: { type: string, enum: ["true"] }
+          content:
+            "*/*":
+              schema: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: >-
+            No such principal or broker here (`not_found`), or the broker has
+            no trusted plane (`no_trusted_plane`). Or, carrying
+            `Runyard-Broker-Answered`, the broker's own `404`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: >-
+            The broker could not be reached, or answered with more than 1
+            MiB (`upstream_error`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          description: >-
+            The broker's own answer, with its status, carrying
+            `Runyard-Broker-Answered`.
+          headers:
+            Runyard-Broker-Answered:
+              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              schema: { type: string, enum: ["true"] }
+          content:
+            "*/*":
+              schema: {}
   /v1/namespaces/{namespace}/counts:
     parameters:
       - $ref: "#/components/parameters/NamespaceInPath"
@@ -1663,6 +1939,59 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/namespaces/{namespace}/volumes/{volumeName}/principal:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/VolumeName"
+    put:
+      operationId: moveVolume
+      tags: [Volumes, Principals]
+      summary: Bind a volume to a principal
+      description: |
+        Moves a volume to `principal`, from the one it was bound to or from
+        none: from now on only sandboxes acting for that principal attach it.
+        An explicit act, and written into the volume's record before it is
+        answered.
+
+        Needs `principals.write` and `sandboxes.write`, and the key must
+        reach both the volume and the principal: either one it does not is
+        answered as one that is not there, `404`. Refused, `409
+        volume_in_use`, while a sandbox holds the volume — stopped and failed
+        ones included — and `409 principal_deleting` while the principal is
+        being deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VolumePrincipal" }
+      responses:
+        "200":
+          description: The volume, bound to the principal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Volume" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            A sandbox holds the volume (`volume_in_use`), or the principal is
+            being deleted (`principal_deleting`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: >-
+            The volume's record could not be read or written down on this host, and
+            the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/namespaces/{namespace}/sandboxes:
     parameters:
       - $ref: "#/components/parameters/NamespaceInPath"
@@ -1798,7 +2127,10 @@ paths:
             This key already made a sandbox with a different spec, or made one
             that has since been dropped — refused rather than reconciled. Or
             `volume_in_use`: another sandbox holds the volume this one names,
-            and the body says which.
+            and the body says which. Or `volume_principal`: that volume is
+            bound to another principal than the one this sandbox acts for,
+            and the body names neither. Or `principal_deleting`: the
+            principal it names is being deleted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4613,6 +4945,22 @@ components:
       required: true
       description: As written in `spec.disk.volume`.
       schema: { $ref: "#/components/schemas/VolumeName" }
+    PrincipalID:
+      name: principalId
+      in: path
+      required: true
+      description: A principal's id, as its maker chose it.
+      schema: { $ref: "#/components/schemas/PrincipalId" }
+    TrustedPath:
+      name: path
+      in: path
+      required: true
+      description: >-
+        The path on the broker's trusted plane, starting `.well-known/` and
+        with no `..` segment. It is ONE segment of this route: its slashes
+        are sent escaped, `%2F` — `.well-known%2Frunyard-broker`.
+      schema: { type: string, minLength: 1, maxLength: 1024 }
+      example: .well-known%2Frunyard-broker
     ImageID:
       name: imageId
       in: path
@@ -5198,6 +5546,14 @@ components:
           type: integer
           format: int64
           description: That layer's size, compressed, in bytes.
+        cached:
+          type: boolean
+          description: >-
+            It was not run: an earlier build in the namespace ran the same
+            step over the same image and the same steps before it, and its
+            layer is reused. A step changed by the recipe, and every one
+            after it, runs again; one that fetches from the network is not
+            run again to see whether what it fetches changed.
         startedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
 
@@ -5320,6 +5676,20 @@ components:
             - { name: github }
             - name: billing
               upstream: { url: "https://billing.example.com/" }
+        principal:
+          allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
+          description: |
+            The principal of this namespace the sandbox acts for, fixed for its
+            life: its certificate carries the principal and its subject after
+            its own URI, so a broker sees the same principal whichever sandbox
+            calls. Absent acts for nobody, as a sandbox always has.
+
+            A principal that is not there, or that a key acting only on its
+            `own` sandboxes did not make, is a `404`; one being deleted is a
+            `409 principal_deleting`. A volume it names that is bound to
+            another principal — or to one, for a sandbox acting for none — is
+            a `409 volume_principal`; one bound to none is bound to this
+            sandbox's principal. A build's sandbox never acts for one.
         labels:
           type: object
           additionalProperties: { type: string }
@@ -5333,6 +5703,75 @@ components:
             is still only a label — not unique, not checked, and not the
             sandbox's identity, which is the id.
           example: { name: pr-1234-review, owner: runyard, session: "1234" }
+
+    PrincipalId:
+      type: string
+      description: >-
+        Letters, digits, `_`, `.` and `-`, starting with a letter or a digit:
+        it goes into a certificate's URI as it is, so nothing in it is ever
+        escaped. Unique in its namespace.
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      example: 3f1c9a7e2b6d4058a1c3e9f7b2d4a6c8
+
+    PrincipalSubject:
+      type: string
+      description: >-
+        Who a principal acts for. Opaque: this daemon never interprets it, and
+        a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`,
+        starting with a letter or a digit, so that it goes into a
+        certificate's URI as it is.
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_.~-]{0,127}$"
+      example: u_8c2f61d0a9b4
+
+    PrincipalSpec:
+      type: object
+      description: What `PUT .../principals/{principalId}` makes.
+      required: [subject]
+      additionalProperties: false
+      properties:
+        subject: { $ref: "#/components/schemas/PrincipalSubject" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            The caller's own, as a sandbox's are: stored, echoed, never
+            interpreted, and no part of who may do what. Replaced whole by
+            each `PUT`; absent is none.
+
+    Principal:
+      type: object
+      required: [id, namespace, subject, labels, createdAt]
+      properties:
+        id: { $ref: "#/components/schemas/PrincipalId" }
+        namespace:
+          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
+          readOnly: true
+        subject: { $ref: "#/components/schemas/PrincipalSubject" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        createdBy:
+          allOf: [{ $ref: "#/components/schemas/Creator" }]
+          description: >-
+            Who made it. When that is a key that acts only on its `own`
+            sandboxes, only that key reaches it.
+        createdAt: { type: string, format: date-time }
+
+    PrincipalPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Principal" }
+
+    VolumePrincipal:
+      type: object
+      description: What `PUT .../volumes/{volumeName}/principal` binds the volume to.
+      required: [principal]
+      additionalProperties: false
+      properties:
+        principal: { $ref: "#/components/schemas/PrincipalId" }
 
     VolumeName:
       type: string
@@ -5379,6 +5818,12 @@ components:
             Absent on a volume made before this was recorded. When it is a
             key that acts only on its `own` sandboxes (`KeyReach`), only that
             key attaches the volume.
+        principal:
+          allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
+          description: >-
+            The principal it is bound to: that of the first sandbox acting for
+            one that attached it, or the one it was moved to. Only sandboxes
+            acting for it attach it. Absent while it is bound to none.
         createdAt: { type: string, format: date-time }
         lastUsedAt:
           type: string
@@ -6081,6 +6526,11 @@ components:
                 because it is the number anybody tuning this watches, and
                 because a sandbox that takes thirty seconds and one that takes
                 two look identical afterwards.
+        principal:
+          allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
+          description: >-
+            The principal it acts for, as `spec.principal` says. Absent when
+            it acts for none.
         createdBy:
           allOf: [{ $ref: "#/components/schemas/Creator" }]
           description: >-
@@ -6195,6 +6645,15 @@ components:
             PEM certificates to verify the upstream with, for one with a private
             CA. Absent uses this host's roots. A certificate, not a key: there is
             nowhere in this document for a secret to go.
+        trustedUrl:
+          type: string
+          description: >-
+            The broker's trusted plane, which only this daemon reaches, with a
+            principal's trusted certificate: `https`, with no user or password,
+            verified with `ca` as `url` is. Absent is a broker with no trusted
+            plane. Only a shared broker's is ever dialled — see `GET
+            .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
+          example: https://broker.internal:8454/
 
     Broker:
       type: object
@@ -6207,6 +6666,9 @@ components:
         ca:
           type: string
           description: The PEM it verifies the upstream with, when it has its own.
+        trustedUrl:
+          type: string
+          description: Its trusted plane, when it has one.
         sandboxes:
           type: integer
           description: >-
@@ -7106,6 +7568,8 @@ components:
         | `images.write` | pull and delete images, and build them |
         | `network.write` | change a running sandbox's egress policy and its brokers |
         | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
+        | `principals.read` | see principals, and read brokers' trusted documents for them |
+        | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
         | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
         | `files.read` | read bytes out of a sandbox, including its process and socket tables |
         | `files.write` | write bytes into a sandbox |
@@ -7126,6 +7590,12 @@ components:
         them at once. `tunnels.write` is separate for the reason
         `network.write` is, the other way round: it opens a sandbox to people
         on the internet rather than the sandbox to the internet.
+        `principals.write` is separate from `sandboxes.write` because
+        choosing a principal's `subject` is vouching for somebody to every
+        broker: a scheduler that only starts and stops machines has no need
+        of it. Naming a principal in a sandbox's spec needs only
+        `sandboxes.write`, and a key that acts only on its `own` sandboxes
+        names only the principals it made.
 
         `namespaces.read` and `namespaces.write` are about every namespace,
         and a key bound to one can never hold them. `members.admin` is
@@ -7139,6 +7609,8 @@ components:
         - images.write
         - network.write
         - brokers.admin
+        - principals.read
+        - principals.write
         - tunnels.write
         - files.read
         - files.write
@@ -7880,7 +8352,12 @@ components:
         - recipe_invalid
         - builds_unconfigured
         - volume_in_use
+        - volume_principal
         - broker_in_use
+        - principal_subject
+        - principal_in_use
+        - principal_deleting
+        - no_trusted_plane
         - unsupported_spec
         - too_large
         - gapped

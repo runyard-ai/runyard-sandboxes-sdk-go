@@ -33,6 +33,18 @@ func namespacedCalls(ctx context.Context, client *Client) map[string]func() erro
 		},
 		"Volumes":      func() error { _, err := client.Volumes(ctx); return err },
 		"DeleteVolume": func() error { return client.DeleteVolume(ctx, "chat") },
+		"Principals":   func() error { _, err := client.Principals(ctx); return err },
+		"PutPrincipal": func() error {
+			_, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-1"})
+			return err
+		},
+		"Principal":       func() error { _, err := client.Principal(ctx, "p1"); return err },
+		"DeletePrincipal": func() error { return client.DeletePrincipal(ctx, "p1") },
+		"BrokerTrusted": func() error {
+			_, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/runyard-broker")
+			return err
+		},
+		"MoveVolume": func() error { return client.MoveVolume(ctx, "chat", "p1") },
 	}
 }
 
@@ -40,7 +52,10 @@ func namespacedCalls(ctx context.Context, client *Client) map[string]func() erro
 // asked, whatever they were answered.
 func sent(d *fakedaemon.Daemon) int {
 	n := 0
-	for _, operation := range []string{"createSandbox", "getSandbox", "listSandboxes", "getCounts", "listHostTunnels", "listVolumes", "deleteVolume"} {
+	for _, operation := range []string{
+		"createSandbox", "getSandbox", "listSandboxes", "getCounts", "listHostTunnels", "listVolumes", "deleteVolume",
+		"listPrincipals", "putPrincipal", "getPrincipal", "deletePrincipal", "getBrokerTrusted", "moveVolume",
+	} {
 		n += d.Calls(operation)
 	}
 	return n

@@ -91,8 +91,12 @@ const (
 	ErrorCodeImageInUse         ErrorCode = "image_in_use"
 	ErrorCodeImageUnknown       ErrorCode = "image_unknown"
 	ErrorCodeInternal           ErrorCode = "internal"
+	ErrorCodeNoTrustedPlane     ErrorCode = "no_trusted_plane"
 	ErrorCodeNotFound           ErrorCode = "not_found"
 	ErrorCodeNotImplemented     ErrorCode = "not_implemented"
+	ErrorCodePrincipalDeleting  ErrorCode = "principal_deleting"
+	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
+	ErrorCodePrincipalSubject   ErrorCode = "principal_subject"
 	ErrorCodeQuotaExceeded      ErrorCode = "quota_exceeded"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
@@ -105,6 +109,7 @@ const (
 	ErrorCodeUnsupportedSpec    ErrorCode = "unsupported_spec"
 	ErrorCodeUpstreamError      ErrorCode = "upstream_error"
 	ErrorCodeVolumeInUse        ErrorCode = "volume_in_use"
+	ErrorCodeVolumePrincipal    ErrorCode = "volume_principal"
 )
 
 // Defines values for ImageState.
@@ -198,6 +203,8 @@ const (
 	NamespacesRead  Scope = "namespaces.read"
 	NamespacesWrite Scope = "namespaces.write"
 	NetworkWrite    Scope = "network.write"
+	PrincipalsRead  Scope = "principals.read"
+	PrincipalsWrite Scope = "principals.write"
 	SandboxesRead   Scope = "sandboxes.read"
 	SandboxesWrite  Scope = "sandboxes.write"
 	TunnelsWrite    Scope = "tunnels.write"
@@ -276,8 +283,11 @@ type Broker struct {
 	Name BrokerName `json:"name"`
 
 	// Sandboxes How many sandboxes on this host are given it right now. Left out for a key that acts only on its `own` sandboxes.
-	Sandboxes *int   `json:"sandboxes,omitempty"`
-	Url       string `json:"url"`
+	Sandboxes *int `json:"sandboxes,omitempty"`
+
+	// TrustedUrl Its trusted plane, when it has one.
+	TrustedUrl *string `json:"trustedUrl,omitempty"`
+	Url        string  `json:"url"`
 }
 
 // BrokerKind `shared` is the namespace's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
@@ -298,6 +308,9 @@ type BrokerUpstream struct {
 
 	// Description What it is for, for a person — in this API and in the console.
 	Description *string `json:"description,omitempty"`
+
+	// TrustedUrl The broker's trusted plane, which only this daemon reaches, with a principal's trusted certificate: `https`, with no user or password, verified with `ca` as `url` is. Absent is a broker with no trusted plane. Only a shared broker's is ever dialled — see `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
+	TrustedUrl *string `json:"trustedUrl,omitempty"`
 
 	// Url `https`, always. The identity this plane exists to present is a TLS client certificate, and plain http has nowhere to attach one. Only the host and port are used: the sandbox's request carries its own path.
 	Url string `json:"url"`
@@ -370,6 +383,8 @@ type BuildState string
 
 // BuildStep defines model for BuildStep.
 type BuildStep struct {
+	// Cached It was not run: an earlier build in the namespace ran the same step over the same image and the same steps before it, and its layer is reused. A step changed by the recipe, and every one after it, runs again; one that fetches from the network is not run again to see whether what it fetches changed.
+	Cached     *bool      `json:"cached,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 
 	// Index Its place among the steps, from 1.
@@ -1707,6 +1722,42 @@ type PinTtl struct {
 	MinSeconds *int `json:"minSeconds,omitempty"`
 }
 
+// Principal defines model for Principal.
+type Principal struct {
+	CreatedAt time.Time `json:"createdAt"`
+
+	// CreatedBy Who made it. When that is a key that acts only on its `own` sandboxes, only that key reaches it.
+	CreatedBy *Creator `json:"createdBy,omitempty"`
+
+	// Id Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+	Id        PrincipalId       `json:"id"`
+	Labels    map[string]string `json:"labels"`
+	Namespace *NamespaceName    `json:"namespace,omitempty"`
+
+	// Subject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+	Subject PrincipalSubject `json:"subject"`
+}
+
+// PrincipalId Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+type PrincipalId = string
+
+// PrincipalPage defines model for PrincipalPage.
+type PrincipalPage struct {
+	Items []Principal `json:"items"`
+}
+
+// PrincipalSpec What `PUT .../principals/{principalId}` makes.
+type PrincipalSpec struct {
+	// Labels The caller's own, as a sandbox's are: stored, echoed, never interpreted, and no part of who may do what. Replaced whole by each `PUT`; absent is none.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Subject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+	Subject PrincipalSubject `json:"subject"`
+}
+
+// PrincipalSubject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+type PrincipalSubject = string
+
 // Process defines model for Process.
 type Process struct {
 	Argv    []string   `json:"argv"`
@@ -1856,6 +1907,9 @@ type Sandbox struct {
 
 	// Ports The published ports as they ended up, with the host port filled in for every one that asked for an ephemeral.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
+
+	// Principal The principal it acts for, as `spec.principal` says. Absent when it acts for none.
+	Principal *PrincipalId `json:"principal,omitempty"`
 
 	// ReadyAt When the guest first answered. Absent until it has.
 	ReadyAt *time.Time `json:"readyAt,omitempty"`
@@ -2271,6 +2325,19 @@ type SandboxSpec struct {
 	// accident. Nothing is published unless it is written here.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
 
+	// Principal The principal of this namespace the sandbox acts for, fixed for its
+	// life: its certificate carries the principal and its subject after
+	// its own URI, so a broker sees the same principal whichever sandbox
+	// calls. Absent acts for nobody, as a sandbox always has.
+	//
+	// A principal that is not there, or that a key acting only on its
+	// `own` sandboxes did not make, is a `404`; one being deleted is a
+	// `409 principal_deleting`. A volume it names that is bound to
+	// another principal — or to one, for a sandbox acting for none — is
+	// a `409 volume_principal`; one bound to none is bound to this
+	// sandbox's principal. A build's sandbox never acts for one.
+	Principal *PrincipalId `json:"principal,omitempty"`
+
 	// Sealed Whether nothing can ever be run in it, or written into it, from
 	// outside: its own `ENTRYPOINT`/`CMD` (or `entrypoint` here) is all
 	// that runs. Every route that runs a command, writes to a process,
@@ -2320,6 +2387,8 @@ type SandboxUsagePoint struct {
 // | `images.write` | pull and delete images, and build them |
 // | `network.write` | change a running sandbox's egress policy and its brokers |
 // | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
+// | `principals.read` | see principals, and read brokers' trusted documents for them |
+// | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
 // | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
 // | `files.read` | read bytes out of a sandbox, including its process and socket tables |
 // | `files.write` | write bytes into a sandbox |
@@ -2340,6 +2409,12 @@ type SandboxUsagePoint struct {
 // them at once. `tunnels.write` is separate for the reason
 // `network.write` is, the other way round: it opens a sandbox to people
 // on the internet rather than the sandbox to the internet.
+// `principals.write` is separate from `sandboxes.write` because
+// choosing a principal's `subject` is vouching for somebody to every
+// broker: a scheduler that only starts and stops machines has no need
+// of it. Naming a principal in a sandbox's spec needs only
+// `sandboxes.write`, and a key that acts only on its `own` sandboxes
+// names only the principals it made.
 //
 // `namespaces.read` and `namespaces.write` are about every namespace,
 // and a key bound to one can never hold them. `members.admin` is
@@ -2660,6 +2735,9 @@ type Volume struct {
 	// Namespace The namespace it is in, as its path says: written in the body too, so that a volume copied out of its URL still says where it is.
 	Namespace *NamespaceName `json:"namespace,omitempty"`
 
+	// Principal The principal it is bound to: that of the first sandbox acting for one that attached it, or the one it was moved to. Only sandboxes acting for it attach it. Absent while it is bound to none.
+	Principal *PrincipalId `json:"principal,omitempty"`
+
 	// SandboxId The sandbox holding it. Absent when none does.
 	SandboxId *openapi_types.UUID `json:"sandboxId,omitempty"`
 }
@@ -2671,6 +2749,12 @@ type VolumeList struct {
 
 // VolumeName Lower case letters, digits, `.`, `_` and `-`, starting with a letter or a digit. It is a file name on the host, which is why it is this narrow.
 type VolumeName = string
+
+// VolumePrincipal What `PUT .../volumes/{volumeName}/principal` binds the volume to.
+type VolumePrincipal struct {
+	// Principal Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+	Principal PrincipalId `json:"principal"`
+}
 
 // BuildID defines model for BuildID.
 type BuildID = string
@@ -2705,6 +2789,9 @@ type NamespaceInPath = NamespaceName
 // PathQuery defines model for PathQuery.
 type PathQuery = string
 
+// PrincipalID Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+type PrincipalID = PrincipalId
+
 // ProcessID defines model for ProcessID.
 type ProcessID = string
 
@@ -2713,6 +2800,9 @@ type RuleName = string
 
 // SandboxID defines model for SandboxID.
 type SandboxID = openapi_types.UUID
+
+// TrustedPath defines model for TrustedPath.
+type TrustedPath = string
 
 // TunnelName defines model for TunnelName.
 type TunnelName = string
@@ -3090,6 +3180,9 @@ type CreateNamespaceKeyJSONRequestBody = KeyRequest
 // PutNamespaceMemberJSONRequestBody defines body for PutNamespaceMember for application/json ContentType.
 type PutNamespaceMemberJSONRequestBody PutNamespaceMemberJSONBody
 
+// PutPrincipalJSONRequestBody defines body for PutPrincipal for application/json ContentType.
+type PutPrincipalJSONRequestBody = PrincipalSpec
+
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
 
@@ -3122,6 +3215,9 @@ type PutTunnelJSONRequestBody = TunnelSpec
 
 // CreateTunnelTokenJSONRequestBody defines body for CreateTunnelToken for application/json ContentType.
 type CreateTunnelTokenJSONRequestBody = TunnelTokenRequest
+
+// MoveVolumeJSONRequestBody defines body for MoveVolume for application/json ContentType.
+type MoveVolumeJSONRequestBody = VolumePrincipal
 
 // AsStreamGap returns the union data inside the StreamGapped as a StreamGap
 func (t StreamGapped) AsStreamGap() (StreamGap, error) {
@@ -3430,6 +3526,23 @@ type ClientInterface interface {
 
 	PutNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListPrincipals request
+	ListPrincipals(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePrincipal request
+	DeletePrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrincipal request
+	GetPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPrincipalWithBody request with any body
+	PutPrincipalWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBrokerTrusted request
+	GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSandboxes request
 	ListSandboxes(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3628,6 +3741,11 @@ type ClientInterface interface {
 
 	// DeleteVolume request
 	DeleteVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MoveVolumeWithBody request with any body
+	MoveVolumeWithBody(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MoveVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetOpenapiYaml request
 	GetOpenapiYaml(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4343,6 +4461,78 @@ func (c *Client) PutNamespaceMemberWithBody(ctx context.Context, namespace Names
 
 func (c *Client) PutNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutNamespaceMemberRequest(c.Server, namespace, email, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListPrincipals(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrincipalsRequest(c.Server, namespace)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeletePrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePrincipalRequest(c.Server, namespace, principalId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrincipalRequest(c.Server, namespace, principalId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutPrincipalWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrincipalRequestWithBody(c.Server, namespace, principalId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrincipalRequest(c.Server, namespace, principalId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerTrustedRequest(c.Server, namespace, principalId, brokerName, path)
 	if err != nil {
 		return nil, err
 	}
@@ -5183,6 +5373,30 @@ func (c *Client) ListVolumes(ctx context.Context, namespace NamespaceInPath, req
 
 func (c *Client) DeleteVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteVolumeRequest(c.Server, namespace, volumeName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MoveVolumeWithBody(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMoveVolumeRequestWithBody(c.Server, namespace, volumeName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MoveVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMoveVolumeRequest(c.Server, namespace, volumeName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7566,6 +7780,231 @@ func NewPutNamespaceMemberRequestWithBody(server string, namespace NamespaceInPa
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListPrincipalsRequest generates requests for ListPrincipals
+func NewListPrincipalsRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeletePrincipalRequest generates requests for DeletePrincipal
+func NewDeletePrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPrincipalRequest generates requests for GetPrincipal
+func NewGetPrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutPrincipalRequest calls the generic PutPrincipal builder with application/json body
+func NewPutPrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutPrincipalRequestWithBody(server, namespace, principalId, "application/json", bodyReader)
+}
+
+// NewPutPrincipalRequestWithBody generates requests for PutPrincipal with any type of body
+func NewPutPrincipalRequestWithBody(server string, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetBrokerTrustedRequest generates requests for GetBrokerTrusted
+func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithLocation("simple", false, "path", runtime.ParamLocationPath, path)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s/brokers/%s/trusted/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -10981,6 +11420,60 @@ func NewDeleteVolumeRequest(server string, namespace NamespaceInPath, volumeName
 	return req, nil
 }
 
+// NewMoveVolumeRequest calls the generic MoveVolume builder with application/json body
+func NewMoveVolumeRequest(server string, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMoveVolumeRequestWithBody(server, namespace, volumeName, "application/json", bodyReader)
+}
+
+// NewMoveVolumeRequestWithBody generates requests for MoveVolume with any type of body
+func NewMoveVolumeRequestWithBody(server string, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/volumes/%s/principal", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetOpenapiYamlRequest generates requests for GetOpenapiYaml
 func NewGetOpenapiYamlRequest(server string) (*http.Request, error) {
 	var err error
@@ -11223,6 +11716,23 @@ type ClientWithResponsesInterface interface {
 
 	PutNamespaceMemberWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNamespaceMemberResponse, error)
 
+	// ListPrincipalsWithResponse request
+	ListPrincipalsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error)
+
+	// DeletePrincipalWithResponse request
+	DeletePrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error)
+
+	// GetPrincipalWithResponse request
+	GetPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error)
+
+	// PutPrincipalWithBodyWithResponse request with any body
+	PutPrincipalWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
+
+	PutPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
+
+	// GetBrokerTrustedWithResponse request
+	GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
+
 	// ListSandboxesWithResponse request
 	ListSandboxesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
 
@@ -11421,6 +11931,11 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteVolumeWithResponse request
 	DeleteVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error)
+
+	// MoveVolumeWithBodyWithResponse request with any body
+	MoveVolumeWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
+
+	MoveVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
 
 	// GetOpenapiYamlWithResponse request
 	GetOpenapiYamlWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenapiYamlResponse, error)
@@ -12680,6 +13195,141 @@ func (r PutNamespaceMemberResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PutNamespaceMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListPrincipalsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *PrincipalPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPrincipalsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPrincipalsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeletePrincipalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeletePrincipalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeletePrincipalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetPrincipalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Principal
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPrincipalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPrincipalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutPrincipalResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Principal
+	JSON201      *Principal
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r PutPrincipalResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutPrincipalResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBrokerTrustedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrokerTrustedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrokerTrustedResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -14283,6 +14933,34 @@ func (r DeleteVolumeResponse) StatusCode() int {
 	return 0
 }
 
+type MoveVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Volume
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r MoveVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MoveVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetOpenapiYamlResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14835,6 +15513,59 @@ func (c *ClientWithResponses) PutNamespaceMemberWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParsePutNamespaceMemberResponse(rsp)
+}
+
+// ListPrincipalsWithResponse request returning *ListPrincipalsResponse
+func (c *ClientWithResponses) ListPrincipalsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error) {
+	rsp, err := c.ListPrincipals(ctx, namespace, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrincipalsResponse(rsp)
+}
+
+// DeletePrincipalWithResponse request returning *DeletePrincipalResponse
+func (c *ClientWithResponses) DeletePrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error) {
+	rsp, err := c.DeletePrincipal(ctx, namespace, principalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePrincipalResponse(rsp)
+}
+
+// GetPrincipalWithResponse request returning *GetPrincipalResponse
+func (c *ClientWithResponses) GetPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error) {
+	rsp, err := c.GetPrincipal(ctx, namespace, principalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrincipalResponse(rsp)
+}
+
+// PutPrincipalWithBodyWithResponse request with arbitrary body returning *PutPrincipalResponse
+func (c *ClientWithResponses) PutPrincipalWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
+	rsp, err := c.PutPrincipalWithBody(ctx, namespace, principalId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrincipalResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
+	rsp, err := c.PutPrincipal(ctx, namespace, principalId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrincipalResponse(rsp)
+}
+
+// GetBrokerTrustedWithResponse request returning *GetBrokerTrustedResponse
+func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error) {
+	rsp, err := c.GetBrokerTrusted(ctx, namespace, principalId, brokerName, path, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerTrustedResponse(rsp)
 }
 
 // ListSandboxesWithResponse request returning *ListSandboxesResponse
@@ -15454,6 +16185,23 @@ func (c *ClientWithResponses) DeleteVolumeWithResponse(ctx context.Context, name
 		return nil, err
 	}
 	return ParseDeleteVolumeResponse(rsp)
+}
+
+// MoveVolumeWithBodyWithResponse request with arbitrary body returning *MoveVolumeResponse
+func (c *ClientWithResponses) MoveVolumeWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
+	rsp, err := c.MoveVolumeWithBody(ctx, namespace, volumeName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMoveVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) MoveVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
+	rsp, err := c.MoveVolume(ctx, namespace, volumeName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMoveVolumeResponse(rsp)
 }
 
 // GetOpenapiYamlWithResponse request returning *GetOpenapiYamlResponse
@@ -17605,6 +18353,311 @@ func ParsePutNamespaceMemberResponse(rsp *http.Response) (*PutNamespaceMemberRes
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPrincipalsResponse parses an HTTP response from a ListPrincipalsWithResponse call
+func ParseListPrincipalsResponse(rsp *http.Response) (*ListPrincipalsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPrincipalsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PrincipalPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeletePrincipalResponse parses an HTTP response from a DeletePrincipalWithResponse call
+func ParseDeletePrincipalResponse(rsp *http.Response) (*DeletePrincipalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeletePrincipalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPrincipalResponse parses an HTTP response from a GetPrincipalWithResponse call
+func ParseGetPrincipalResponse(rsp *http.Response) (*GetPrincipalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPrincipalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Principal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutPrincipalResponse parses an HTTP response from a PutPrincipalWithResponse call
+func ParsePutPrincipalResponse(rsp *http.Response) (*PutPrincipalResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutPrincipalResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Principal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Principal
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrokerTrustedResponse parses an HTTP response from a GetBrokerTrustedWithResponse call
+func ParseGetBrokerTrustedResponse(rsp *http.Response) (*GetBrokerTrustedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrokerTrustedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
 
 	}
 
@@ -21202,6 +22255,74 @@ func ParseDeleteVolumeResponse(rsp *http.Response) (*DeleteVolumeResponse, error
 	return response, nil
 }
 
+// ParseMoveVolumeResponse parses an HTTP response from a MoveVolumeWithResponse call
+func ParseMoveVolumeResponse(rsp *http.Response) (*MoveVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MoveVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Volume
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetOpenapiYamlResponse parses an HTTP response from a GetOpenapiYamlWithResponse call
 func ParseGetOpenapiYamlResponse(rsp *http.Response) (*GetOpenapiYamlResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -21386,6 +22507,21 @@ type ServerInterface interface {
 	// Add or change a member
 	// (PUT /v1/namespaces/{namespace}/members/{email})
 	PutNamespaceMember(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, email openapi_types.Email)
+	// The principals in this namespace
+	// (GET /v1/namespaces/{namespace}/principals)
+	ListPrincipals(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
+	// Delete a principal
+	// (DELETE /v1/namespaces/{namespace}/principals/{principalId})
+	DeletePrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
+	// One principal
+	// (GET /v1/namespaces/{namespace}/principals/{principalId})
+	GetPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
+	// Make a principal, or replace its labels
+	// (PUT /v1/namespaces/{namespace}/principals/{principalId})
+	PutPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
+	// Read a shared broker's document about a principal, through its trusted plane
+	// (GET /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path})
+	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
 	// Every sandbox on this host
 	// (GET /v1/namespaces/{namespace}/sandboxes)
 	ListSandboxes(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListSandboxesParams)
@@ -21563,6 +22699,9 @@ type ServerInterface interface {
 	// Let a volume go, and what was written on it
 	// (DELETE /v1/namespaces/{namespace}/volumes/{volumeName})
 	DeleteVolume(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, volumeName VolumeName)
+	// Bind a volume to a principal
+	// (PUT /v1/namespaces/{namespace}/volumes/{volumeName}/principal)
+	MoveVolume(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, volumeName VolumeName)
 	// This document
 	// (GET /v1/openapi.yaml)
 	GetOpenapiYaml(w http.ResponseWriter, r *http.Request)
@@ -23367,6 +24506,225 @@ func (siw *ServerInterfaceWrapper) PutNamespaceMember(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutNamespaceMember(w, r, namespace, email)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPrincipals operation middleware
+func (siw *ServerInterfaceWrapper) ListPrincipals(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPrincipals(w, r, namespace)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePrincipal operation middleware
+func (siw *ServerInterfaceWrapper) DeletePrincipal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "principalId" -------------
+	var principalId PrincipalID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "principalId", r.PathValue("principalId"), &principalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePrincipal(w, r, namespace, principalId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPrincipal operation middleware
+func (siw *ServerInterfaceWrapper) GetPrincipal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "principalId" -------------
+	var principalId PrincipalID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "principalId", r.PathValue("principalId"), &principalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPrincipal(w, r, namespace, principalId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPrincipal operation middleware
+func (siw *ServerInterfaceWrapper) PutPrincipal(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "principalId" -------------
+	var principalId PrincipalID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "principalId", r.PathValue("principalId"), &principalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPrincipal(w, r, namespace, principalId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrokerTrusted operation middleware
+func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "principalId" -------------
+	var principalId PrincipalID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "principalId", r.PathValue("principalId"), &principalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "path" -------------
+	var path TrustedPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "path", r.PathValue("path"), &path, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrokerTrusted(w, r, namespace, principalId, brokerName, path)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26455,6 +27813,48 @@ func (siw *ServerInterfaceWrapper) DeleteVolume(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// MoveVolume operation middleware
+func (siw *ServerInterfaceWrapper) MoveVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "volumeName" -------------
+	var volumeName VolumeName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeName", r.PathValue("volumeName"), &volumeName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MoveVolume(w, r, namespace, volumeName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetOpenapiYaml operation middleware
 func (siw *ServerInterfaceWrapper) GetOpenapiYaml(w http.ResponseWriter, r *http.Request) {
 
@@ -26641,6 +28041,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/members", wrapper.ListNamespaceMembers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.DeleteNamespaceMember)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.PutNamespaceMember)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals", wrapper.ListPrincipals)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.DeletePrincipal)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.GetPrincipal)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.PutPrincipal)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.ListSandboxes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.CreateSandbox)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.DeleteSandbox)
@@ -26700,6 +28105,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/tunnels", wrapper.ListHostTunnels)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/volumes", wrapper.ListVolumes)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/volumes/{volumeName}", wrapper.DeleteVolume)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/volumes/{volumeName}/principal", wrapper.MoveVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/openapi.yaml", wrapper.GetOpenapiYaml)
 
 	return m

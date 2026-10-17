@@ -12,7 +12,7 @@ import (
 )
 
 // A principal is made idempotently, read, listed and deleted; its subject
-// never changes.
+// is replaced by a put with another.
 func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 	d, client := fake(t)
 	ctx := t.Context()
@@ -24,13 +24,13 @@ func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 	if err != nil || len(again.Labels) != 0 || !again.CreatedAt.Equal(made.CreatedAt) {
 		t.Errorf("again = %+v, %v", again, err)
 	}
-	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-2"}); CodeOf(err) != "principal_subject" {
-		t.Errorf("another subject = %v", err)
+	if changed, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-2"}); err != nil || changed.Subject != "u-2" || !changed.CreatedAt.Equal(made.CreatedAt) {
+		t.Errorf("another subject = %+v, %v", changed, err)
 	}
 	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "a/b"}); CodeOf(err) != "bad_request" {
 		t.Errorf("a subject that is not one = %v", err)
 	}
-	if got, err := client.Principal(ctx, "p1"); err != nil || got.Subject != "u-1" {
+	if got, err := client.Principal(ctx, "p1"); err != nil || got.Subject != "u-2" {
 		t.Errorf("Principal = %+v, %v", got, err)
 	}
 	if _, err := client.Principal(ctx, "nobody"); CodeOf(err) != "not_found" {

@@ -96,7 +96,6 @@ const (
 	ErrorCodeNotImplemented     ErrorCode = "not_implemented"
 	ErrorCodePrincipalDeleting  ErrorCode = "principal_deleting"
 	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
-	ErrorCodePrincipalSubject   ErrorCode = "principal_subject"
 	ErrorCodeQuotaExceeded      ErrorCode = "quota_exceeded"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
@@ -1734,7 +1733,7 @@ type Principal struct {
 	Labels    map[string]string `json:"labels"`
 	Namespace *NamespaceName    `json:"namespace,omitempty"`
 
-	// Subject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+	// Subject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
 	Subject PrincipalSubject `json:"subject"`
 }
 
@@ -1751,11 +1750,11 @@ type PrincipalSpec struct {
 	// Labels The caller's own, as a sandbox's are: stored, echoed, never interpreted, and no part of who may do what. Replaced whole by each `PUT`; absent is none.
 	Labels *map[string]string `json:"labels,omitempty"`
 
-	// Subject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+	// Subject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
 	Subject PrincipalSubject `json:"subject"`
 }
 
-// PrincipalSubject Who a principal acts for. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
+// PrincipalSubject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
 type PrincipalSubject = string
 
 // Process defines model for Process.
@@ -22516,7 +22515,7 @@ type ServerInterface interface {
 	// One principal
 	// (GET /v1/namespaces/{namespace}/principals/{principalId})
 	GetPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
-	// Make a principal, or replace its labels
+	// Make a principal, or replace its subject and labels
 	// (PUT /v1/namespaces/{namespace}/principals/{principalId})
 	PutPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
 	// Read a shared broker's document about a principal, through its trusted plane

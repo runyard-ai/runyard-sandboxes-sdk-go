@@ -10,8 +10,8 @@ import (
 )
 
 // A principal is an identity that outlives a sandbox, in the client's
-// namespace: `{id, subject}`, where the subject is who it acts for, and
-// never changes. A sandbox made with Spec.Principal acts for one, and every
+// namespace: `{id, subject}`, where the id is stable and the subject is who
+// it acts for now. A sandbox made with Spec.Principal acts for one, and every
 // broker it reaches is told so by its certificate; a volume such a sandbox
 // first attaches is bound to the principal, and attached by sandboxes acting
 // for it alone (MoveVolume moves it). See the contract's Principals section.
@@ -32,10 +32,11 @@ func (c *Client) Principals(ctx context.Context) ([]genv1.Principal, error) {
 	return res.JSON200.Items, nil
 }
 
-// PutPrincipal makes the principal id, or replaces its labels: idempotent,
-// so a caller that makes one each time it is needed gets the same one. One
-// that is there with another subject is refused with `principal_subject`: a
-// different subject is a different principal.
+// PutPrincipal makes the principal id, or replaces its subject and labels:
+// idempotent, so a caller that makes one each time it is needed gets the
+// same one. Another subject is the same principal acting for somebody else:
+// the daemon cuts the broker connections of the sandboxes acting for it, and
+// what they connect with next presents the new subject.
 func (c *Client) PutPrincipal(ctx context.Context, id string, p genv1.PrincipalSpec) (genv1.Principal, error) {
 	namespace, err := c.ResolveNamespace(ctx)
 	if err != nil {

@@ -129,11 +129,9 @@ func (d *Daemon) putPrincipal(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if existing, ok := d.principals[volumeKey{namespace, id}]; ok {
-		if existing.Subject != spec.Subject {
-			refuse(w, http.StatusConflict, genv1.ErrorCodePrincipalSubject, "the principal "+id+" is there with another subject, and a principal's subject never changes")
-			return
-		}
-		existing.Labels = labels
+		// A new subject is the same principal acting for somebody else. The
+		// daemon cuts its sandboxes' broker connections; this carries none.
+		existing.Subject, existing.Labels = spec.Subject, labels
 		reply(w, http.StatusOK, clonePrincipal(*existing))
 		return
 	}

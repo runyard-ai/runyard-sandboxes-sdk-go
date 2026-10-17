@@ -443,12 +443,14 @@ tags:
       An identity that outlives a sandbox, as a volume is a disk that
       outlives one.
 
-      A principal is `{id, subject}` in a namespace. `subject` is **who it
-      acts for**: opaque — this daemon never interprets it, and a broker only
-      compares it — and fixed for the principal's life, so a certificate
-      never carries a subject that has since changed. Making one needs
-      `principals.write`, which is separate from `sandboxes.write` because
-      choosing a subject is vouching for somebody to every broker.
+      A principal is `{id, subject}` in a namespace. The id is the
+      principal: stable, and the caller's to choose. `subject` is **who it
+      acts for now**: opaque — this daemon never interprets it, and a broker
+      only compares it — and changed by a `PUT` with another. A change cuts
+      the broker connections of the sandboxes acting for it, and what they
+      connect with next presents the new subject. Making or changing one
+      needs `principals.write`, which is separate from `sandboxes.write`
+      because choosing a subject is vouching for somebody to every broker.
 
       **A sandbox may act for one** (`spec.principal`), fixed for the life
       of the sandbox. Its certificate then carries, after its own
@@ -1139,13 +1141,19 @@ paths:
     put:
       operationId: putPrincipal
       tags: [Principals]
-      summary: Make a principal, or replace its labels
+      summary: Make a principal, or replace its subject and labels
       description: |
         By id, and idempotent: the id is the caller's to choose, and a repeat
-        with the same subject is the same principal, with its labels replaced
-        by the ones sent. **The subject never changes**: a repeat with another
-        is refused, `409 principal_subject`, because a different subject is a
-        different principal.
+        is the same principal, with its subject and labels replaced by the
+        ones sent.
+
+        **A different subject is the same principal acting for somebody
+        else**, from the moment it is answered. Every sandbox acting for it
+        has its broker connections cut, as when its broker moves, and what
+        it connects with next presents the new subject; the principal's
+        trusted certificate is minted again with it too. Certificates
+        already presented lapse within their lifetime, as when a principal
+        is deleted.
 
         Written down before it is answered, and kept across restarts of the
         daemon. A principal being deleted is refused, `409
@@ -1159,7 +1167,7 @@ paths:
             schema: { $ref: "#/components/schemas/PrincipalSpec" }
       responses:
         "200":
-          description: It was there, with this subject, and its labels are replaced.
+          description: It was there, and its subject and labels are replaced.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Principal" }
@@ -1173,9 +1181,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: >-
-            It is there with another subject (`principal_subject`), or it is
-            being deleted (`principal_deleting`).
+          description: It is being deleted (`principal_deleting`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5716,7 +5722,7 @@ components:
     PrincipalSubject:
       type: string
       description: >-
-        Who a principal acts for. Opaque: this daemon never interprets it, and
+        Who a principal acts for now. Opaque: this daemon never interprets it, and
         a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`,
         starting with a letter or a digit, so that it goes into a
         certificate's URI as it is.
@@ -8354,7 +8360,6 @@ components:
         - volume_in_use
         - volume_principal
         - broker_in_use
-        - principal_subject
         - principal_in_use
         - principal_deleting
         - no_trusted_plane

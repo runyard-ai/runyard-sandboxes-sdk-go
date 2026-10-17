@@ -29,8 +29,11 @@ func TestPrincipalsAreMadeReadAndDeletedAsTheDaemonDoes(t *testing.T) {
 	if again.JSON200 == nil || len(again.JSON200.Labels) != 0 {
 		t.Errorf("again = %s", again.Body)
 	}
-	if other, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-2"}); other.StatusCode() != 409 {
-		t.Errorf("another subject = %d", other.StatusCode())
+	if other, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-2"}); other.JSON200 == nil || other.JSON200.Subject != "u-2" {
+		t.Errorf("another subject = %d %s", other.StatusCode(), other.Body)
+	}
+	if p, _ := d.Principal("p1"); p.Subject != "u-2" || p.CreatedBy == nil || p.CreatedBy.User != operator {
+		t.Errorf("after another subject, Principal = %+v", p)
 	}
 	for _, tc := range []struct{ id, subject string }{{"a b", "u"}, {"p", "a/b"}, {"p", ""}} {
 		if got, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, tc.id, genv1.PrincipalSpec{Subject: tc.subject}); got.StatusCode() != 400 {

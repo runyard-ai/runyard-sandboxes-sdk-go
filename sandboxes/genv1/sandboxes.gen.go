@@ -370,6 +370,8 @@ type BuildState string
 
 // BuildStep defines model for BuildStep.
 type BuildStep struct {
+	// Cached It was not run: an earlier build in the namespace ran the same step over the same image and the same steps before it, and its layer is reused. A step changed by the recipe, and every one after it, runs again; one that fetches from the network is not run again to see whether what it fetches changed.
+	Cached     *bool      `json:"cached,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 
 	// Index Its place among the steps, from 1.

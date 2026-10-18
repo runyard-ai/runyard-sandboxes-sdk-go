@@ -41,6 +41,7 @@ func (d *Daemon) getMe(w http.ResponseWriter, r *http.Request) {
 	me.Scopes = []genv1.Scope{
 		genv1.SandboxesRead, genv1.SandboxesWrite, genv1.Exec, genv1.FilesRead, genv1.FilesWrite,
 		genv1.NetworkWrite, genv1.TunnelsWrite, genv1.ImagesRead, genv1.ImagesWrite, genv1.BrokersAdmin, genv1.KeysAdmin,
+		genv1.PrincipalsRead, genv1.PrincipalsWrite,
 	}
 	me.Key = &struct {
 		Id        string               `json:"id"`

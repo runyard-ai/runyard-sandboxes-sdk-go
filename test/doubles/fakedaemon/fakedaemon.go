@@ -124,11 +124,17 @@ type Daemon struct {
 	created         chan genv1.SandboxID
 	// costRates price what each namespace holds (WithCostRates).
 	costRates genv1.CostRates
+	// trusted is each shared broker's trusted plane (WithTrustedPlane).
+	trusted map[string]TrustedPlane
 
 	mu        sync.Mutex
 	sandboxes map[genv1.SandboxID]*sandbox
 	order     []genv1.SandboxID
 	volumes   map[volumeKey]*volume
+	// principals is each namespace's, by namespace and id.
+	principals map[volumeKey]*genv1.Principal
+	// retired is every id a deleted principal had, which is never made again.
+	retired map[volumeKey]bool
 	// images is each namespace's cache, by namespace and id (PutImage).
 	images map[volumeKey]*genv1.Image
 	// idempotent is what each create's key made, by namespace and key.
@@ -179,6 +185,8 @@ type volume struct {
 	holder     *genv1.SandboxID
 	bytes      int64
 	createdBy  *genv1.Creator
+	// principal is the principal it is bound to, empty for none.
+	principal string
 }
 
 type idempotent struct {
@@ -304,6 +312,12 @@ func (d *Daemon) routes() http.Handler {
 	namespaced("DELETE /v1/images/{imageId}", "deleteImage", d.deleteImage)
 	namespaced("GET /v1/costs", "getNamespaceCosts", d.getNamespaceCosts)
 	namespaced("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
+	namespaced("PUT /v1/volumes/{name}/principal", "moveVolume", d.moveVolume)
+	namespaced("GET /v1/principals", "listPrincipals", d.listPrincipals)
+	namespaced("GET /v1/principals/{principal}", "getPrincipal", d.getPrincipal)
+	namespaced("PUT /v1/principals/{principal}", "putPrincipal", d.putPrincipal)
+	namespaced("DELETE /v1/principals/{principal}", "deletePrincipal", d.deletePrincipal)
+	namespaced("GET /v1/principals/{principal}/brokers/{broker}/trusted/{path}", "getBrokerTrusted", d.getBrokerTrusted)
 	handle("GET /v1/me", "getMe", d.getMe)
 	return mux
 }
@@ -709,6 +723,11 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	volumeName := *record.Spec.Disk.Volume
 	v, ok := d.volumes[volumeKey{namespace, volumeName}]
+	principal := valueOf(spec.Principal)
+	if code, status, why := d.actsFor(namespace, principal, v); code != "" {
+		refuse(w, status, code, why)
+		return
+	}
 	if ok && v.holder != nil {
 		refuse(w, http.StatusConflict, genv1.ErrorCodeVolumeInUse, fmt.Sprintf("volume %s is held by sandbox %s", volumeName, *v.holder))
 		return
@@ -717,6 +736,11 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		v = &volume{createdAt: d.now().UTC(), createdBy: d.creatorOf(r)}
 		d.volumes[volumeKey{namespace, volumeName}] = v
 	}
+	// Bound on its first attach by a sandbox bound to a principal.
+	if v.principal == "" && principal != "" {
+		v.principal = principal
+	}
+	record.Principal = spec.Principal
 	v.lastUsedAt = d.now().UTC()
 	// The size the guest sees is the last sandbox's to say.
 	if record.Spec.Disk.Size != nil {
@@ -1079,13 +1103,21 @@ func (d *Daemon) listVolumes(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(names)
 	list := genv1.VolumeList{Items: []genv1.Volume{}}
 	for _, name := range names {
-		v := d.volumes[volumeKey{namespace, name}]
-		list.Items = append(list.Items, genv1.Volume{
-			Name: name, Namespace: &namespace, CreatedAt: v.createdAt, LastUsedAt: v.lastUsedAt, SandboxId: v.holder, CreatedBy: v.createdBy,
-			Bytes: v.bytes, AllocatedBytes: v.bytes, Digest: "sha256:" + strings.Repeat("0", 64),
-		})
+		list.Items = append(list.Items, volumeOf(namespace, name, d.volumes[volumeKey{namespace, name}]))
 	}
 	reply(w, http.StatusOK, list)
+}
+
+// volumeOf is a volume as the contract has it.
+func volumeOf(namespace, name string, v *volume) genv1.Volume {
+	out := genv1.Volume{
+		Name: name, Namespace: &namespace, CreatedAt: v.createdAt, LastUsedAt: v.lastUsedAt, SandboxId: v.holder, CreatedBy: v.createdBy,
+		Bytes: v.bytes, AllocatedBytes: v.bytes, Digest: "sha256:" + strings.Repeat("0", 64),
+	}
+	if v.principal != "" {
+		out.Principal = new(v.principal)
+	}
+	return out
 }
 
 // carries says whether labels has every one wanted.

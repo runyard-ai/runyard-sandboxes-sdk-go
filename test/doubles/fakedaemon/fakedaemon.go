@@ -133,6 +133,8 @@ type Daemon struct {
 	volumes   map[volumeKey]*volume
 	// principals is each namespace's, by namespace and id.
 	principals map[volumeKey]*genv1.Principal
+	// retired is every id a deleted principal had, which is never made again.
+	retired map[volumeKey]bool
 	// images is each namespace's cache, by namespace and id (PutImage).
 	images map[volumeKey]*genv1.Image
 	// idempotent is what each create's key made, by namespace and key.
@@ -734,7 +736,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		v = &volume{createdAt: d.now().UTC(), createdBy: d.creatorOf(r)}
 		d.volumes[volumeKey{namespace, volumeName}] = v
 	}
-	// Bound on its first attach by a sandbox acting for a principal.
+	// Bound on its first attach by a sandbox bound to a principal.
 	if v.principal == "" && principal != "" {
 		v.principal = principal
 	}

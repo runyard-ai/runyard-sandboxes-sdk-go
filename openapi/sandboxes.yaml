@@ -420,19 +420,19 @@ tags:
       `-broker-allow-private`, and `GET /v1/info` says which it is. A shared
       broker, declared by whoever holds `brokers.admin`, may point anywhere.
 
-      **What a sandbox presents says which sandbox it is, and whom it acts
-      for.** Its certificate's first URI is
+      **What a sandbox presents says which sandbox it is, and which
+      principal it is.** Its certificate's first URI is
       `runyard-sandbox://<host>/<sandbox id>`, as it always was. A sandbox
-      acting for a principal (`spec.principal`, see Principals) carries two
-      more after it: `runyard-principal://<host>/<namespace>/<principal id>`
-      and `runyard-subject://<host>/<namespace>/<subject>`. An upstream that
-      knows nothing of principals reads the first and nothing else.
+      bound to a principal (`spec.principal`, see Principals) carries one
+      more after it: `runyard-principal://<host>/<namespace>/<principal id>`.
+      An upstream that knows nothing of principals reads the first and
+      nothing else.
 
       **A shared broker may have a trusted plane** (`trustedUrl`): a second
       address of the broker that only this daemon dials, presenting a
       principal's trusted certificate —
-      `runyard-trusted://<host>/<namespace>/<principal id>` and the subject,
-      and no `runyard-sandbox` URI. A sandbox's certificate never carries
+      `runyard-trusted://<host>/<namespace>/<principal id>`, and no
+      `runyard-sandbox` URI. A sandbox's certificate never carries
       `runyard-trusted`, so a trusted plane that requires it is never reached
       by a workload, and a data plane that refuses it is never reached with
       a principal's certificate. What this daemon reads there is a broker's
@@ -443,36 +443,36 @@ tags:
       An identity that outlives a sandbox, as a volume is a disk that
       outlives one.
 
-      A principal is `{id, subject}` in a namespace. The id is the
-      principal: stable, and the caller's to choose. `subject` is **who it
-      acts for now**: opaque — this daemon never interprets it, and a broker
-      only compares it — and changed by a `PUT` with another. A change cuts
-      the broker connections of the sandboxes acting for it, and what they
-      connect with next presents the new subject. Making or changing one
-      needs `principals.write`, which is separate from `sandboxes.write`
-      because choosing a subject is vouching for somebody to every broker.
+      A principal is an id in a namespace, and labels. It is an identity
+      **of its own** — not a person's, and standing for nobody: what it may do
+      with somebody's data is what that data's broker has granted it, and
+      this daemon vouches only for which principal is calling. The id is the
+      caller's to choose, and **never reused**: once a principal is deleted
+      its id is retired, and a `PUT` of it is refused (`409
+      principal_retired`), because a broker keys its grants on the id. Making
+      one needs `principals.write`, which is separate from `sandboxes.write`
+      because a principal is an identity brokers hold grants against.
 
-      **A sandbox may act for one** (`spec.principal`), fixed for the life
-      of the sandbox. Its certificate then carries, after its own
-      `runyard-sandbox://<host>/<sandbox id>` URI, the principal's and the
-      subject's: `runyard-principal://<host>/<namespace>/<principal id>` and
-      `runyard-subject://<host>/<namespace>/<subject>`. Several sandboxes can
-      act for one principal, one after another or at once, and a broker sees
-      the same principal whichever is calling. A broker that knows nothing
-      of principals reads the first URI as it always has.
+      **A sandbox may be one** (`spec.principal`), fixed for the life of the
+      sandbox. Its certificate then carries, after its own
+      `runyard-sandbox://<host>/<sandbox id>` URI, the principal's:
+      `runyard-principal://<host>/<namespace>/<principal id>`. Several
+      sandboxes can be one principal, one after another or at once, and a
+      broker sees the same principal whichever is calling. A broker that
+      knows nothing of principals reads the first URI as it always has.
 
-      **A volume follows its principal.** The first sandbox acting for one
+      **A volume follows its principal.** The first sandbox bound to one
       that attaches a volume binds the volume to it, and from then on only
-      sandboxes acting for that principal attach it (`volume_principal`):
-      what is on the disk is what that subject's grants fetched, and what a
+      sandboxes bound to that principal attach it (`volume_principal`):
+      what is on the disk is what that principal's grants fetched, and what a
       principal boots on is what it runs with its own grants. Moving a volume
       to another principal is explicit: `PUT
       /v1/namespaces/{namespace}/volumes/{volumeName}/principal`.
 
       **A broker may have a trusted plane** (`trustedUrl`), which only this
       daemon reaches, with a certificate of the principal's own —
-      `runyard-trusted://<host>/<namespace>/<principal id>` and the subject,
-      and no sandbox — minted from the principal's record, so no machine has
+      `runyard-trusted://<host>/<namespace>/<principal id>`, and no
+      sandbox — minted from the principal's record, so no machine has
       to be running. `GET .../principals/{id}/brokers/{name}/trusted/{path}`
       reads the broker's `.well-known/` documents about a principal through
       it, and nothing else.
@@ -1141,23 +1141,17 @@ paths:
     put:
       operationId: putPrincipal
       tags: [Principals]
-      summary: Make a principal, or replace its subject and labels
+      summary: Make a principal, or replace its labels
       description: |
         By id, and idempotent: the id is the caller's to choose, and a repeat
-        is the same principal, with its subject and labels replaced by the
-        ones sent.
-
-        **A different subject is the same principal acting for somebody
-        else**, from the moment it is answered. Every sandbox acting for it
-        has its broker connections cut, as when its broker moves, and what
-        it connects with next presents the new subject; the principal's
-        trusted certificate is minted again with it too. Certificates
-        already presented lapse within their lifetime, as when a principal
-        is deleted.
+        is the same principal, with its labels replaced by the ones sent.
+        Nothing else of a principal changes, so a repeat cuts nothing.
 
         Written down before it is answered, and kept across restarts of the
         daemon. A principal being deleted is refused, `409
-        principal_deleting`. A key that acts only on its `own` sandboxes is
+        principal_deleting`; an id a deleted principal had is refused for
+        good, `409 principal_retired`, because a broker may hold grants
+        under it. A key that acts only on its `own` sandboxes is
         answered for another's as for one that is not there and cannot be
         made: `404`.
       requestBody:
@@ -1167,7 +1161,7 @@ paths:
             schema: { $ref: "#/components/schemas/PrincipalSpec" }
       responses:
         "200":
-          description: It was there, and its subject and labels are replaced.
+          description: It was there, and its labels are replaced.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Principal" }
@@ -1181,7 +1175,9 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: It is being deleted (`principal_deleting`).
+          description: >-
+            It is being deleted (`principal_deleting`), or it was, and its id
+            is retired (`principal_retired`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1201,24 +1197,29 @@ paths:
       tags: [Principals]
       summary: Delete a principal
       description: |
-        Refused, `409 principal_in_use`, while any sandbox acts for it or any
+        Refused, `409 principal_in_use`, while any sandbox is bound to it or any
         volume is bound to it: delete or release those, or move the volumes,
         first. Once it is gone nothing is minted for it, and certificates
         already out lapse within their lifetime, as a deleted sandbox's do.
+
+        **Its id is retired**, written down before the delete is answered and
+        kept across restarts: a `PUT` of it is refused from then on (`409
+        principal_retired`), so a grant a broker holds for it is never
+        presented by another principal.
 
         Deleting one that is not there succeeds, as every delete here does —
         and so does deleting another's, for a key that acts only on its `own`
         sandboxes, which leaves it there.
       responses:
         "204":
-          description: Gone, or was never here.
+          description: Gone, and its id retired; or was never here.
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
           description: >-
-            A sandbox acts for it or a volume is bound to it
+            A sandbox or a volume is bound to it
             (`principal_in_use`).
           content:
             application/json:
@@ -1955,7 +1956,7 @@ paths:
       summary: Bind a volume to a principal
       description: |
         Moves a volume to `principal`, from the one it was bound to or from
-        none: from now on only sandboxes acting for that principal attach it.
+        none: from now on only sandboxes bound to that principal attach it.
         An explicit act, and written into the volume's record before it is
         answered.
 
@@ -2134,7 +2135,7 @@ paths:
             that has since been dropped — refused rather than reconciled. Or
             `volume_in_use`: another sandbox holds the volume this one names,
             and the body says which. Or `volume_principal`: that volume is
-            bound to another principal than the one this sandbox acts for,
+            bound to another principal than the one this sandbox is bound to,
             and the body names neither. Or `principal_deleting`: the
             principal it names is being deleted.
           content:
@@ -5685,17 +5686,17 @@ components:
         principal:
           allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
           description: |
-            The principal of this namespace the sandbox acts for, fixed for its
-            life: its certificate carries the principal and its subject after
-            its own URI, so a broker sees the same principal whichever sandbox
-            calls. Absent acts for nobody, as a sandbox always has.
+            The principal of this namespace the sandbox is, fixed for its
+            life: its certificate carries the principal after its own URI, so
+            a broker sees the same principal whichever sandbox calls. Absent
+            is none, as a sandbox always was.
 
             A principal that is not there, or that a key acting only on its
             `own` sandboxes did not make, is a `404`; one being deleted is a
             `409 principal_deleting`. A volume it names that is bound to
-            another principal — or to one, for a sandbox acting for none — is
+            another principal — or to one, for a sandbox bound to none — is
             a `409 volume_principal`; one bound to none is bound to this
-            sandbox's principal. A build's sandbox never acts for one.
+            sandbox's principal. A build's sandbox is never bound to one.
         labels:
           type: object
           additionalProperties: { type: string }
@@ -5719,23 +5720,11 @@ components:
       pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
       example: 3f1c9a7e2b6d4058a1c3e9f7b2d4a6c8
 
-    PrincipalSubject:
-      type: string
-      description: >-
-        Who a principal acts for now. Opaque: this daemon never interprets it, and
-        a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`,
-        starting with a letter or a digit, so that it goes into a
-        certificate's URI as it is.
-      pattern: "^[A-Za-z0-9][A-Za-z0-9_.~-]{0,127}$"
-      example: u_8c2f61d0a9b4
-
     PrincipalSpec:
       type: object
       description: What `PUT .../principals/{principalId}` makes.
-      required: [subject]
       additionalProperties: false
       properties:
-        subject: { $ref: "#/components/schemas/PrincipalSubject" }
         labels:
           type: object
           additionalProperties: { type: string }
@@ -5746,13 +5735,12 @@ components:
 
     Principal:
       type: object
-      required: [id, namespace, subject, labels, createdAt]
+      required: [id, namespace, labels, createdAt]
       properties:
         id: { $ref: "#/components/schemas/PrincipalId" }
         namespace:
           allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
           readOnly: true
-        subject: { $ref: "#/components/schemas/PrincipalSubject" }
         labels:
           type: object
           additionalProperties: { type: string }
@@ -5827,9 +5815,9 @@ components:
         principal:
           allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
           description: >-
-            The principal it is bound to: that of the first sandbox acting for
+            The principal it is bound to: that of the first sandbox bound to
             one that attached it, or the one it was moved to. Only sandboxes
-            acting for it attach it. Absent while it is bound to none.
+            bound to it attach it. Absent while it is bound to none.
         createdAt: { type: string, format: date-time }
         lastUsedAt:
           type: string
@@ -6535,8 +6523,8 @@ components:
         principal:
           allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
           description: >-
-            The principal it acts for, as `spec.principal` says. Absent when
-            it acts for none.
+            The principal it is, as `spec.principal` says. Absent when it is
+            none.
         createdBy:
           allOf: [{ $ref: "#/components/schemas/Creator" }]
           description: >-
@@ -7596,10 +7584,10 @@ components:
         them at once. `tunnels.write` is separate for the reason
         `network.write` is, the other way round: it opens a sandbox to people
         on the internet rather than the sandbox to the internet.
-        `principals.write` is separate from `sandboxes.write` because
-        choosing a principal's `subject` is vouching for somebody to every
-        broker: a scheduler that only starts and stops machines has no need
-        of it. Naming a principal in a sandbox's spec needs only
+        `principals.write` is separate from `sandboxes.write` because a
+        principal is an identity brokers hold grants against: making one is a
+        decision a scheduler that only starts and stops machines has no need
+        of. Naming a principal in a sandbox's spec needs only
         `sandboxes.write`, and a key that acts only on its `own` sandboxes
         names only the principals it made.
 
@@ -8362,6 +8350,7 @@ components:
         - broker_in_use
         - principal_in_use
         - principal_deleting
+        - principal_retired
         - no_trusted_plane
         - unsupported_spec
         - too_large

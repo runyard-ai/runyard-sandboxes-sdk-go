@@ -14,34 +14,38 @@ func TestPrincipalsAreMadeReadAndDeletedAsTheDaemonDoes(t *testing.T) {
 	client := typed(t, d, "k")
 	ctx := t.Context()
 	labels := map[string]string{"agent": "a1"}
-	made, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-1", Labels: &labels})
+	made, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Labels: &labels})
 	if err != nil || made.JSON201 == nil || made.JSON201.CreatedBy == nil || made.JSON201.CreatedBy.User != operator {
 		t.Fatalf("made = %v %s", err, made.Body)
 	}
 	labels["agent"] = "changed"
-	if p, ok := d.Principal("p1"); !ok || p.Labels["agent"] != "a1" || p.Subject != "u-1" {
+	if p, ok := d.Principal("p1"); !ok || p.Labels["agent"] != "a1" {
 		t.Errorf("Principal = %+v, %v", p, ok)
 	}
 	if _, ok := d.Principal("nobody"); ok {
 		t.Error("one that is not there is")
 	}
-	again, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-1"})
+	again, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{})
 	if again.JSON200 == nil || len(again.JSON200.Labels) != 0 {
 		t.Errorf("again = %s", again.Body)
 	}
-	if other, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-2"}); other.JSON200 == nil || other.JSON200.Subject != "u-2" {
-		t.Errorf("another subject = %d %s", other.StatusCode(), other.Body)
+	other := map[string]string{"agent": "a2"}
+	if again, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Labels: &other}); again.JSON200 == nil || again.JSON200.Labels["agent"] != "a2" {
+		t.Errorf("other labels = %d %s", again.StatusCode(), again.Body)
 	}
-	if p, _ := d.Principal("p1"); p.Subject != "u-2" || p.CreatedBy == nil || p.CreatedBy.User != operator {
-		t.Errorf("after another subject, Principal = %+v", p)
+	if p, _ := d.Principal("p1"); p.Labels["agent"] != "a2" || p.CreatedBy == nil || p.CreatedBy.User != operator {
+		t.Errorf("after other labels, Principal = %+v", p)
 	}
-	for _, tc := range []struct{ id, subject string }{{"a b", "u"}, {"p", "a/b"}, {"p", ""}} {
-		if got, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, tc.id, genv1.PrincipalSpec{Subject: tc.subject}); got.StatusCode() != 400 {
-			t.Errorf("%+v = %d", tc, got.StatusCode())
+	for _, id := range []string{"a b", "-p", "a/b"} {
+		if got, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, id, genv1.PrincipalSpec{}); got.StatusCode() != 400 && got.StatusCode() != 404 {
+			t.Errorf("%q = %d", id, got.StatusCode())
 		}
 	}
-	if got, _ := client.PutPrincipalWithBodyWithResponse(ctx, DefaultNamespace, "p1", "application/json", strings.NewReader(`{"subject":"u-1","x":1}`)); got.StatusCode() != 400 {
-		t.Errorf("a field it does not take = %d", got.StatusCode())
+	// A subject, which a principal once had, is a field it does not take.
+	for _, body := range []string{`{"subject":"u-1"}`, `{"labels":{},"x":1}`} {
+		if got, _ := client.PutPrincipalWithBodyWithResponse(ctx, DefaultNamespace, "p1", "application/json", strings.NewReader(body)); got.StatusCode() != 400 {
+			t.Errorf("%s = %d", body, got.StatusCode())
+		}
 	}
 	if got, _ := client.GetPrincipalWithResponse(ctx, DefaultNamespace, "p1"); got.JSON200 == nil {
 		t.Errorf("read = %s", got.Body)
@@ -62,6 +66,17 @@ func TestPrincipalsAreMadeReadAndDeletedAsTheDaemonDoes(t *testing.T) {
 	if got, _ := client.GetPrincipalWithResponse(ctx, DefaultNamespace, "p1"); got.StatusCode() != 404 {
 		t.Errorf("after the delete = %d", got.StatusCode())
 	}
+	// Its id is retired: never made again. Deleting one that is not there
+	// retires nothing.
+	if got, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{}); got.StatusCode() != 409 || !strings.Contains(string(got.Body), "principal_retired") {
+		t.Errorf("made again = %d %s", got.StatusCode(), got.Body)
+	}
+	if got, _ := client.DeletePrincipalWithResponse(ctx, DefaultNamespace, "never"); got.StatusCode() != 204 {
+		t.Errorf("delete one that is not there = %d", got.StatusCode())
+	}
+	if got, _ := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "never", genv1.PrincipalSpec{}); got.JSON201 == nil {
+		t.Errorf("made once one that was not there was deleted = %d %s", got.StatusCode(), got.Body)
+	}
 }
 
 func TestAVolumeFollowsItsPrincipalAsTheDaemonsDoes(t *testing.T) {
@@ -69,7 +84,7 @@ func TestAVolumeFollowsItsPrincipalAsTheDaemonsDoes(t *testing.T) {
 	client := typed(t, d, "k")
 	ctx := t.Context()
 	for _, id := range []string{"p1", "p2"} {
-		if _, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, id, genv1.PrincipalSpec{Subject: "u"}); err != nil {
+		if _, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, id, genv1.PrincipalSpec{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -122,11 +137,11 @@ func TestATrustedPlaneIsReadAsTheDaemonReadsOne(t *testing.T) {
 		if path == ".well-known/none" {
 			return 404, "", nil
 		}
-		return 200, "text/markdown", []byte("# " + p.Subject + " " + path)
+		return 200, "text/markdown", []byte("# " + p.Id + " " + path)
 	}), WithTrustedPlane("other", func(genv1.Principal, string) (int, string, []byte) { return 204, "", nil }))
 	client := typed(t, d, "k")
 	ctx := t.Context()
-	if _, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{Subject: "u-1"}); err != nil {
+	if _, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := client.GetBrokerTrusted(ctx, DefaultNamespace, "p1", "github", ".well-known/agent-skills/a.md")
@@ -135,7 +150,7 @@ func TestATrustedPlaneIsReadAsTheDaemonReadsOne(t *testing.T) {
 	}
 	body, _ := io.ReadAll(res.Body)
 	_ = res.Body.Close()
-	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/markdown" || res.Header.Get("Runyard-Broker-Answered") != "true" || string(body) != "# u-1 .well-known/agent-skills/a.md" {
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/markdown" || res.Header.Get("Runyard-Broker-Answered") != "true" || string(body) != "# p1 .well-known/agent-skills/a.md" {
 		t.Errorf("= %d %v %s", res.StatusCode, res.Header, body)
 	}
 	for path, want := range map[string]int{".well-known/none": 404, ".well-known//x": 400, ".well-known/./x": 400, ".well-known/x?y": 400} {

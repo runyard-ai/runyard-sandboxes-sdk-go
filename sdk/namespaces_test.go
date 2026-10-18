@@ -35,7 +35,7 @@ func namespacedCalls(ctx context.Context, client *Client) map[string]func() erro
 		"DeleteVolume": func() error { return client.DeleteVolume(ctx, "chat") },
 		"Principals":   func() error { _, err := client.Principals(ctx); return err },
 		"PutPrincipal": func() error {
-			_, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-1"})
+			_, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{})
 			return err
 		},
 		"Principal":       func() error { _, err := client.Principal(ctx, "p1"); return err },

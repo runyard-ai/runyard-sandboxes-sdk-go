@@ -11,32 +11,32 @@ import (
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
 )
 
-// A principal is made idempotently, read, listed and deleted; its subject
-// is replaced by a put with another.
+// A principal is made idempotently, read, listed and deleted, and its id is
+// never made again once it is.
 func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 	d, client := fake(t)
 	ctx := t.Context()
-	made, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-1", Labels: &map[string]string{"agent": "a1"}})
-	if err != nil || made.Id != "p1" || made.Subject != "u-1" || made.Labels["agent"] != "a1" || made.CreatedBy == nil {
+	made, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Labels: &map[string]string{"agent": "a1"}})
+	if err != nil || made.Id != "p1" || made.Labels["agent"] != "a1" || made.CreatedBy == nil {
 		t.Fatalf("PutPrincipal = %+v, %v", made, err)
 	}
-	again, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-1"})
+	again, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{})
 	if err != nil || len(again.Labels) != 0 || !again.CreatedAt.Equal(made.CreatedAt) {
 		t.Errorf("again = %+v, %v", again, err)
 	}
-	if changed, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-2"}); err != nil || changed.Subject != "u-2" || !changed.CreatedAt.Equal(made.CreatedAt) {
-		t.Errorf("another subject = %+v, %v", changed, err)
+	if changed, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Labels: &map[string]string{"agent": "a2"}}); err != nil || changed.Labels["agent"] != "a2" || !changed.CreatedAt.Equal(made.CreatedAt) {
+		t.Errorf("other labels = %+v, %v", changed, err)
 	}
-	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "a/b"}); CodeOf(err) != "bad_request" {
-		t.Errorf("a subject that is not one = %v", err)
+	if _, err := client.PutPrincipal(ctx, "a b", genv1.PrincipalSpec{}); CodeOf(err) != "bad_request" {
+		t.Errorf("an id that is not one = %v", err)
 	}
-	if got, err := client.Principal(ctx, "p1"); err != nil || got.Subject != "u-2" {
+	if got, err := client.Principal(ctx, "p1"); err != nil || got.Labels["agent"] != "a2" {
 		t.Errorf("Principal = %+v, %v", got, err)
 	}
 	if _, err := client.Principal(ctx, "nobody"); CodeOf(err) != "not_found" {
 		t.Errorf("one that is not there = %v", err)
 	}
-	if _, err := client.PutPrincipal(ctx, "p0", genv1.PrincipalSpec{Subject: "u-0"}); err != nil {
+	if _, err := client.PutPrincipal(ctx, "p0", genv1.PrincipalSpec{}); err != nil {
 		t.Fatal(err)
 	}
 	all, err := client.Principals(ctx)
@@ -52,6 +52,9 @@ func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 	if _, ok := d.Principal("p1"); ok {
 		t.Error("still there")
 	}
+	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{}); CodeOf(err) != "principal_retired" {
+		t.Errorf("made again once deleted = %v, want principal_retired", err)
+	}
 	for _, operation := range []string{"listPrincipals", "getPrincipal", "putPrincipal", "deletePrincipal"} {
 		d.Intercept(operation, fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no"))
 	}
@@ -61,7 +64,7 @@ func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 	if _, err := client.Principal(ctx, "p0"); CodeOf(err) != "forbidden" {
 		t.Errorf("a refused Principal = %v", err)
 	}
-	if _, err := client.PutPrincipal(ctx, "p0", genv1.PrincipalSpec{Subject: "u-0"}); CodeOf(err) != "forbidden" {
+	if _, err := client.PutPrincipal(ctx, "p0", genv1.PrincipalSpec{}); CodeOf(err) != "forbidden" {
 		t.Errorf("a refused PutPrincipal = %v", err)
 	}
 	if err := client.DeletePrincipal(ctx, "p0"); CodeOf(err) != "forbidden" {
@@ -79,7 +82,7 @@ func TestASandboxActsForAPrincipalAndItsVolumeFollows(t *testing.T) {
 		t.Errorf("acting for one that is not there = %v", err)
 	}
 	for _, id := range []string{"p1", "p2"} {
-		if _, err := client.PutPrincipal(ctx, id, genv1.PrincipalSpec{Subject: "u-" + id}); err != nil {
+		if _, err := client.PutPrincipal(ctx, id, genv1.PrincipalSpec{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -150,14 +153,14 @@ func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 		return http.StatusOK, "application/json", []byte(`{"name":"github"}`)
 	}))
 	ctx := t.Context()
-	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u-1"}); err != nil {
+	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{}); err != nil {
 		t.Fatal(err)
 	}
 	status, contentType, body, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/agent-skills/index.json")
 	if err != nil || status != 200 || contentType != "application/json" || string(body) != `{"name":"github"}` {
 		t.Errorf("= %d %q %s, %v", status, contentType, body, err)
 	}
-	if asked.principal.Subject != "u-1" || asked.path != ".well-known/agent-skills/index.json" {
+	if asked.principal.Id != "p1" || asked.path != ".well-known/agent-skills/index.json" {
 		t.Errorf("the plane was asked %+v", asked)
 	}
 	status, _, body, err = client.BrokerTrusted(ctx, "p1", "github", ".well-known/runyard-contexts")
@@ -207,7 +210,10 @@ func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 	if _, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/x"); err == nil {
 		t.Error("a body cut short was returned")
 	}
-	d.Intercept("getBrokerTrusted", fakedaemon.HangUp())
+	// Every call, not the next one: a GET whose reused connection is hung up
+	// on before it is answered is sent again by net/http on a new one, and
+	// that one, answered, failed this 2 runs in 20.
+	d.InterceptAll("getBrokerTrusted", fakedaemon.HangUp())
 	if _, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/x"); err == nil {
 		t.Error("a daemon that hung up answered")
 	}
@@ -217,7 +223,7 @@ func TestACallThatNeverArrivesIsAnError(t *testing.T) {
 	d, client := fake(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{Subject: "u"}); err == nil {
+	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{}); err == nil {
 		t.Error("PutPrincipal")
 	}
 	if _, err := client.Principals(ctx); err == nil {

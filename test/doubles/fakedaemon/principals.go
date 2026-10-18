@@ -38,11 +38,8 @@ func WithTrustedPlane(broker string, plane TrustedPlane) Option {
 	}
 }
 
-// The contract's patterns for a principal's id and subject.
-var (
-	principalID      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
-	principalSubject = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.~-]{0,127}$`)
-)
+// The contract's pattern for a principal's id.
+var principalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 // Principal is a principal of the first namespace, as the daemon holds it:
 // what a test reads to see what the code under test made.
@@ -118,8 +115,8 @@ func (d *Daemon) putPrincipal(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, err.Error())
 		return
 	}
-	if !principalID.MatchString(id) || !principalSubject.MatchString(spec.Subject) {
-		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a principal's id and subject are letters, digits and '_', '.', '-' ('~' too in a subject), starting with a letter or a digit")
+	if !principalID.MatchString(id) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a principal id is letters, digits, '_', '.' and '-', starting with a letter or a digit")
 		return
 	}
 	labels := map[string]string{}
@@ -128,14 +125,18 @@ func (d *Daemon) putPrincipal(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// As the daemon: an id a deleted principal had is never made again,
+	// because a broker may hold grants under it.
+	if d.retired[volumeKey{namespace, id}] {
+		refuse(w, http.StatusConflict, genv1.ErrorCodePrincipalRetired, "that id was a principal's, which was deleted, and an id is never reused: "+id)
+		return
+	}
 	if existing, ok := d.principals[volumeKey{namespace, id}]; ok {
-		// A new subject is the same principal acting for somebody else. The
-		// daemon cuts its sandboxes' broker connections; this carries none.
-		existing.Subject, existing.Labels = spec.Subject, labels
+		existing.Labels = labels
 		reply(w, http.StatusOK, clonePrincipal(*existing))
 		return
 	}
-	p := &genv1.Principal{Id: id, Namespace: &namespace, Subject: spec.Subject, Labels: labels, CreatedBy: d.creatorOf(r), CreatedAt: d.now().UTC()}
+	p := &genv1.Principal{Id: id, Namespace: &namespace, Labels: labels, CreatedBy: d.creatorOf(r), CreatedAt: d.now().UTC()}
 	if d.principals == nil {
 		d.principals = map[volumeKey]*genv1.Principal{}
 	}
@@ -167,7 +168,13 @@ func (d *Daemon) deletePrincipal(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodePrincipalInUse, strings.Join(using, ", ")+" uses "+id)
 		return
 	}
-	delete(d.principals, volumeKey{namespace, id})
+	if _, ok := d.principals[volumeKey{namespace, id}]; ok {
+		delete(d.principals, volumeKey{namespace, id})
+		if d.retired == nil {
+			d.retired = map[volumeKey]bool{}
+		}
+		d.retired[volumeKey{namespace, id}] = true
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -252,8 +259,8 @@ func (d *Daemon) moveVolume(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, volumeOf(namespace, name, v))
 }
 
-// actsFor is why a sandbox in namespace may not act for principal and have
-// v, or empty. Caller holds d.mu.
+// actsFor is why a sandbox in namespace may not be bound to principal and
+// have v, or empty. Caller holds d.mu.
 func (d *Daemon) actsFor(namespace, principal string, v *volume) (genv1.ErrorCode, int, string) {
 	if principal != "" {
 		if _, ok := d.principals[volumeKey{namespace, principal}]; !ok {
@@ -261,7 +268,7 @@ func (d *Daemon) actsFor(namespace, principal string, v *volume) (genv1.ErrorCod
 		}
 	}
 	if v != nil && v.principal != "" && v.principal != principal {
-		return genv1.ErrorCodeVolumePrincipal, http.StatusConflict, "that volume is bound to another principal than the one this sandbox acts for"
+		return genv1.ErrorCodeVolumePrincipal, http.StatusConflict, "that volume is bound to another principal than the one this sandbox is bound to"
 	}
 	return "", 0, ""
 }

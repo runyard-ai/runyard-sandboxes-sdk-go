@@ -10,11 +10,14 @@ import (
 )
 
 // A principal is an identity that outlives a sandbox, in the client's
-// namespace: `{id, subject}`, where the id is stable and the subject is who
-// it acts for now. A sandbox made with Spec.Principal acts for one, and every
-// broker it reaches is told so by its certificate; a volume such a sandbox
-// first attaches is bound to the principal, and attached by sandboxes acting
-// for it alone (MoveVolume moves it). See the contract's Principals section.
+// namespace: an id the client chooses, and labels. It is an identity of its
+// own, standing for nobody: what it may do with somebody's data is what that
+// data's broker grants it. A sandbox made with Spec.Principal is one, and
+// every broker it reaches is told so by its certificate; a volume such a
+// sandbox first attaches is bound to the principal, and attached by sandboxes
+// bound to it alone (MoveVolume moves it). An id is never reused: once its
+// principal is deleted, PutPrincipal of it is refused with
+// `principal_retired`. See the contract's Principals section.
 
 // Principals is every principal in the client's namespace, by id.
 func (c *Client) Principals(ctx context.Context) ([]genv1.Principal, error) {
@@ -32,11 +35,11 @@ func (c *Client) Principals(ctx context.Context) ([]genv1.Principal, error) {
 	return res.JSON200.Items, nil
 }
 
-// PutPrincipal makes the principal id, or replaces its subject and labels:
-// idempotent, so a caller that makes one each time it is needed gets the
-// same one. Another subject is the same principal acting for somebody else:
-// the daemon cuts the broker connections of the sandboxes acting for it, and
-// what they connect with next presents the new subject.
+// PutPrincipal makes the principal id, or replaces its labels: idempotent,
+// so a caller that makes one each time it is needed gets the same one, and
+// a repeat cuts nothing a sandbox holds. One being deleted is refused with
+// `principal_deleting`, and an id a deleted principal had with
+// `principal_retired`, for good.
 func (c *Client) PutPrincipal(ctx context.Context, id string, p genv1.PrincipalSpec) (genv1.Principal, error) {
 	namespace, err := c.ResolveNamespace(ctx)
 	if err != nil {
@@ -71,9 +74,9 @@ func (c *Client) Principal(ctx context.Context, id string) (genv1.Principal, err
 	return *res.JSON200, nil
 }
 
-// DeletePrincipal deletes a principal. Deleting one that is not there
-// succeeds; one a sandbox acts for, or a volume is bound to, is refused
-// with `principal_in_use`.
+// DeletePrincipal deletes a principal, and retires its id: it is never made
+// again. Deleting one that is not there succeeds; one a sandbox or a volume
+// is bound to is refused with `principal_in_use`.
 func (c *Client) DeletePrincipal(ctx context.Context, id string) error {
 	namespace, err := c.ResolveNamespace(ctx)
 	if err != nil {
@@ -130,7 +133,7 @@ const brokerAnswered = "Runyard-Broker-Answered"
 const maxTrustedBody = 1 << 20
 
 // MoveVolume binds a volume to a principal, from the one it was bound to or
-// from none: from then on only sandboxes acting for that principal attach
+// from none: from then on only sandboxes bound to that principal attach
 // it. Refused with `volume_in_use` while a sandbox holds it.
 func (c *Client) MoveVolume(ctx context.Context, volume, principal string) error {
 	namespace, err := c.ResolveNamespace(ctx)

@@ -96,6 +96,7 @@ const (
 	ErrorCodeNotImplemented     ErrorCode = "not_implemented"
 	ErrorCodePrincipalDeleting  ErrorCode = "principal_deleting"
 	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
+	ErrorCodePrincipalRetired   ErrorCode = "principal_retired"
 	ErrorCodeQuotaExceeded      ErrorCode = "quota_exceeded"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
@@ -1732,9 +1733,6 @@ type Principal struct {
 	Id        PrincipalId       `json:"id"`
 	Labels    map[string]string `json:"labels"`
 	Namespace *NamespaceName    `json:"namespace,omitempty"`
-
-	// Subject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
-	Subject PrincipalSubject `json:"subject"`
 }
 
 // PrincipalId Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
@@ -1749,13 +1747,7 @@ type PrincipalPage struct {
 type PrincipalSpec struct {
 	// Labels The caller's own, as a sandbox's are: stored, echoed, never interpreted, and no part of who may do what. Replaced whole by each `PUT`; absent is none.
 	Labels *map[string]string `json:"labels,omitempty"`
-
-	// Subject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
-	Subject PrincipalSubject `json:"subject"`
 }
-
-// PrincipalSubject Who a principal acts for now. Opaque: this daemon never interprets it, and a broker only compares it. Letters, digits, `_`, `.`, `~` and `-`, starting with a letter or a digit, so that it goes into a certificate's URI as it is.
-type PrincipalSubject = string
 
 // Process defines model for Process.
 type Process struct {
@@ -1907,7 +1899,7 @@ type Sandbox struct {
 	// Ports The published ports as they ended up, with the host port filled in for every one that asked for an ephemeral.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
 
-	// Principal The principal it acts for, as `spec.principal` says. Absent when it acts for none.
+	// Principal The principal it is, as `spec.principal` says. Absent when it is none.
 	Principal *PrincipalId `json:"principal,omitempty"`
 
 	// ReadyAt When the guest first answered. Absent until it has.
@@ -2324,17 +2316,17 @@ type SandboxSpec struct {
 	// accident. Nothing is published unless it is written here.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
 
-	// Principal The principal of this namespace the sandbox acts for, fixed for its
-	// life: its certificate carries the principal and its subject after
-	// its own URI, so a broker sees the same principal whichever sandbox
-	// calls. Absent acts for nobody, as a sandbox always has.
+	// Principal The principal of this namespace the sandbox is, fixed for its
+	// life: its certificate carries the principal after its own URI, so
+	// a broker sees the same principal whichever sandbox calls. Absent
+	// is none, as a sandbox always was.
 	//
 	// A principal that is not there, or that a key acting only on its
 	// `own` sandboxes did not make, is a `404`; one being deleted is a
 	// `409 principal_deleting`. A volume it names that is bound to
-	// another principal — or to one, for a sandbox acting for none — is
+	// another principal — or to one, for a sandbox bound to none — is
 	// a `409 volume_principal`; one bound to none is bound to this
-	// sandbox's principal. A build's sandbox never acts for one.
+	// sandbox's principal. A build's sandbox is never bound to one.
 	Principal *PrincipalId `json:"principal,omitempty"`
 
 	// Sealed Whether nothing can ever be run in it, or written into it, from
@@ -2408,10 +2400,10 @@ type SandboxUsagePoint struct {
 // them at once. `tunnels.write` is separate for the reason
 // `network.write` is, the other way round: it opens a sandbox to people
 // on the internet rather than the sandbox to the internet.
-// `principals.write` is separate from `sandboxes.write` because
-// choosing a principal's `subject` is vouching for somebody to every
-// broker: a scheduler that only starts and stops machines has no need
-// of it. Naming a principal in a sandbox's spec needs only
+// `principals.write` is separate from `sandboxes.write` because a
+// principal is an identity brokers hold grants against: making one is a
+// decision a scheduler that only starts and stops machines has no need
+// of. Naming a principal in a sandbox's spec needs only
 // `sandboxes.write`, and a key that acts only on its `own` sandboxes
 // names only the principals it made.
 //
@@ -2734,7 +2726,7 @@ type Volume struct {
 	// Namespace The namespace it is in, as its path says: written in the body too, so that a volume copied out of its URL still says where it is.
 	Namespace *NamespaceName `json:"namespace,omitempty"`
 
-	// Principal The principal it is bound to: that of the first sandbox acting for one that attached it, or the one it was moved to. Only sandboxes acting for it attach it. Absent while it is bound to none.
+	// Principal The principal it is bound to: that of the first sandbox bound to one that attached it, or the one it was moved to. Only sandboxes bound to it attach it. Absent while it is bound to none.
 	Principal *PrincipalId `json:"principal,omitempty"`
 
 	// SandboxId The sandbox holding it. Absent when none does.
@@ -22515,7 +22507,7 @@ type ServerInterface interface {
 	// One principal
 	// (GET /v1/namespaces/{namespace}/principals/{principalId})
 	GetPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
-	// Make a principal, or replace its subject and labels
+	// Make a principal, or replace its labels
 	// (PUT /v1/namespaces/{namespace}/principals/{principalId})
 	PutPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
 	// Read a shared broker's document about a principal, through its trusted plane

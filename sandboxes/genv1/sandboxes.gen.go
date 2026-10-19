@@ -2238,8 +2238,9 @@ type SandboxSocketTable struct {
 
 // SandboxSpec What a machine should be.
 //
-// Nothing here names a host path, a device or a credential. Those are
-// this daemon's configuration; the test for whether a field belongs is
+// Nothing here names a host path, a device or a credential, except
+// `secrets`, which is write-only and never read back. The rest are this
+// daemon's configuration; the test for whether a field belongs is
 // whether it is a property of the MACHINE rather than of the host it
 // happens to be on.
 type SandboxSpec struct {
@@ -2302,7 +2303,7 @@ type SandboxSpec struct {
 	// Entrypoint What to run instead of the image's own `ENTRYPOINT`/`CMD`. Absent runs the image's, which is what makes an unmodified `postgres:17` work. Empty — `[]` — runs nothing, which is what a sandbox used only through `commands` and `processes` wants.
 	Entrypoint *[]string `json:"entrypoint,omitempty"`
 
-	// Env Merged over the image's own environment, for the entrypoint and for everything started later. **Visible to the workload**, which is everything in the sandbox — not a place for a secret.
+	// Env Merged over the image's own environment, for the entrypoint and for everything started later. **Visible to the workload**, which is everything in the sandbox — not a place for a secret: that is `secrets`.
 	Env *map[string]string `json:"env,omitempty"`
 
 	// Hostname What the guest calls itself. Absent uses the sandbox id. Not taken from `labels.name`, because a label is never interpreted — a caller that wants the two to agree sends both.
@@ -2359,6 +2360,39 @@ type SandboxSpec struct {
 	// written, and booting from it would run what that one left there.
 	// Off by default.
 	Sealed *bool `json:"sealed,omitempty"`
+
+	// SecretNames The names of its `secrets`, sorted: what a read shows of them. Absent when it has none. Answered, never accepted: a create that sends it is a `400`.
+	SecretNames *[]string `json:"secretNames,omitempty"`
+
+	// Secrets The one place for a secret the workload needs — an OAuth client
+	// secret, a database password — by name. **Write-only**: given at
+	// create and never answered back by any route, in this sandbox, its
+	// events, its history or an error. Reads show `secretNames` instead.
+	//
+	// Each appears inside the machine as the file `/run/secrets/<name>`,
+	// holding the value and nothing else: mode `0400`, owned by the
+	// user the entrypoint runs as (the image's `USER`, or root when it
+	// names none), in a directory only root may change. They are there
+	// before the entrypoint starts, on every boot: the entrypoint is
+	// started only once they are. `/run` is memory, so they are never on
+	// the sandbox's disk.
+	//
+	// The values are kept on this host, beside the machine and readable
+	// by this daemon alone, only to boot it again; they go when the
+	// sandbox is deleted. They are handed to the guest over the host's
+	// own channel to its agent, never on its spec disk, its network or
+	// its command line.
+	//
+	// Names are lower case letters, digits and `-`, starting and ending
+	// with a letter or a digit, at most 63 characters
+	// (`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`). At most 32 of them; each
+	// value at most 64 KiB and all of them together at most 256 KiB, in
+	// bytes of UTF-8. Anything else is a `400`.
+	//
+	// **Set at create only.** No route changes them: a sandbox that needs
+	// other values is made again. A retry with the same
+	// `Idempotency-Key` must send the same values too, or it is a `409`.
+	Secrets *map[string]string `json:"secrets,omitempty"`
 }
 
 // SandboxState | state | what it means | what to do |

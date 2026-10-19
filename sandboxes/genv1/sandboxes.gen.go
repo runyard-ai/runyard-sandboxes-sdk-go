@@ -934,6 +934,9 @@ type Error struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
+		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+		// which is the same on every host: its next move is to free something,
+		// or to have the quota raised.
 		Code ErrorCode `json:"code"`
 
 		// Message For a person reading a log. It may quote something a sandbox produced, so do not render it as anything but text.
@@ -948,6 +951,9 @@ type Error struct {
 // that name something about this HOST rather than about the request, and
 // each has its own next move: pull something else, go to a different host,
 // come back later. A shared `bad_request` cannot tell them apart.
+// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+// which is the same on every host: its next move is to free something,
+// or to have the quota raised.
 type ErrorCode string
 
 // FirewallRule defines model for FirewallRule.
@@ -975,6 +981,9 @@ type GapError struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
+		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+		// which is the same on every host: its next move is to free something,
+		// or to have the quota raised.
 		Code    ErrorCode `json:"code"`
 		Message string    `json:"message"`
 	} `json:"error"`
@@ -987,8 +996,58 @@ type Health struct {
 	Ok bool `json:"ok"`
 }
 
+// HostCapacity What this host's machines have of it, as its configuration says
+// (`capacity`), and what is committed against it: what a create, a
+// start and a resume are admitted against. One that would take what is
+// committed past `limit` is refused `507` `capacity_exceeded` — this
+// host is full, and another may not be — so a platform placing work
+// puts it where `limit - committed` leaves room.
+//
+// **Committed is what admission counts**, which for vCPUs is not
+// `cpus` above: a paused sandbox's vCPUs are stopped and are not
+// committed, and its resume asks for them again. Memory is a running
+// or paused sandbox's, and disk every volume's, as above.
+type HostCapacity struct {
+	// Cpus One of the host's resources: vCPUs, or bytes of memory or of disk. `capacity`, `overcommit` and `limit` are absent for one the configuration gives no capacity, which is not checked.
+	Cpus HostCapacityOf `json:"cpus"`
+
+	// DiskBytes One of the host's resources: vCPUs, or bytes of memory or of disk. `capacity`, `overcommit` and `limit` are absent for one the configuration gives no capacity, which is not checked.
+	DiskBytes HostCapacityOf `json:"diskBytes"`
+
+	// MemoryBytes One of the host's resources: vCPUs, or bytes of memory or of disk. `capacity`, `overcommit` and `limit` are absent for one the configuration gives no capacity, which is not checked.
+	MemoryBytes HostCapacityOf `json:"memoryBytes"`
+}
+
+// HostCapacityOf One of the host's resources: vCPUs, or bytes of memory or of disk. `capacity`, `overcommit` and `limit` are absent for one the configuration gives no capacity, which is not checked.
+type HostCapacityOf struct {
+	// Capacity What the machines have of it.
+	Capacity *int64 `json:"capacity,omitempty"`
+
+	// Committed What its sandboxes hold of it now, as admission counts.
+	Committed int64 `json:"committed"`
+
+	// Limit `capacity` × `overcommit`, rounded down: what may be committed, past which a create, a start or a resume is refused.
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Overcommit How many times over it may be promised; 1 is once.
+	Overcommit *float64 `json:"overcommit,omitempty"`
+}
+
 // HostCommitments defines model for HostCommitments.
 type HostCommitments struct {
+	// Capacity What this host's machines have of it, as its configuration says
+	// (`capacity`), and what is committed against it: what a create, a
+	// start and a resume are admitted against. One that would take what is
+	// committed past `limit` is refused `507` `capacity_exceeded` — this
+	// host is full, and another may not be — so a platform placing work
+	// puts it where `limit - committed` leaves room.
+	//
+	// **Committed is what admission counts**, which for vCPUs is not
+	// `cpus` above: a paused sandbox's vCPUs are stopped and are not
+	// committed, and its resume asks for them again. Memory is a running
+	// or paused sandbox's, and disk every volume's, as above.
+	Capacity HostCapacity `json:"capacity"`
+
 	// Cpus Their vCPUs, together.
 	Cpus int `json:"cpus"`
 
@@ -1635,6 +1694,29 @@ type Namespace struct {
 	// Name A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
 	Name NamespaceName `json:"name"`
 
+	// Quota What a namespace's sandboxes may hold of the host together, each a
+	// ceiling of its own. **A ceiling left out is none**, which is what a
+	// namespace has until one is set; `0` is a ceiling, at which nothing
+	// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
+	// or when the namespace is made.
+	//
+	// What a sandbox holds is what it is charged for (`GET
+	// /v1/namespaces/{namespace}/costs`):
+	//
+	// | | held by a sandbox that is |
+	// |---|---|
+	// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
+	// | `memoryBytes` | those, and `paused`, which keeps its memory |
+	// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
+	//
+	// A create, a start or a resume that would take the namespace past a
+	// ceiling is refused `403` `quota_exceeded`, and the message names the
+	// ceiling, what is held, and by how much it would be passed. Only what
+	// each adds is measured — a create adds all three, a start vCPUs and
+	// memory, a resume vCPUs — so a ceiling lowered below what is held
+	// stops nothing: it refuses what would add to it.
+	Quota NamespaceQuota `json:"quota"`
+
 	// State `deleting` from the moment a delete is asked for: from then on nothing under it answers, every key bound to it is refused, and what it holds is being destroyed. Once nothing is left it is in no answer at all, and its name stays its own.
 	State NamespaceState `json:"state"`
 	Title *string        `json:"title,omitempty"`
@@ -1686,12 +1768,47 @@ type NamespaceNotEmpty struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
+		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+		// which is the same on every host: its next move is to free something,
+		// or to have the quota raised.
 		Code    ErrorCode `json:"code"`
 		Message string    `json:"message"`
 	} `json:"error"`
 
 	// Holds What a namespace holds, counted by kind: everything a forced delete destroys. Its tunnels are its sandboxes', and go with them.
 	Holds NamespaceHoldings `json:"holds"`
+}
+
+// NamespaceQuota What a namespace's sandboxes may hold of the host together, each a
+// ceiling of its own. **A ceiling left out is none**, which is what a
+// namespace has until one is set; `0` is a ceiling, at which nothing
+// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
+// or when the namespace is made.
+//
+// What a sandbox holds is what it is charged for (`GET
+// /v1/namespaces/{namespace}/costs`):
+//
+// | | held by a sandbox that is |
+// |---|---|
+// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
+// | `memoryBytes` | those, and `paused`, which keeps its memory |
+// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
+//
+// A create, a start or a resume that would take the namespace past a
+// ceiling is refused `403` `quota_exceeded`, and the message names the
+// ceiling, what is held, and by how much it would be passed. Only what
+// each adds is measured — a create adds all three, a start vCPUs and
+// memory, a resume vCPUs — so a ceiling lowered below what is held
+// stops nothing: it refuses what would add to it.
+type NamespaceQuota struct {
+	// Cpus The vCPUs its sandboxes may hold, together.
+	Cpus *int64 `json:"cpus,omitempty"`
+
+	// DiskBytes The disk its sandboxes and volumes may hold, together.
+	DiskBytes *int64 `json:"diskBytes,omitempty"`
+
+	// MemoryBytes The memory its sandboxes may hold, together.
+	MemoryBytes *int64 `json:"memoryBytes,omitempty"`
 }
 
 // NamespaceRequest defines model for NamespaceRequest.
@@ -1701,6 +1818,29 @@ type NamespaceRequest struct {
 
 	// Name A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
 	Name NamespaceName `json:"name"`
+
+	// Quota What a namespace's sandboxes may hold of the host together, each a
+	// ceiling of its own. **A ceiling left out is none**, which is what a
+	// namespace has until one is set; `0` is a ceiling, at which nothing
+	// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
+	// or when the namespace is made.
+	//
+	// What a sandbox holds is what it is charged for (`GET
+	// /v1/namespaces/{namespace}/costs`):
+	//
+	// | | held by a sandbox that is |
+	// |---|---|
+	// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
+	// | `memoryBytes` | those, and `paused`, which keeps its memory |
+	// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
+	//
+	// A create, a start or a resume that would take the namespace past a
+	// ceiling is refused `403` `quota_exceeded`, and the message names the
+	// ceiling, what is held, and by how much it would be passed. Only what
+	// each adds is measured — a create adds all three, a start vCPUs and
+	// memory, a resume vCPUs — so a ceiling lowered below what is held
+	// stops nothing: it refuses what would add to it.
+	Quota *NamespaceQuota `json:"quota,omitempty"`
 
 	// Title What a person reads in a list. The name, when left out.
 	Title *string `json:"title,omitempty"`
@@ -2460,6 +2600,9 @@ type StreamGap struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
+		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+		// which is the same on every host: its next move is to free something,
+		// or to have the quota raised.
 		Code    ErrorCode `json:"code"`
 		Message string    `json:"message"`
 	} `json:"error"`
@@ -3189,6 +3332,9 @@ type PutNamespaceMemberJSONRequestBody PutNamespaceMemberJSONBody
 // PutPrincipalJSONRequestBody defines body for PutPrincipal for application/json ContentType.
 type PutPrincipalJSONRequestBody = PrincipalSpec
 
+// SetNamespaceQuotaJSONRequestBody defines body for SetNamespaceQuota for application/json ContentType.
+type SetNamespaceQuotaJSONRequestBody = NamespaceQuota
+
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
 
@@ -3548,6 +3694,11 @@ type ClientInterface interface {
 
 	// GetBrokerTrusted request
 	GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetNamespaceQuotaWithBody request with any body
+	SetNamespaceQuotaWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetNamespaceQuota(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSandboxes request
 	ListSandboxes(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4539,6 +4690,30 @@ func (c *Client) PutPrincipal(ctx context.Context, namespace NamespaceInPath, pr
 
 func (c *Client) GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBrokerTrustedRequest(c.Server, namespace, principalId, brokerName, path)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetNamespaceQuotaWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetNamespaceQuotaRequestWithBody(c.Server, namespace, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetNamespaceQuota(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetNamespaceQuotaRequest(c.Server, namespace, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8011,6 +8186,53 @@ func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, princi
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSetNamespaceQuotaRequest calls the generic SetNamespaceQuota builder with application/json body
+func NewSetNamespaceQuotaRequest(server string, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetNamespaceQuotaRequestWithBody(server, namespace, "application/json", bodyReader)
+}
+
+// NewSetNamespaceQuotaRequestWithBody generates requests for SetNamespaceQuota with any type of body
+func NewSetNamespaceQuotaRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/quota", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -11739,6 +11961,11 @@ type ClientWithResponsesInterface interface {
 	// GetBrokerTrustedWithResponse request
 	GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
 
+	// SetNamespaceQuotaWithBodyWithResponse request with any body
+	SetNamespaceQuotaWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error)
+
+	SetNamespaceQuotaWithResponse(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error)
+
 	// ListSandboxesWithResponse request
 	ListSandboxesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
 
@@ -13342,6 +13569,32 @@ func (r GetBrokerTrustedResponse) StatusCode() int {
 	return 0
 }
 
+type SetNamespaceQuotaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Namespace
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r SetNamespaceQuotaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetNamespaceQuotaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListSandboxesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13374,7 +13627,7 @@ type CreateSandboxResponse struct {
 	JSON202      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Forbidden
+	JSON403      *Error
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON422      *Error
@@ -14353,10 +14606,11 @@ type ResumeSandboxResponse struct {
 	JSON200      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Forbidden
+	JSON403      *Error
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON500      *Error
+	JSON507      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -14408,9 +14662,10 @@ type StartSandboxResponse struct {
 	JSON202      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Forbidden
+	JSON403      *Error
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON507      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -15572,6 +15827,23 @@ func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseGetBrokerTrustedResponse(rsp)
+}
+
+// SetNamespaceQuotaWithBodyWithResponse request with arbitrary body returning *SetNamespaceQuotaResponse
+func (c *ClientWithResponses) SetNamespaceQuotaWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error) {
+	rsp, err := c.SetNamespaceQuotaWithBody(ctx, namespace, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetNamespaceQuotaResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetNamespaceQuotaWithResponse(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error) {
+	rsp, err := c.SetNamespaceQuota(ctx, namespace, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetNamespaceQuotaResponse(rsp)
 }
 
 // ListSandboxesWithResponse request returning *ListSandboxesResponse
@@ -18670,6 +18942,60 @@ func ParseGetBrokerTrustedResponse(rsp *http.Response) (*GetBrokerTrustedRespons
 	return response, nil
 }
 
+// ParseSetNamespaceQuotaResponse parses an HTTP response from a SetNamespaceQuotaWithResponse call
+func ParseSetNamespaceQuotaResponse(rsp *http.Response) (*SetNamespaceQuotaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetNamespaceQuotaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Namespace
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSandboxesResponse parses an HTTP response from a ListSandboxesWithResponse call
 func ParseListSandboxesResponse(rsp *http.Response) (*ListSandboxesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -18760,7 +19086,7 @@ func ParseCreateSandboxResponse(rsp *http.Response) (*CreateSandboxResponse, err
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -20981,7 +21307,7 @@ func ParseResumeSandboxResponse(rsp *http.Response) (*ResumeSandboxResponse, err
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21007,6 +21333,13 @@ func ParseResumeSandboxResponse(rsp *http.Response) (*ResumeSandboxResponse, err
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -21110,7 +21443,7 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21129,6 +21462,13 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -22528,6 +22868,9 @@ type ServerInterface interface {
 	// Read a shared broker's document about a principal, through its trusted plane
 	// (GET /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path})
 	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
+	// Set a namespace's quota
+	// (PUT /v1/namespaces/{namespace}/quota)
+	SetNamespaceQuota(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
 	// Every sandbox on this host
 	// (GET /v1/namespaces/{namespace}/sandboxes)
 	ListSandboxes(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListSandboxesParams)
@@ -24731,6 +25074,39 @@ func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBrokerTrusted(w, r, namespace, principalId, brokerName, path)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetNamespaceQuota operation middleware
+func (siw *ServerInterfaceWrapper) SetNamespaceQuota(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetNamespaceQuota(w, r, namespace)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28052,6 +28428,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.GetPrincipal)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.PutPrincipal)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/quota", wrapper.SetNamespaceQuota)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.ListSandboxes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.CreateSandbox)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.DeleteSandbox)

@@ -1408,6 +1408,11 @@ paths:
         so far. A volume not laid down yet counts at the size its sandbox
         asked for, and a size the host's defaults decided is counted as they
         decided it.
+
+        **`capacity` is what admission measures against**: the capacity the
+        configuration gives each resource, its overcommit, and what is
+        committed of it now — what a platform placing work across hosts
+        reads to choose one.
       responses:
         "200":
           description: What the host has promised, added up.
@@ -2152,7 +2157,14 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            As every route's `403` — or `quota_exceeded`: the namespace's
+            quota (`NamespaceQuota`) leaves no room for the vCPUs, the memory
+            or the disk this sandbox asks for, and the message says which, what
+            is held and by how much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: >-
             This key already made a sandbox with a different spec, or made one
@@ -2174,8 +2186,11 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "507":
           description: >-
-            This host's sandbox quota, its memory, or the filesystem holding the
-            disks refuses another one. The body says which, because "try again
+            This host's ceiling on sandboxes, its memory, or the filesystem
+            holding the disks refuses another one — or this host is full: what
+            its capacity allows of vCPUs, memory or disk, overcommitted as its
+            configuration says, leaves no room for this one's (`GET
+            /v1/host/commitments`). The body says which, because "try again
             later" and "you are at your limit" are different sentences to act
             on.
           content:
@@ -2301,13 +2316,31 @@ paths:
       operationId: startSandbox
       tags: [Sandboxes]
       summary: Boot a stopped sandbox again
-      description: >-
+      description: |
         The same disk, the same spec, the same id, the same network namespace
         with its policy stated again. Processes do not come back — a process is a process, and the
         machine it was in was switched off. What comes back is the filesystem.
+
+        Its vCPUs and memory are held again, and measured first against the
+        namespace's quota (`403` `quota_exceeded`) and this host's capacity
+        (`507` `capacity_exceeded`).
       responses:
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            As every route's `403` — or `quota_exceeded`: the namespace's
+            quota leaves no room for its vCPUs or its memory, and the message
+            says which and by how much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: >-
+            This host is full: what its capacity allows of vCPUs or memory,
+            overcommitted as its configuration says, leaves no room for this
+            sandbox's, and the message says which and by how much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "400":
           $ref: "#/components/responses/BadRequest"
         "202":
@@ -2451,12 +2484,25 @@ paths:
       operationId: resumeSandbox
       tags: [Sandboxes]
       summary: Set a paused machine going again
-      description: >-
+      description: |
         From where it stopped: the same processes, the same memory, the same
         connections. Synchronous, and a sandbox already running is answered as
         it is. The guest's clock is the host's when it resumes, not the time
         it was paused at.
+
+        A paused sandbox kept its memory and gave back its vCPUs, which are
+        measured again against the namespace's quota (`403`
+        `quota_exceeded`) and this host's capacity (`507`
+        `capacity_exceeded`). Refused, it stays paused.
       responses:
+        "507":
+          description: >-
+            This host is full: what its capacity allows of vCPUs,
+            overcommitted as its configuration says, leaves no room for this
+            sandbox's, and the message says by how much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "400":
           $ref: "#/components/responses/BadRequest"
         "200":
@@ -2481,7 +2527,13 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: >-
+            As every route's `403` — or `quota_exceeded`: the namespace's
+            quota leaves no room for its vCPUs, and the message says by how
+            much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/namespaces/{namespace}/sandboxes/{sandboxId}/labels:
     parameters:
       - $ref: "#/components/parameters/NamespaceInPath"
@@ -4725,6 +4777,42 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NamespaceNotEmpty" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/namespaces/{namespace}/quota:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+    put:
+      operationId: setNamespaceQuota
+      tags: [Namespaces]
+      summary: Set a namespace's quota
+      description: |
+        `namespaces.write` on a global key or a session: a namespace's
+        ceiling is the platform's to set, and never its members', whatever
+        their scopes there.
+
+        **The quota is replaced whole**: a ceiling left out is none, so `{}`
+        takes every ceiling away. What each counts is `NamespaceQuota`'s.
+
+        A namespace being deleted is answered `404`: what it holds is going
+        whatever its quota says.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NamespaceQuota" }
+      responses:
+        "200":
+          description: The namespace, with its quota as it now is.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Namespace" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/namespaces/{namespace}/keys:
@@ -8086,7 +8174,7 @@ components:
 
     HostCommitments:
       type: object
-      required: [running, cpus, memoryBytes, volumes, diskBytes]
+      required: [running, cpus, memoryBytes, volumes, diskBytes, capacity]
       properties:
         running:
           type: integer
@@ -8119,6 +8207,60 @@ components:
           description: >-
             Their sizes, together — what they may grow to, not what they have
             written, which is `diskAllocatedBytes` in the host's history.
+        capacity: { $ref: "#/components/schemas/HostCapacity" }
+
+    HostCapacity:
+      type: object
+      description: |
+        What this host's machines have of it, as its configuration says
+        (`capacity`), and what is committed against it: what a create, a
+        start and a resume are admitted against. One that would take what is
+        committed past `limit` is refused `507` `capacity_exceeded` — this
+        host is full, and another may not be — so a platform placing work
+        puts it where `limit - committed` leaves room.
+
+        **Committed is what admission counts**, which for vCPUs is not
+        `cpus` above: a paused sandbox's vCPUs are stopped and are not
+        committed, and its resume asks for them again. Memory is a running
+        or paused sandbox's, and disk every volume's, as above.
+      required: [cpus, memoryBytes, diskBytes]
+      properties:
+        cpus: { $ref: "#/components/schemas/HostCapacityOf" }
+        memoryBytes: { $ref: "#/components/schemas/HostCapacityOf" }
+        diskBytes: { $ref: "#/components/schemas/HostCapacityOf" }
+
+    HostCapacityOf:
+      type: object
+      description: >-
+        One of the host's resources: vCPUs, or bytes of memory or of disk.
+        `capacity`, `overcommit` and `limit` are absent for one the
+        configuration gives no capacity, which is not checked.
+      required: [committed]
+      properties:
+        committed:
+          type: integer
+          format: int64
+          minimum: 0
+          description: What its sandboxes hold of it now, as admission counts.
+        capacity:
+          type: integer
+          format: int64
+          minimum: 1
+          description: What the machines have of it.
+          example: 14
+        overcommit:
+          type: number
+          format: double
+          description: How many times over it may be promised; 1 is once.
+          example: 4
+        limit:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            `capacity` × `overcommit`, rounded down: what may be committed,
+            past which a create, a start or a resume is refused.
+          example: 56
 
     HostCounts:
       type: object
@@ -8228,10 +8370,56 @@ components:
           type: object
           additionalProperties: { type: string }
           description: The caller's own, stored and echoed and never interpreted.
+        quota: { $ref: "#/components/schemas/NamespaceQuota" }
+
+    NamespaceQuota:
+      type: object
+      additionalProperties: false
+      description: |
+        What a namespace's sandboxes may hold of the host together, each a
+        ceiling of its own. **A ceiling left out is none**, which is what a
+        namespace has until one is set; `0` is a ceiling, at which nothing
+        more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
+        or when the namespace is made.
+
+        What a sandbox holds is what it is charged for (`GET
+        /v1/namespaces/{namespace}/costs`):
+
+        | | held by a sandbox that is |
+        |---|---|
+        | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
+        | `memoryBytes` | those, and `paused`, which keeps its memory |
+        | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
+
+        A create, a start or a resume that would take the namespace past a
+        ceiling is refused `403` `quota_exceeded`, and the message names the
+        ceiling, what is held, and by how much it would be passed. Only what
+        each adds is measured — a create adds all three, a start vCPUs and
+        memory, a resume vCPUs — so a ceiling lowered below what is held
+        stops nothing: it refuses what would add to it.
+      properties:
+        cpus:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The vCPUs its sandboxes may hold, together.
+          example: 16
+        memoryBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The memory its sandboxes may hold, together.
+          example: 68719476736
+        diskBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The disk its sandboxes and volumes may hold, together.
+          example: 1099511627776
 
     Namespace:
       type: object
-      required: [name, labels, state, createdAt, createdBy]
+      required: [name, labels, state, createdAt, createdBy, quota]
       properties:
         name: { $ref: "#/components/schemas/NamespaceName" }
         title: { type: string }
@@ -8252,6 +8440,7 @@ components:
           type: string
           format: email
           description: Who made it.
+        quota: { $ref: "#/components/schemas/NamespaceQuota" }
 
     NamespaceNotEmpty:
       type: object
@@ -8383,6 +8572,9 @@ components:
         that name something about this HOST rather than about the request, and
         each has its own next move: pull something else, go to a different host,
         come back later. A shared `bad_request` cannot tell them apart.
+        `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
+        which is the same on every host: its next move is to free something,
+        or to have the quota raised.
       enum:
         - bad_request
         - unauthorized

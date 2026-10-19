@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,6 +36,19 @@ func WithTrustedPlane(broker string, plane TrustedPlane) Option {
 			}
 		}
 		d.brokers = append(d.brokers, genv1.Broker{Name: broker, Url: "https://" + broker + ".invalid:8443/", TrustedUrl: &address})
+	}
+}
+
+// WithTrustedAt gives the address trustedURL a trusted plane, for a caller
+// that names it (POST .../principals/{id}/trusted): a broker this daemon
+// does not declare. An address no option gave is one that cannot be
+// reached.
+func WithTrustedAt(trustedURL string, plane TrustedPlane) Option {
+	return func(d *Daemon) {
+		if d.trustedAt == nil {
+			d.trustedAt = map[string]TrustedPlane{}
+		}
+		d.trustedAt[trustedURL] = plane
 	}
 }
 
@@ -207,6 +221,54 @@ func (d *Daemon) getBrokerTrusted(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, genv1.ErrorCodeNoTrustedPlane, "the broker has no trusted plane: "+broker)
 		return
 	}
+	answerTrusted(w, plane, principal, path)
+}
+
+// readTrusted reads the trusted plane at the address the caller named, as
+// the daemon does.
+func (d *Daemon) readTrusted(w http.ResponseWriter, r *http.Request) {
+	var body genv1.TrustedRead
+	if err := strictly(r, &body); err != nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is a TrustedRead: "+err.Error())
+		return
+	}
+	if !trustedPath(body.Path) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a trusted plane is asked only for a path under .well-known/, with no '..' in it")
+		return
+	}
+	at := body.Upstream.TrustedUrl
+	if at == nil || *at == "" {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the upstream names no trustedUrl to read")
+		return
+	}
+	trusted, err := url.Parse(*at)
+	data, dataErr := url.Parse(body.Upstream.Url)
+	if err != nil || dataErr != nil || trusted.Host == "" || data.Host == "" {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the upstream's url and trustedUrl are addresses")
+		return
+	}
+	if body.Upstream.Auth != nil && *body.Upstream.Auth == genv1.BrokerAuthJWT && trusted.Hostname() != data.Hostname() {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "with auth jwt, the trustedUrl is on the url's host, which its token is for")
+		return
+	}
+	d.mu.Lock()
+	p, ok := d.principalOf(w, r)
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	principal := clonePrincipal(*p)
+	plane := d.trustedAt[*at]
+	d.mu.Unlock()
+	if plane == nil {
+		refuse(w, http.StatusBadGateway, genv1.ErrorCodeUpstreamError, "the broker's trusted plane could not be reached: "+*at)
+		return
+	}
+	answerTrusted(w, plane, principal, body.Path)
+}
+
+// answerTrusted is what plane answers, marked as the broker's.
+func answerTrusted(w http.ResponseWriter, plane TrustedPlane, principal genv1.Principal, path string) {
 	status, contentType, body := plane(principal, path)
 	if len(body) > 1<<20 {
 		refuse(w, http.StatusBadGateway, genv1.ErrorCodeUpstreamError, "the broker's trusted plane answered with more than 1 MiB")

@@ -324,7 +324,7 @@ type BrokerUpstream struct {
 	// Description What it is for, for a person — in this API and in the console.
 	Description *string `json:"description,omitempty"`
 
-	// TrustedUrl The broker's trusted plane, which only this daemon reaches, with a principal's trusted certificate: `https`, with no user or password, verified with `ca` as `url` is. With `auth: jwt` it may be `http` too, and is reached with a token made from that certificate, as `url` is. Absent is a broker with no trusted plane. Only a shared broker's is ever dialled — see `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
+	// TrustedUrl The broker's trusted plane, which only this daemon reaches, with a principal's trusted certificate: `https`, with no user or password, verified with `ca` as `url` is. With `auth: jwt` it may be `http` too, and is reached with a token made from that certificate, as `url` is. Absent is a broker with no trusted plane. A shared broker's is dialled for `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`, and one a caller names for `POST .../principals/{principalId}/trusted`; a sandbox's one-off broker has none, and a spec giving it one is refused.
 	TrustedUrl *string `json:"trustedUrl,omitempty"`
 
 	// Url With `auth: certificate`, `https`, always: the identity is a TLS client certificate, and plain http has nowhere to attach one. Only the host and port are used: the sandbox's request carries its own path. With `auth: jwt`, `https` or `http` — http is in the clear, and is for an upstream on loopback or a private link — and its path is a prefix: a sandbox's `/mcp` goes to this path, without its trailing slash, then `/mcp`.
@@ -2480,6 +2480,15 @@ type Taint struct {
 	Route string `json:"route"`
 }
 
+// TrustedRead A document to read on the trusted plane of a broker the caller names.
+type TrustedRead struct {
+	// Path The path on its trusted plane, starting `.well-known/` and with no `..` segment: `.well-known/runyard-broker`.
+	Path string `json:"path"`
+
+	// Upstream Where a broker's connections are carried, and how to trust it.
+	Upstream BrokerUpstream `json:"upstream"`
+}
+
 // Tunnel defines model for Tunnel.
 type Tunnel struct {
 	// Access Who may reach a tunnel by signing in at the gateway. Nobody else can:
@@ -3189,6 +3198,9 @@ type PutNamespaceMemberJSONRequestBody PutNamespaceMemberJSONBody
 // PutPrincipalJSONRequestBody defines body for PutPrincipal for application/json ContentType.
 type PutPrincipalJSONRequestBody = PrincipalSpec
 
+// ReadTrustedJSONRequestBody defines body for ReadTrusted for application/json ContentType.
+type ReadTrustedJSONRequestBody = TrustedRead
+
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
 
@@ -3548,6 +3560,11 @@ type ClientInterface interface {
 
 	// GetBrokerTrusted request
 	GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadTrustedWithBody request with any body
+	ReadTrustedWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ReadTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body ReadTrustedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSandboxes request
 	ListSandboxes(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4539,6 +4556,30 @@ func (c *Client) PutPrincipal(ctx context.Context, namespace NamespaceInPath, pr
 
 func (c *Client) GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBrokerTrustedRequest(c.Server, namespace, principalId, brokerName, path)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadTrustedWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadTrustedRequestWithBody(c.Server, namespace, principalId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body ReadTrustedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadTrustedRequest(c.Server, namespace, principalId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8011,6 +8052,60 @@ func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, princi
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewReadTrustedRequest calls the generic ReadTrusted builder with application/json body
+func NewReadTrustedRequest(server string, namespace NamespaceInPath, principalId PrincipalID, body ReadTrustedJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadTrustedRequestWithBody(server, namespace, principalId, "application/json", bodyReader)
+}
+
+// NewReadTrustedRequestWithBody generates requests for ReadTrusted with any type of body
+func NewReadTrustedRequestWithBody(server string, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s/trusted", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -11739,6 +11834,11 @@ type ClientWithResponsesInterface interface {
 	// GetBrokerTrustedWithResponse request
 	GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
 
+	// ReadTrustedWithBodyWithResponse request with any body
+	ReadTrustedWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadTrustedResponse, error)
+
+	ReadTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body ReadTrustedJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadTrustedResponse, error)
+
 	// ListSandboxesWithResponse request
 	ListSandboxesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
 
@@ -13336,6 +13436,32 @@ func (r GetBrokerTrustedResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetBrokerTrustedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReadTrustedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *Error
+	JSON502      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadTrustedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadTrustedResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15572,6 +15698,23 @@ func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseGetBrokerTrustedResponse(rsp)
+}
+
+// ReadTrustedWithBodyWithResponse request with arbitrary body returning *ReadTrustedResponse
+func (c *ClientWithResponses) ReadTrustedWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadTrustedResponse, error) {
+	rsp, err := c.ReadTrustedWithBody(ctx, namespace, principalId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadTrustedResponse(rsp)
+}
+
+func (c *ClientWithResponses) ReadTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body ReadTrustedJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadTrustedResponse, error) {
+	rsp, err := c.ReadTrusted(ctx, namespace, principalId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadTrustedResponse(rsp)
 }
 
 // ListSandboxesWithResponse request returning *ListSandboxesResponse
@@ -18625,6 +18768,60 @@ func ParseGetBrokerTrustedResponse(rsp *http.Response) (*GetBrokerTrustedRespons
 	}
 
 	response := &GetBrokerTrustedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadTrustedResponse parses an HTTP response from a ReadTrustedWithResponse call
+func ParseReadTrustedResponse(rsp *http.Response) (*ReadTrustedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadTrustedResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -22528,6 +22725,9 @@ type ServerInterface interface {
 	// Read a shared broker's document about a principal, through its trusted plane
 	// (GET /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path})
 	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
+	// Read a broker's document about a principal, through the trusted plane the caller names
+	// (POST /v1/namespaces/{namespace}/principals/{principalId}/trusted)
+	ReadTrusted(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
 	// Every sandbox on this host
 	// (GET /v1/namespaces/{namespace}/sandboxes)
 	ListSandboxes(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListSandboxesParams)
@@ -24731,6 +24931,48 @@ func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBrokerTrusted(w, r, namespace, principalId, brokerName, path)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadTrusted operation middleware
+func (siw *ServerInterfaceWrapper) ReadTrusted(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "principalId" -------------
+	var principalId PrincipalID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "principalId", r.PathValue("principalId"), &principalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "principalId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadTrusted(w, r, namespace, principalId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28052,6 +28294,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.GetPrincipal)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.PutPrincipal)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}/trusted", wrapper.ReadTrusted)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.ListSandboxes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.CreateSandbox)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.DeleteSandbox)

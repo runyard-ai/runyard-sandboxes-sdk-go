@@ -219,6 +219,53 @@ func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 	}
 }
 
+// A trusted plane the caller names is read at the upstream it gives, and
+// answered as a declared broker's is.
+func TestATrustedPlaneTheCallerNamesIsReadForAPrincipal(t *testing.T) {
+	var asked struct {
+		principal genv1.Principal
+		path      string
+	}
+	d, client := fake(t, fakedaemon.WithTrustedAt("https://notes.invalid:8454/", func(p genv1.Principal, path string) (int, string, []byte) {
+		asked.principal, asked.path = p, path
+		return http.StatusOK, "application/json", []byte(`{"name":"notes"}`)
+	}))
+	ctx := t.Context()
+	if _, err := client.PutPrincipal(ctx, "p1", genv1.PrincipalSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	trusted := "https://notes.invalid:8454/"
+	upstream := genv1.BrokerUpstream{Url: "https://notes.invalid/", TrustedUrl: &trusted}
+	status, contentType, body, err := client.ReadTrusted(ctx, "p1", upstream, ".well-known/runyard-contexts")
+	if err != nil || status != 200 || contentType != "application/json" || string(body) != `{"name":"notes"}` {
+		t.Errorf("= %d %q %s, %v", status, contentType, body, err)
+	}
+	if asked.principal.Id != "p1" || asked.path != ".well-known/runyard-contexts" {
+		t.Errorf("the plane was asked %+v", asked)
+	}
+	elsewhere, jwt := "https://elsewhere.invalid:8454/", genv1.BrokerAuthJWT
+	for name, tc := range map[string]struct {
+		principal string
+		upstream  genv1.BrokerUpstream
+		path      string
+		code      string
+	}{
+		"a principal that is not there":  {"nobody", upstream, ".well-known/x", "not_found"},
+		"a path not under .well-known/":  {"p1", upstream, "v1/self", "bad_request"},
+		"no trusted plane named":         {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/"}, ".well-known/x", "bad_request"},
+		"a token sent to another host":   {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/", Auth: &jwt, TrustedUrl: &elsewhere}, ".well-known/x", "bad_request"},
+		"a plane that cannot be reached": {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/", TrustedUrl: &elsewhere}, ".well-known/x", "upstream_error"},
+	} {
+		if _, _, _, err := client.ReadTrusted(ctx, tc.principal, tc.upstream, tc.path); CodeOf(err) != tc.code {
+			t.Errorf("%s = %v, want %s", name, err, tc.code)
+		}
+	}
+	d.InterceptAll("readTrusted", fakedaemon.HangUp())
+	if _, _, _, err := client.ReadTrusted(ctx, "p1", upstream, ".well-known/x"); err == nil {
+		t.Error("a daemon that hung up answered")
+	}
+}
+
 func TestACallThatNeverArrivesIsAnError(t *testing.T) {
 	d, client := fake(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -240,6 +287,9 @@ func TestACallThatNeverArrivesIsAnError(t *testing.T) {
 	}
 	if _, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/x"); err == nil {
 		t.Error("BrokerTrusted")
+	}
+	if _, _, _, err := client.ReadTrusted(ctx, "p1", genv1.BrokerUpstream{Url: "https://notes.invalid/"}, ".well-known/x"); err == nil {
+		t.Error("ReadTrusted")
 	}
 	_ = d
 }

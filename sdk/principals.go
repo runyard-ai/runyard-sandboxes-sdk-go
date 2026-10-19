@@ -109,6 +109,31 @@ func (c *Client) BrokerTrusted(ctx context.Context, principal, broker, path stri
 	if err != nil {
 		return 0, "", nil, err
 	}
+	return trustedAnswer(res)
+}
+
+// ReadTrusted is BrokerTrusted of a broker that is not declared on the
+// daemon, at an upstream the caller writes — one it gives its sandboxes as
+// a one-off broker, whose TrustedUrl it knows. The daemon dials it as it
+// does a one-off broker: a public address, unless the daemon allows private
+// ones. With `auth: jwt`, the TrustedUrl is on the Url's host. A refusal of
+// the daemon's own is the error, as BrokerTrusted's are, an upstream it
+// will not read among them (`bad_request`).
+func (c *Client) ReadTrusted(ctx context.Context, principal string, upstream genv1.BrokerUpstream, path string) (status int, contentType string, body []byte, err error) {
+	namespace, err := c.ResolveNamespace(ctx)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	res, err := c.api.ReadTrusted(ctx, namespace, principal, genv1.TrustedRead{Upstream: upstream, Path: path})
+	if err != nil {
+		return 0, "", nil, err
+	}
+	return trustedAnswer(res)
+}
+
+// trustedAnswer is the broker's answer to a trusted read, or the daemon's
+// refusal as the error.
+func trustedAnswer(res *http.Response) (status int, contentType string, body []byte, err error) {
 	defer closeBody(res.Body)
 	// The daemon passes on at most a mebibyte; anything past that here is
 	// not a broker's answer, and is not read into memory.

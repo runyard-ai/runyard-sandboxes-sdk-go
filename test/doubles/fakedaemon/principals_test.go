@@ -181,3 +181,63 @@ func TestATrustedPlaneIsReadAsTheDaemonReadsOne(t *testing.T) {
 		t.Errorf("other = %d", other.StatusCode)
 	}
 }
+
+// A trusted plane a caller names is read as the daemon reads one: its
+// answer marked as the broker's, and the daemon's refusals as the contract
+// says them.
+func TestATrustedPlaneACallerNamesIsReadAsTheDaemonReadsOne(t *testing.T) {
+	at := "https://notes.invalid:8454/"
+	d := New(t, WithKey("k"), WithTrustedAt(at, func(p genv1.Principal, path string) (int, string, []byte) {
+		if path == ".well-known/big" {
+			return 200, "", make([]byte, 1<<20+1)
+		}
+		return 200, "text/markdown", []byte("# " + p.Id + " " + path)
+	}))
+	client := typed(t, d, "k")
+	ctx := t.Context()
+	if _, err := client.PutPrincipalWithResponse(ctx, DefaultNamespace, "p1", genv1.PrincipalSpec{}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(principal string, upstream genv1.BrokerUpstream, path string) (int, string, string) {
+		t.Helper()
+		res, err := client.ReadTrusted(ctx, DefaultNamespace, principal, genv1.TrustedRead{Upstream: upstream, Path: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		return res.StatusCode, res.Header.Get("Runyard-Broker-Answered"), string(body)
+	}
+	upstream := genv1.BrokerUpstream{Url: "https://notes.invalid/", TrustedUrl: &at}
+	if status, marked, body := read("p1", upstream, ".well-known/runyard-contexts"); status != 200 || marked != "true" || body != "# p1 .well-known/runyard-contexts" {
+		t.Errorf("= %d %q %q", status, marked, body)
+	}
+	elsewhere, jwt, bad := "https://elsewhere.invalid:8454/", genv1.BrokerAuthJWT, "::"
+	for name, tc := range map[string]struct {
+		principal string
+		upstream  genv1.BrokerUpstream
+		path      string
+		status    int
+	}{
+		"a principal that is not there":  {"nobody", upstream, ".well-known/x", 404},
+		"an id that is not one":          {"a b", upstream, ".well-known/x", 400},
+		"a path not under .well-known/":  {"p1", upstream, "v1/self", 400},
+		"no trusted plane named":         {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/"}, ".well-known/x", 400},
+		"addresses that are not ones":    {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/", TrustedUrl: &bad}, ".well-known/x", 400},
+		"a token sent to another host":   {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/", Auth: &jwt, TrustedUrl: &elsewhere}, ".well-known/x", 400},
+		"a plane that cannot be reached": {"p1", genv1.BrokerUpstream{Url: "https://notes.invalid/", TrustedUrl: &elsewhere}, ".well-known/x", 502},
+		"more than a mebibyte":           {"p1", upstream, ".well-known/big", 502},
+	} {
+		if status, marked, body := read(tc.principal, tc.upstream, tc.path); status != tc.status || marked != "" {
+			t.Errorf("%s = %d %q %s, want %d unmarked", name, status, marked, body, tc.status)
+		}
+	}
+	res, err := client.ReadTrustedWithBody(ctx, DefaultNamespace, "p1", "application/json", strings.NewReader(`{"upstream":{"url":"https://notes.invalid/"},"path":".well-known/x","method":"PUT"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Errorf("a field it does not take = %d", res.StatusCode)
+	}
+}

@@ -1327,6 +1327,84 @@ paths:
           content:
             "*/*":
               schema: {}
+  /v1/namespaces/{namespace}/principals/{principalId}/trusted:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/PrincipalID"
+    post:
+      operationId: readTrusted
+      tags: [Principals]
+      summary: Read a broker's document about a principal, through the trusted plane the caller names
+      description: |
+        As `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`,
+        for a broker that is not declared here: one the caller gives its
+        sandboxes as a one-off upstream, and knows the trusted plane of. This
+        daemon sends `GET` to `upstream.trustedUrl` + `/` + `path`,
+        presenting the principal's trusted certificate — or, with
+        `auth: jwt`, a token made from it whose audience is `upstream.url` —
+        verified with `upstream.ca`, and answers with the broker's status,
+        `Content-Type` and body. Only `GET`, and only under `.well-known/`.
+
+        It is dialled as a one-off broker is: to a public address only,
+        unless this daemon's `brokers.allowPrivate` says otherwise, and
+        never to a sandbox's. A key that may read the principal could already
+        have this daemon present a sandbox acting for it to any address, by
+        giving the sandbox a one-off broker; this presents no more.
+
+        **What the broker answered carries `Runyard-Broker-Answered: true`**,
+        whatever its status; a refusal of this daemon's own never does.
+
+        `400` when `path` does not start with `.well-known/` or has a `..`
+        segment, or `upstream` is not one a one-off broker may be, or has no
+        `trustedUrl`. `404` when there is no such principal. `502
+        upstream_error` when the broker cannot be reached — its address
+        refused among them — or answers with more than 1 MiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TrustedRead" }
+      responses:
+        "200":
+          description: The broker's answer.
+          headers:
+            Runyard-Broker-Answered:
+              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              schema: { type: string, enum: ["true"] }
+          content:
+            "*/*":
+              schema: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: >-
+            No such principal here (`not_found`). Or, carrying
+            `Runyard-Broker-Answered`, the broker's own `404`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: >-
+            The broker could not be reached, or answered with more than 1
+            MiB (`upstream_error`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          description: >-
+            The broker's own answer, with its status, carrying
+            `Runyard-Broker-Answered`.
+          headers:
+            Runyard-Broker-Answered:
+              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              schema: { type: string, enum: ["true"] }
+          content:
+            "*/*":
+              schema: {}
   /v1/namespaces/{namespace}/counts:
     parameters:
       - $ref: "#/components/parameters/NamespaceInPath"
@@ -6674,9 +6752,29 @@ components:
             principal's trusted certificate: `https`, with no user or password,
             verified with `ca` as `url` is. With `auth: jwt` it may be `http`
             too, and is reached with a token made from that certificate, as
-            `url` is. Absent is a broker with no trusted plane. Only a shared broker's is ever dialled — see `GET
-            .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
+            `url` is. Absent is a broker with no trusted plane. A shared broker's is
+            dialled for `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`,
+            and one a caller names for `POST .../principals/{principalId}/trusted`;
+            a sandbox's one-off broker has none, and a spec giving it one is
+            refused.
           example: https://broker.internal:8454/
+
+    TrustedRead:
+      type: object
+      description: A document to read on the trusted plane of a broker the caller names.
+      required: [upstream, path]
+      additionalProperties: false
+      properties:
+        upstream:
+          $ref: "#/components/schemas/BrokerUpstream"
+        path:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: >-
+            The path on its trusted plane, starting `.well-known/` and with no
+            `..` segment: `.well-known/runyard-broker`.
+          example: .well-known/runyard-broker
 
     BrokerAuth:
       type: string

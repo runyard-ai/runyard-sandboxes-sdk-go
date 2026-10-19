@@ -126,6 +126,9 @@ type Daemon struct {
 	costRates genv1.CostRates
 	// trusted is each shared broker's trusted plane (WithTrustedPlane).
 	trusted map[string]TrustedPlane
+	// trustedAt is the trusted plane at each address a caller may name
+	// (WithTrustedAt).
+	trustedAt map[string]TrustedPlane
 
 	mu        sync.Mutex
 	sandboxes map[genv1.SandboxID]*sandbox
@@ -318,6 +321,7 @@ func (d *Daemon) routes() http.Handler {
 	namespaced("PUT /v1/principals/{principal}", "putPrincipal", d.putPrincipal)
 	namespaced("DELETE /v1/principals/{principal}", "deletePrincipal", d.deletePrincipal)
 	namespaced("GET /v1/principals/{principal}/brokers/{broker}/trusted/{path}", "getBrokerTrusted", d.getBrokerTrusted)
+	namespaced("POST /v1/principals/{principal}/trusted", "readTrusted", d.readTrusted)
 	handle("GET /v1/me", "getMe", d.getMe)
 	return mux
 }

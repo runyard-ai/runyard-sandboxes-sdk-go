@@ -44,6 +44,10 @@ func namespacedCalls(ctx context.Context, client *Client) map[string]func() erro
 			_, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/runyard-broker")
 			return err
 		},
+		"ReadTrusted": func() error {
+			_, _, _, err := client.ReadTrusted(ctx, "p1", genv1.BrokerUpstream{Url: "https://github.invalid/"}, ".well-known/runyard-broker")
+			return err
+		},
 		"MoveVolume": func() error { return client.MoveVolume(ctx, "chat", "p1") },
 	}
 }
@@ -54,7 +58,7 @@ func sent(d *fakedaemon.Daemon) int {
 	n := 0
 	for _, operation := range []string{
 		"createSandbox", "getSandbox", "listSandboxes", "getCounts", "listHostTunnels", "listVolumes", "deleteVolume",
-		"listPrincipals", "putPrincipal", "getPrincipal", "deletePrincipal", "getBrokerTrusted", "moveVolume",
+		"listPrincipals", "putPrincipal", "getPrincipal", "deletePrincipal", "getBrokerTrusted", "readTrusted", "moveVolume",
 	} {
 		n += d.Calls(operation)
 	}

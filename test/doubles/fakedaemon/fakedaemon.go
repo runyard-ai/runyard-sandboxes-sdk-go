@@ -669,6 +669,12 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "Idempotency-Key is required")
 		return
 	}
+	if spec.SecretNames != nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "spec.secretNames is what a read answers; a create sends spec.secrets")
+		return
+	}
+	// Compared with the values, as the daemon's retry is, and then never
+	// answered: what a read shows is their names.
 	canonical, err := json.Marshal(spec)
 	if err != nil {
 		refuse(w, http.StatusInternalServerError, genv1.ErrorCodeInternal, "re-encoding the spec: "+err.Error())
@@ -692,12 +698,19 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if spec.Secrets != nil {
+		if len(*spec.Secrets) > 0 {
+			names := slices.Sorted(maps.Keys(*spec.Secrets))
+			spec.SecretNames = &names
+		}
+		spec.Secrets = nil
+	}
 	id := uuid.Must(uuid.NewV7())
 	record := genv1.Sandbox{Id: id, Namespace: &namespace, Spec: spec, State: genv1.SandboxStateCreating, CreatedAt: d.now().UTC(), Labels: spec.Labels}
 	if spec.Brokers != nil {
 		attached := []genv1.SandboxBroker{}
 		for i, wanted := range *spec.Brokers {
-			broker, wrong, unknown := d.brokerOf(wanted.Name, wanted.Upstream, firstBrokerPort+i)
+			broker, wrong, unknown := d.brokerOf(wanted.Name, wanted.Upstream, wanted.Record, firstBrokerPort+i)
 			switch {
 			case unknown:
 				refuse(w, http.StatusUnprocessableEntity, genv1.ErrorCodeUnsupportedSpec, wrong)

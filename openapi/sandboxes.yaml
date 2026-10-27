@@ -327,6 +327,20 @@ tags:
     description: >-
       What a sandbox may reach, and what it tried to reach and could not. Every
       sandbox starts closed.
+  - name: Activity
+    description: |
+      What sandboxes did through their brokers, as the access gateway saw it:
+      each request a sandbox sent to a broker and the answer it got, each
+      connection to one that was not HTTP, and each one refused. What a
+      broker then sends upstream on its own account is not here — that is
+      the broker's, and the record is of the sandbox's acts.
+
+      Every brokered connection crosses this daemon on its way out of the
+      machine, which is why it is kept here: nothing inside the sandbox can
+      leave it out, and nothing a broker says can put something in but its
+      own `Runyard-Activity` header, which says what an exchange was and is
+      taken off the answer before the sandbox sees it. Kept for the
+      daemon's `activity.keep`, and sent on to its sinks.
   - name: Tunnels
     description: |
       A port of a sandbox, at a public address, for the people and tokens
@@ -1428,6 +1442,90 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/namespaces/{namespace}/activity:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+    get:
+      operationId: listBrokerActivity
+      tags: [Activity]
+      summary: What the namespace's sandboxes did through their brokers, from a cursor
+      description: |
+        The namespace's records after `after`, oldest first, without their
+        bodies, and the cursor to ask with next. A namespace's records are
+        numbered in the order they were kept (`seq`), so a reader that
+        keeps the last cursor it was given misses none and sees none twice.
+        A number may be skipped: a record kept twice is kept once.
+
+        With `wait`, the request is held until there is a record to answer
+        with, or the seconds have passed: a reader tails the feed without
+        asking over and over. An answer with none is a `200` with no
+        items.
+
+        **A key that acts only on its `own` sandboxes is refused it**: a
+        namespace's records are every sandbox's in it.
+      parameters:
+        - name: after
+          in: query
+          description: The cursor a previous answer gave as `next`. Absent starts at the oldest record kept.
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: sandbox
+          in: query
+          description: Only this sandbox's records.
+          schema: { type: string, format: uuid }
+        - name: broker
+          in: query
+          description: Only those made through this broker, by the name the sandbox used.
+          schema: { $ref: "#/components/schemas/BrokerName" }
+        - $ref: "#/components/parameters/Limit"
+        - name: wait
+          in: query
+          description: Hold the request this many seconds at most until there is a record. Zero, or absent, answers at once.
+          schema: { type: integer, minimum: 0, maximum: 60 }
+      responses:
+        "200":
+          description: The records, oldest first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerActivityPage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/namespaces/{namespace}/activity/{activityId}:
+    parameters:
+      - $ref: "#/components/parameters/NamespaceInPath"
+      - name: activityId
+        in: path
+        required: true
+        description: A record's `id`.
+        schema: { $ref: "#/components/schemas/BrokerActivityID" }
+    get:
+      operationId: getBrokerActivity
+      tags: [Activity]
+      summary: One record, with its bodies
+      description: |
+        A record whole: as much of the body the sandbox sent, and of the one
+        it was answered, as the daemon keeps (`activity.requestBodyAtMost`
+        and `activity.responseBodyAtMost`), base64. A record of another
+        namespace is no such record.
+      responses:
+        "200":
+          description: The record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerActivity" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/costs:
     get:
       operationId: getCosts
@@ -2783,8 +2881,10 @@ paths:
         [yamux](https://github.com/hashicorp/yamux/blob/master/spec.md)
         session, version 0. This daemon is the yamux client — the streams it
         opens have odd ids — and the caller is the yamux server, which accepts
-        them and opens none. A stream is one connection from the workload,
-        carrying its bytes unmodified in both directions, from the first byte
+        them and opens none. A stream is one connection from the workload:
+        one that is HTTP/1.x carries the requests the workload sent, one at a
+        time, as it wrote them, so that each can be recorded; any other
+        carries its bytes unmodified in both directions, from the first byte
         it sent; closing one half of a stream is the workload, or the caller,
         having finished writing. The session's own keepalives are how each
         side learns the other is gone, so a caller that stops answering them
@@ -2828,6 +2928,15 @@ paths:
 
         `network.write`, because this is choosing where a sandbox's
         connections go, as attaching a one-off broker is.
+      parameters:
+        - name: record
+          in: query
+          description: >-
+            Whether what the sandbox does through this broker is recorded
+            (`GET /v1/namespaces/{namespace}/activity`), for as long as the
+            caller serves it. `false` for a caller that keeps its own record
+            of every exchange.
+          schema: { type: boolean, default: true }
       responses:
         "101":
           description: >-
@@ -5691,8 +5800,9 @@ components:
       description: |
         What a machine should be.
 
-        Nothing here names a host path, a device or a credential. Those are
-        this daemon's configuration; the test for whether a field belongs is
+        Nothing here names a host path, a device or a credential, except
+        `secrets`, which is write-only and never read back. The rest are this
+        daemon's configuration; the test for whether a field belongs is
         whether it is a property of the MACHINE rather than of the host it
         happens to be on.
       required: [image]
@@ -5749,7 +5859,54 @@ components:
           description: >-
             Merged over the image's own environment, for the entrypoint and for
             everything started later. **Visible to the workload**, which is
-            everything in the sandbox — not a place for a secret.
+            everything in the sandbox — not a place for a secret: that is
+            `secrets`.
+        secrets:
+          type: object
+          writeOnly: true
+          maxProperties: 32
+          additionalProperties:
+            type: string
+            maxLength: 65536
+          description: |
+            The one place for a secret the workload needs — an OAuth client
+            secret, a database password — by name. **Write-only**: given at
+            create and never answered back by any route, in this sandbox, its
+            events, its history or an error. Reads show `secretNames` instead.
+
+            Each appears inside the machine as the file `/run/secrets/<name>`,
+            holding the value and nothing else: mode `0400`, owned by the
+            user the entrypoint runs as (the image's `USER`, or root when it
+            names none), in a directory only root may change. They are there
+            before the entrypoint starts, on every boot: the entrypoint is
+            started only once they are. `/run` is memory, so they are never on
+            the sandbox's disk.
+
+            The values are kept on this host, beside the machine and readable
+            by this daemon alone, only to boot it again; they go when the
+            sandbox is deleted. They are handed to the guest over the host's
+            own channel to its agent, never on its spec disk, its network or
+            its command line.
+
+            Names are lower case letters, digits and `-`, starting and ending
+            with a letter or a digit, at most 63 characters
+            (`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`). At most 32 of them; each
+            value at most 64 KiB and all of them together at most 256 KiB, in
+            bytes of UTF-8. Anything else is a `400`.
+
+            **Set at create only.** No route changes them: a sandbox that needs
+            other values is made again. A retry with the same
+            `Idempotency-Key` must send the same values too, or it is a `409`.
+          example: { oauth-client-secret: "s3cr3t" }
+        secretNames:
+          type: array
+          readOnly: true
+          items: { type: string }
+          description: >-
+            The names of its `secrets`, sorted: what a read shows of them.
+            Absent when it has none. Answered, never accepted: a create that
+            sends it is a `400`.
+          example: [oauth-client-secret]
         hostname:
           type: string
           description: >-
@@ -6658,7 +6815,7 @@ components:
 
     SandboxBroker:
       type: object
-      required: [name, port, kind]
+      required: [name, port, kind, record]
       properties:
         name: { type: string, example: github }
         port:
@@ -6678,6 +6835,9 @@ components:
             broker has none.
           example: https://broker.internal:8443/
         description: { type: string }
+        record:
+          type: boolean
+          description: Whether what the sandbox does through it is recorded.
 
     BrokerKind:
       type: string
@@ -6708,14 +6868,33 @@ components:
       properties:
         name: { $ref: "#/components/schemas/BrokerName" }
         upstream: { $ref: "#/components/schemas/BrokerUpstream" }
+        record:
+          type: boolean
+          default: true
+          description: >-
+            Whether what the sandbox does through it is recorded
+            (`GET /v1/namespaces/{namespace}/activity`). `false` carries its
+            connections exactly as `true` does and records none of them, nor
+            any refused: for a broker whose caller keeps its own record of
+            every exchange, which a second one would only duplicate.
 
     SandboxBrokerAttach:
       type: object
       description: >-
         What `PUT .../brokers/{name}` gives a sandbox. An empty object is the
-        shared broker of that name.
+        shared broker of that name, recorded. Replacing one changes whether it
+        is recorded for the connections made after it, not those open.
       properties:
         upstream: { $ref: "#/components/schemas/BrokerUpstream" }
+        record:
+          type: boolean
+          default: true
+          description: >-
+            Whether what the sandbox does through it is recorded
+            (`GET /v1/namespaces/{namespace}/activity`). `false` carries its
+            connections exactly as `true` does and records none of them, nor
+            any refused: for a broker whose caller keeps its own record of
+            every exchange, which a second one would only duplicate.
 
     BrokerName:
       type: string
@@ -6771,8 +6950,11 @@ components:
       description: >-
         How the upstream is told which sandbox is calling. `certificate`, what
         an upstream is when nothing says otherwise: the sandbox's client
-        certificate on a TLS connection this daemon dials, carrying the
-        sandbox's bytes as they were sent. `jwt`: this daemon serves the
+        certificate on a TLS connection this daemon dials, carrying what the
+        sandbox sent as it wrote it — each request of an HTTP/1.x connection
+        sent on in turn, so that each is recorded (`GET
+        /v1/namespaces/{namespace}/activity`), and any other connection's
+        bytes as they were sent. `jwt`: this daemon serves the
         sandbox's connection as HTTP/1.1 and sends each request on with
         `Authorization: Bearer <token>`, over whatever the sandbox sent, and
         presents no certificate. The token is a JWS, ES256, whose header's
@@ -7702,6 +7884,7 @@ components:
         | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
         | `principals.read` | see principals, and read brokers' trusted documents for them |
         | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
+        | `activity.read` | read what a namespace's sandboxes did through their brokers, bodies included |
         | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
         | `files.read` | read bytes out of a sandbox, including its process and socket tables |
         | `files.write` | write bytes into a sandbox |
@@ -7729,6 +7912,11 @@ components:
         `sandboxes.write`, and a key that acts only on its `own` sandboxes
         names only the principals it made.
 
+        `activity.read` is separate from `sandboxes.read` because a record
+        carries what a sandbox sent and was answered — an API's JSON, a
+        tool's arguments — which a caller that only watches machines has no
+        need of.
+
         `namespaces.read` and `namespaces.write` are about every namespace,
         and a key bound to one can never hold them. `members.admin` is
         about one, and only a person in it, or a key bound to it, holds it;
@@ -7743,6 +7931,7 @@ components:
         - brokers.admin
         - principals.read
         - principals.write
+        - activity.read
         - tunnels.write
         - files.read
         - files.write
@@ -8129,6 +8318,137 @@ components:
           type: array
           description: Oldest first.
           items: { $ref: "#/components/schemas/TunnelGuest" }
+
+    BrokerActivityID:
+      type: string
+      description: A ULID, minted where the exchange was seen.
+      pattern: "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+      example: 01JB2Q8Z6V3W4X5Y6Z7A8B9C0D
+
+    BrokerActivity:
+      type: object
+      description: |
+        One brokered exchange. `type` says what it was: `http`, one request
+        and its answer; `upgrade`, a request answered `101` and the bytes
+        after it, closed when the connection was; `stream`, a connection that
+        was not HTTP, carried as bytes — or one refused before anything of it
+        was read.
+      required: [id, seq, namespace, type, startedAt, endedAt, outcome, bytesIn, bytesOut]
+      properties:
+        id: { $ref: "#/components/schemas/BrokerActivityID" }
+        seq:
+          type: integer
+          format: int64
+          description: Its place in the namespace's feed.
+        namespace: { type: string }
+        sandbox:
+          type: string
+          format: uuid
+          description: Whose exchange it was. Absent for a record that stands for others (`lost`).
+        principal:
+          type: string
+          description: The principal the sandbox was bound to, when it was.
+        broker:
+          type: string
+          description: The name the sandbox used. Absent when it was refused before it named one.
+        kind:
+          type: string
+          enum: [shared, one-off, client]
+          x-enum-varnames: [ActivityKindShared, ActivityKindOneOff, ActivityKindClient]
+          description: What kind of broker it went through, when it reached one.
+        type:
+          type: string
+          enum: [http, upgrade, stream]
+          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream]
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        outcome:
+          type: string
+          enum: [ok, refused, unreachable, broken, lost]
+          x-enum-varnames: [ActivityOk, ActivityRefused, ActivityUnreachable, ActivityBroken, ActivityLost]
+          description: |
+            `ok`; `refused` here — not given, at the sandbox's limit, not
+            naming a broker — with nothing sent anywhere; `unreachable`, a
+            broker that could not be reached or would not take it; `broken`,
+            cut part of the way; `lost`, standing for records that came faster
+            than the daemon could keep them, how many in `reason`.
+        reason:
+          type: string
+          description: Why, for anything but `ok`. A sentence, never a credential.
+        request: { $ref: "#/components/schemas/BrokerActivityRequest" }
+        response: { $ref: "#/components/schemas/BrokerActivityResponse" }
+        bytesIn:
+          type: integer
+          format: int64
+          description: What crossed the gateway from the sandbox.
+        bytesOut:
+          type: integer
+          format: int64
+          description: What crossed the gateway to the sandbox.
+        activity:
+          type: string
+          maxLength: 512
+          description: What the broker said the exchange was, in its `Runyard-Activity` header.
+
+    BrokerActivityRequest:
+      type: object
+      description: |
+        What the sandbox sent, as it arrived: the credential the gateway
+        attaches is not in it, and the values of `Authorization`, `Cookie`
+        and `Proxy-Authorization` are never kept.
+      required: [method, path, headers, bodyBytes, bodyTruncated]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        query: { type: string }
+        headers: { $ref: "#/components/schemas/ActivityHeaders" }
+        body:
+          type: string
+          format: byte
+          description: As much of its body as is kept, base64. Only on a record read by its id.
+        bodyBytes:
+          type: integer
+          format: int64
+          description: How long its body was.
+        bodyTruncated:
+          type: boolean
+          description: What is kept of it is not all of it.
+
+    BrokerActivityResponse:
+      type: object
+      description: What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
+      required: [status, headers, bodyBytes, bodyTruncated]
+      properties:
+        status: { type: integer }
+        headers: { $ref: "#/components/schemas/ActivityHeaders" }
+        body:
+          type: string
+          format: byte
+          description: As much of its body as is kept, base64. Only on a record read by its id.
+        bodyBytes:
+          type: integer
+          format: int64
+        bodyTruncated:
+          type: boolean
+
+    ActivityHeaders:
+      type: object
+      description: Each header's values, by its name.
+      additionalProperties:
+        type: array
+        items: { type: string }
+
+    BrokerActivityPage:
+      type: object
+      required: [items, next]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BrokerActivity" }
+        next:
+          type: integer
+          format: int64
+          description: The cursor to ask with next, as `after`.
 
     TunnelActivityPage:
       allOf:

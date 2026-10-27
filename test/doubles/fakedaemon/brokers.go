@@ -104,8 +104,9 @@ func nextPort(s *sandbox) int {
 // brokerOf is a spec's broker as the sandbox has it, on a port, or what is
 // wrong with it. unknown is a shared broker this host does not declare, which
 // is refused as a spec this host cannot give rather than as one that is wrong.
-func (d *Daemon) brokerOf(name string, upstream *genv1.BrokerUpstream, port int) (broker genv1.SandboxBroker, wrong string, unknown bool) {
-	broker = genv1.SandboxBroker{Name: name, Port: port}
+func (d *Daemon) brokerOf(name string, upstream *genv1.BrokerUpstream, record *bool, port int) (broker genv1.SandboxBroker, wrong string, unknown bool) {
+	// Recorded unless it says not, as the daemon has it.
+	broker = genv1.SandboxBroker{Name: name, Port: port, Record: record == nil || *record}
 	switch {
 	case !brokerName.MatchString(name):
 		return broker, fmt.Sprintf("%q: %s", name, notABrokerName), false
@@ -217,7 +218,7 @@ func (d *Daemon) attachSandboxBroker(w http.ResponseWriter, r *http.Request) {
 	if at >= 0 {
 		port = brokers[at].Port
 	}
-	broker, wrong, unknown := d.brokerOf(name, body.Upstream, port)
+	broker, wrong, unknown := d.brokerOf(name, body.Upstream, body.Record, port)
 	switch {
 	case unknown:
 		refuse(w, http.StatusUnprocessableEntity, genv1.ErrorCodeUnsupportedSpec, wrong)
@@ -373,7 +374,8 @@ func (d *Daemon) give(w http.ResponseWriter, r *http.Request, name string) (*san
 			port := nextPort(s)
 			holder = newCaller(r)
 			s.callers[name] = holder
-			setBrokers(s, append(slices.Clone(brokersOf(s)), genv1.SandboxBroker{Name: name, Port: port, Kind: genv1.BrokerKindClient}))
+			setBrokers(s, append(slices.Clone(brokersOf(s)), genv1.SandboxBroker{Name: name, Port: port, Kind: genv1.BrokerKindClient,
+				Record: r.URL.Query().Get("record") != "false"}))
 			d.brokersChanged()
 			d.serving.Add(1)
 			d.mu.Unlock()

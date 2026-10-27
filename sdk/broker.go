@@ -68,8 +68,15 @@ const brokerPortHeader = "Runyard-Broker-Port"
 // has a CloseWrite as a TCP one does, for an answer that ends before the
 // workload has finished asking; five minutes after either end has finished
 // writing, the connection is closed altogether.
-func (s *Sandbox) ServeBroker(ctx context.Context, name string) (*BrokerListener, error) {
+func (s *Sandbox) ServeBroker(ctx context.Context, name string, opts ...ServeOption) (*BrokerListener, error) {
+	var o serveOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	address := s.client.baseURL + "/v1/namespaces/" + url.PathEscape(s.Namespace) + "/sandboxes/" + url.PathEscape(s.ID.String()) + "/brokers/" + url.PathEscape(name) + "/serve"
+	if o.unrecorded {
+		address += "?record=false"
+	}
 	socket, answer, err := s.client.upgrade(ctx, address, brokerProtocol)
 	if err != nil {
 		if _, refusal := errors.AsType[*Error](err); refusal {
@@ -310,3 +317,12 @@ func (c *brokerConn) Close() error {
 	_ = c.SetReadDeadline(time.Unix(1, 0))
 	return c.Stream.Close()
 }
+
+// ServeOption is how a broker is served.
+type ServeOption func(*serveOptions)
+
+type serveOptions struct{ unrecorded bool }
+
+// Unrecorded serves a broker whose requests the daemon's access gateway does
+// not record: one whose caller keeps its own record of them.
+func Unrecorded() ServeOption { return func(o *serveOptions) { o.unrecorded = true } }

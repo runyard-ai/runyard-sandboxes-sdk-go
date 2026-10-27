@@ -27,6 +27,29 @@ const (
 	SessionScopes = "session.Scopes"
 )
 
+// Defines values for BrokerActivityKind.
+const (
+	ActivityKindClient BrokerActivityKind = "client"
+	ActivityKindOneOff BrokerActivityKind = "one-off"
+	ActivityKindShared BrokerActivityKind = "shared"
+)
+
+// Defines values for BrokerActivityOutcome.
+const (
+	ActivityBroken      BrokerActivityOutcome = "broken"
+	ActivityLost        BrokerActivityOutcome = "lost"
+	ActivityOk          BrokerActivityOutcome = "ok"
+	ActivityRefused     BrokerActivityOutcome = "refused"
+	ActivityUnreachable BrokerActivityOutcome = "unreachable"
+)
+
+// Defines values for BrokerActivityType.
+const (
+	ActivityTypeHttp    BrokerActivityType = "http"
+	ActivityTypeStream  BrokerActivityType = "stream"
+	ActivityTypeUpgrade BrokerActivityType = "upgrade"
+)
+
 // Defines values for BrokerAuth.
 const (
 	BrokerAuthCertificate BrokerAuth = "certificate"
@@ -198,6 +221,7 @@ const (
 
 // Defines values for Scope.
 const (
+	ActivityRead    Scope = "activity.read"
 	BrokersAdmin    Scope = "brokers.admin"
 	Exec            Scope = "exec"
 	FilesRead       Scope = "files.read"
@@ -270,6 +294,9 @@ const (
 	WriteFileParamsFormatTar WriteFileParamsFormat = "tar"
 )
 
+// ActivityHeaders Each header's values, by its name.
+type ActivityHeaders map[string][]string
+
 // AuthMethods How a person may sign in to this daemon's console.
 type AuthMethods struct {
 	// Google Whether `GET /v1/auth/google` signs somebody in here.
@@ -281,7 +308,7 @@ type AuthMethods struct {
 
 // Broker A shared broker, as its namespace declares it.
 type Broker struct {
-	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying the sandbox's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 	Auth *BrokerAuth `json:"auth,omitempty"`
 
 	// Ca The PEM it verifies the upstream with, when it has its own.
@@ -299,7 +326,119 @@ type Broker struct {
 	Url        string  `json:"url"`
 }
 
-// BrokerAuth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying the sandbox's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+// BrokerActivity One brokered exchange. `type` says what it was: `http`, one request
+// and its answer; `upgrade`, a request answered `101` and the bytes
+// after it, closed when the connection was; `stream`, a connection that
+// was not HTTP, carried as bytes — or one refused before anything of it
+// was read.
+type BrokerActivity struct {
+	// Activity What the broker said the exchange was, in its `Runyard-Activity` header.
+	Activity *string `json:"activity,omitempty"`
+
+	// Broker The name the sandbox used. Absent when it was refused before it named one.
+	Broker *string `json:"broker,omitempty"`
+
+	// BytesIn What crossed the gateway from the sandbox.
+	BytesIn int64 `json:"bytesIn"`
+
+	// BytesOut What crossed the gateway to the sandbox.
+	BytesOut int64     `json:"bytesOut"`
+	EndedAt  time.Time `json:"endedAt"`
+
+	// Id A ULID, minted where the exchange was seen.
+	Id BrokerActivityID `json:"id"`
+
+	// Kind What kind of broker it went through, when it reached one.
+	Kind      *BrokerActivityKind `json:"kind,omitempty"`
+	Namespace string              `json:"namespace"`
+
+	// Outcome `ok`; `refused` here — not given, at the sandbox's limit, not
+	// naming a broker — with nothing sent anywhere; `unreachable`, a
+	// broker that could not be reached or would not take it; `broken`,
+	// cut part of the way; `lost`, standing for records that came faster
+	// than the daemon could keep them, how many in `reason`.
+	Outcome BrokerActivityOutcome `json:"outcome"`
+
+	// Principal The principal the sandbox was bound to, when it was.
+	Principal *string `json:"principal,omitempty"`
+
+	// Reason Why, for anything but `ok`. A sentence, never a credential.
+	Reason *string `json:"reason,omitempty"`
+
+	// Request What the sandbox sent, as it arrived: the credential the gateway
+	// attaches is not in it, and the values of `Authorization`, `Cookie`
+	// and `Proxy-Authorization` are never kept.
+	Request *BrokerActivityRequest `json:"request,omitempty"`
+
+	// Response What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
+	Response *BrokerActivityResponse `json:"response,omitempty"`
+
+	// Sandbox Whose exchange it was. Absent for a record that stands for others (`lost`).
+	Sandbox *openapi_types.UUID `json:"sandbox,omitempty"`
+
+	// Seq Its place in the namespace's feed.
+	Seq       int64              `json:"seq"`
+	StartedAt time.Time          `json:"startedAt"`
+	Type      BrokerActivityType `json:"type"`
+}
+
+// BrokerActivityKind What kind of broker it went through, when it reached one.
+type BrokerActivityKind string
+
+// BrokerActivityOutcome `ok`; `refused` here — not given, at the sandbox's limit, not
+// naming a broker — with nothing sent anywhere; `unreachable`, a
+// broker that could not be reached or would not take it; `broken`,
+// cut part of the way; `lost`, standing for records that came faster
+// than the daemon could keep them, how many in `reason`.
+type BrokerActivityOutcome string
+
+// BrokerActivityType defines model for BrokerActivity.Type.
+type BrokerActivityType string
+
+// BrokerActivityID A ULID, minted where the exchange was seen.
+type BrokerActivityID = string
+
+// BrokerActivityPage defines model for BrokerActivityPage.
+type BrokerActivityPage struct {
+	Items []BrokerActivity `json:"items"`
+
+	// Next The cursor to ask with next, as `after`.
+	Next int64 `json:"next"`
+}
+
+// BrokerActivityRequest What the sandbox sent, as it arrived: the credential the gateway
+// attaches is not in it, and the values of `Authorization`, `Cookie`
+// and `Proxy-Authorization` are never kept.
+type BrokerActivityRequest struct {
+	// Body As much of its body as is kept, base64. Only on a record read by its id.
+	Body *[]byte `json:"body,omitempty"`
+
+	// BodyBytes How long its body was.
+	BodyBytes int64 `json:"bodyBytes"`
+
+	// BodyTruncated What is kept of it is not all of it.
+	BodyTruncated bool `json:"bodyTruncated"`
+
+	// Headers Each header's values, by its name.
+	Headers ActivityHeaders `json:"headers"`
+	Method  string          `json:"method"`
+	Path    string          `json:"path"`
+	Query   *string         `json:"query,omitempty"`
+}
+
+// BrokerActivityResponse What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
+type BrokerActivityResponse struct {
+	// Body As much of its body as is kept, base64. Only on a record read by its id.
+	Body          *[]byte `json:"body,omitempty"`
+	BodyBytes     int64   `json:"bodyBytes"`
+	BodyTruncated bool    `json:"bodyTruncated"`
+
+	// Headers Each header's values, by its name.
+	Headers ActivityHeaders `json:"headers"`
+	Status  int             `json:"status"`
+}
+
+// BrokerAuth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 type BrokerAuth string
 
 // BrokerKind `shared` is the namespace's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
@@ -315,7 +454,7 @@ type BrokerPage struct {
 
 // BrokerUpstream Where a broker's connections are carried, and how to trust it.
 type BrokerUpstream struct {
-	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying the sandbox's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 	Auth *BrokerAuth `json:"auth,omitempty"`
 
 	// Ca PEM certificates to verify the upstream with, for one with a private CA. Absent uses this host's roots. A certificate, not a key: there is nowhere in this document for a secret to go.
@@ -2090,12 +2229,18 @@ type SandboxBroker struct {
 	// Port The port on `127.0.0.1` inside the sandbox. What is listening on it is the agent, carrying the connection out over vsock. It does not change for as long as this sandbox has the broker, across stops and starts.
 	Port int `json:"port"`
 
+	// Record Whether what the sandbox does through it is recorded.
+	Record bool `json:"record"`
+
 	// Url Where its connections go now. For a shared broker this is the shared broker's current upstream, and changes when that does. A client broker has none.
 	Url *string `json:"url,omitempty"`
 }
 
-// SandboxBrokerAttach What `PUT .../brokers/{name}` gives a sandbox. An empty object is the shared broker of that name.
+// SandboxBrokerAttach What `PUT .../brokers/{name}` gives a sandbox. An empty object is the shared broker of that name, recorded. Replacing one changes whether it is recorded for the connections made after it, not those open.
 type SandboxBrokerAttach struct {
+	// Record Whether what the sandbox does through it is recorded (`GET /v1/namespaces/{namespace}/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
+	Record *bool `json:"record,omitempty"`
+
 	// Upstream Where a broker's connections are carried, and how to trust it.
 	Upstream *BrokerUpstream `json:"upstream,omitempty"`
 }
@@ -2109,6 +2254,9 @@ type SandboxBrokerPage struct {
 type SandboxBrokerSpec struct {
 	// Name Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
 	Name BrokerName `json:"name"`
+
+	// Record Whether what the sandbox does through it is recorded (`GET /v1/namespaces/{namespace}/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
+	Record *bool `json:"record,omitempty"`
 
 	// Upstream Where a broker's connections are carried, and how to trust it.
 	Upstream *BrokerUpstream `json:"upstream,omitempty"`
@@ -2378,8 +2526,9 @@ type SandboxSocketTable struct {
 
 // SandboxSpec What a machine should be.
 //
-// Nothing here names a host path, a device or a credential. Those are
-// this daemon's configuration; the test for whether a field belongs is
+// Nothing here names a host path, a device or a credential, except
+// `secrets`, which is write-only and never read back. The rest are this
+// daemon's configuration; the test for whether a field belongs is
 // whether it is a property of the MACHINE rather than of the host it
 // happens to be on.
 type SandboxSpec struct {
@@ -2442,7 +2591,7 @@ type SandboxSpec struct {
 	// Entrypoint What to run instead of the image's own `ENTRYPOINT`/`CMD`. Absent runs the image's, which is what makes an unmodified `postgres:17` work. Empty — `[]` — runs nothing, which is what a sandbox used only through `commands` and `processes` wants.
 	Entrypoint *[]string `json:"entrypoint,omitempty"`
 
-	// Env Merged over the image's own environment, for the entrypoint and for everything started later. **Visible to the workload**, which is everything in the sandbox — not a place for a secret.
+	// Env Merged over the image's own environment, for the entrypoint and for everything started later. **Visible to the workload**, which is everything in the sandbox — not a place for a secret: that is `secrets`.
 	Env *map[string]string `json:"env,omitempty"`
 
 	// Hostname What the guest calls itself. Absent uses the sandbox id. Not taken from `labels.name`, because a label is never interpreted — a caller that wants the two to agree sends both.
@@ -2499,6 +2648,39 @@ type SandboxSpec struct {
 	// written, and booting from it would run what that one left there.
 	// Off by default.
 	Sealed *bool `json:"sealed,omitempty"`
+
+	// SecretNames The names of its `secrets`, sorted: what a read shows of them. Absent when it has none. Answered, never accepted: a create that sends it is a `400`.
+	SecretNames *[]string `json:"secretNames,omitempty"`
+
+	// Secrets The one place for a secret the workload needs — an OAuth client
+	// secret, a database password — by name. **Write-only**: given at
+	// create and never answered back by any route, in this sandbox, its
+	// events, its history or an error. Reads show `secretNames` instead.
+	//
+	// Each appears inside the machine as the file `/run/secrets/<name>`,
+	// holding the value and nothing else: mode `0400`, owned by the
+	// user the entrypoint runs as (the image's `USER`, or root when it
+	// names none), in a directory only root may change. They are there
+	// before the entrypoint starts, on every boot: the entrypoint is
+	// started only once they are. `/run` is memory, so they are never on
+	// the sandbox's disk.
+	//
+	// The values are kept on this host, beside the machine and readable
+	// by this daemon alone, only to boot it again; they go when the
+	// sandbox is deleted. They are handed to the guest over the host's
+	// own channel to its agent, never on its spec disk, its network or
+	// its command line.
+	//
+	// Names are lower case letters, digits and `-`, starting and ending
+	// with a letter or a digit, at most 63 characters
+	// (`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`). At most 32 of them; each
+	// value at most 64 KiB and all of them together at most 256 KiB, in
+	// bytes of UTF-8. Anything else is a `400`.
+	//
+	// **Set at create only.** No route changes them: a sandbox that needs
+	// other values is made again. A retry with the same
+	// `Idempotency-Key` must send the same values too, or it is a `409`.
+	Secrets *map[string]string `json:"secrets,omitempty"`
 }
 
 // SandboxState | state | what it means | what to do |
@@ -2535,6 +2717,7 @@ type SandboxUsagePoint struct {
 // | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
 // | `principals.read` | see principals, and read brokers' trusted documents for them |
 // | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
+// | `activity.read` | read what a namespace's sandboxes did through their brokers, bodies included |
 // | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
 // | `files.read` | read bytes out of a sandbox, including its process and socket tables |
 // | `files.write` | write bytes into a sandbox |
@@ -2561,6 +2744,11 @@ type SandboxUsagePoint struct {
 // of. Naming a principal in a sandbox's spec needs only
 // `sandboxes.write`, and a key that acts only on its `own` sandboxes
 // names only the principals it made.
+//
+// `activity.read` is separate from `sandboxes.read` because a record
+// carries what a sandbox sent and was answered — an API's JSON, a
+// tool's arguments — which a caller that only watches machines has no
+// need of.
 //
 // `namespaces.read` and `namespaces.write` are about every namespace,
 // and a key bound to one can never hold them. `members.admin` is
@@ -3066,6 +3254,24 @@ type DeleteNamespaceParams struct {
 	Force *bool `form:"force,omitempty" json:"force,omitempty"`
 }
 
+// ListBrokerActivityParams defines parameters for ListBrokerActivity.
+type ListBrokerActivityParams struct {
+	// After The cursor a previous answer gave as `next`. Absent starts at the oldest record kept.
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
+
+	// Sandbox Only this sandbox's records.
+	Sandbox *openapi_types.UUID `form:"sandbox,omitempty" json:"sandbox,omitempty"`
+
+	// Broker Only those made through this broker, by the name the sandbox used.
+	Broker *BrokerName `form:"broker,omitempty" json:"broker,omitempty"`
+
+	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Wait Hold the request this many seconds at most until there is a record. Zero, or absent, answers at once.
+	Wait *int `form:"wait,omitempty" json:"wait,omitempty"`
+}
+
 // ListBuildsParams defines parameters for ListBuilds.
 type ListBuildsParams struct {
 	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
@@ -3160,6 +3366,12 @@ type DeleteSandboxParams struct {
 
 // DeleteSandboxParamsDisk defines parameters for DeleteSandbox.
 type DeleteSandboxParamsDisk string
+
+// ServeSandboxBrokerParams defines parameters for ServeSandboxBroker.
+type ServeSandboxBrokerParams struct {
+	// Record Whether what the sandbox does through this broker is recorded (`GET /v1/namespaces/{namespace}/activity`), for as long as the caller serves it. `false` for a caller that keeps its own record of every exchange.
+	Record *bool `form:"record,omitempty" json:"record,omitempty"`
+}
 
 // GetSandboxConsoleParams defines parameters for GetSandboxConsole.
 type GetSandboxConsoleParams struct {
@@ -3602,6 +3814,12 @@ type ClientInterface interface {
 	// GetNamespace request
 	GetNamespace(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListBrokerActivity request
+	ListBrokerActivity(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBrokerActivity request
+	GetBrokerActivity(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListBrokers request
 	ListBrokers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3726,7 +3944,7 @@ type ClientInterface interface {
 	AttachSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ServeSandboxBroker request
-	ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RunCommandWithBody request with any body
 	RunCommandWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4304,6 +4522,30 @@ func (c *Client) GetNamespace(ctx context.Context, namespace NamespaceInPath, re
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListBrokerActivity(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBrokerActivityRequest(c.Server, namespace, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBrokerActivity(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerActivityRequest(c.Server, namespace, activityId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ListBrokers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListBrokersRequest(c.Server, namespace)
 	if err != nil {
@@ -4832,8 +5074,8 @@ func (c *Client) AttachSandboxBroker(ctx context.Context, namespace NamespaceInP
 	return c.Client.Do(req)
 }
 
-func (c *Client) ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewServeSandboxBrokerRequest(c.Server, namespace, sandboxId, brokerName)
+func (c *Client) ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewServeSandboxBrokerRequest(c.Server, namespace, sandboxId, brokerName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6853,6 +7095,167 @@ func NewGetNamespaceRequest(server string, namespace NamespaceInPath) (*http.Req
 	return req, nil
 }
 
+// NewListBrokerActivityRequest generates requests for ListBrokerActivity
+func NewListBrokerActivityRequest(server string, namespace NamespaceInPath, params *ListBrokerActivityParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/activity", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "after", runtime.ParamLocationQuery, *params.After); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Sandbox != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sandbox", runtime.ParamLocationQuery, *params.Sandbox); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Broker != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "broker", runtime.ParamLocationQuery, *params.Broker); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Wait != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "wait", runtime.ParamLocationQuery, *params.Wait); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBrokerActivityRequest generates requests for GetBrokerActivity
+func NewGetBrokerActivityRequest(server string, namespace NamespaceInPath, activityId BrokerActivityID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "activityId", runtime.ParamLocationPath, activityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/namespaces/%s/activity/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListBrokersRequest generates requests for ListBrokers
 func NewListBrokersRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
 	var err error
@@ -8672,7 +9075,7 @@ func NewAttachSandboxBrokerRequestWithBody(server string, namespace NamespaceInP
 }
 
 // NewServeSandboxBrokerRequest generates requests for ServeSandboxBroker
-func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName) (*http.Request, error) {
+func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -8709,6 +9112,28 @@ func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sand
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Record != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "record", runtime.ParamLocationQuery, *params.Record); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -11868,6 +12293,12 @@ type ClientWithResponsesInterface interface {
 	// GetNamespaceWithResponse request
 	GetNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetNamespaceResponse, error)
 
+	// ListBrokerActivityWithResponse request
+	ListBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error)
+
+	// GetBrokerActivityWithResponse request
+	GetBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error)
+
 	// ListBrokersWithResponse request
 	ListBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error)
 
@@ -11992,7 +12423,7 @@ type ClientWithResponsesInterface interface {
 	AttachSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
 
 	// ServeSandboxBrokerWithResponse request
-	ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
+	ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
 
 	// RunCommandWithBodyWithResponse request with any body
 	RunCommandWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
@@ -12863,6 +13294,58 @@ func (r GetNamespaceResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetNamespaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListBrokerActivityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerActivityPage
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBrokerActivityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBrokerActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBrokerActivityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerActivity
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrokerActivityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrokerActivityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15538,6 +16021,24 @@ func (c *ClientWithResponses) GetNamespaceWithResponse(ctx context.Context, name
 	return ParseGetNamespaceResponse(rsp)
 }
 
+// ListBrokerActivityWithResponse request returning *ListBrokerActivityResponse
+func (c *ClientWithResponses) ListBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error) {
+	rsp, err := c.ListBrokerActivity(ctx, namespace, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBrokerActivityResponse(rsp)
+}
+
+// GetBrokerActivityWithResponse request returning *GetBrokerActivityResponse
+func (c *ClientWithResponses) GetBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error) {
+	rsp, err := c.GetBrokerActivity(ctx, namespace, activityId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerActivityResponse(rsp)
+}
+
 // ListBrokersWithResponse request returning *ListBrokersResponse
 func (c *ClientWithResponses) ListBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error) {
 	rsp, err := c.ListBrokers(ctx, namespace, reqEditors...)
@@ -15926,8 +16427,8 @@ func (c *ClientWithResponses) AttachSandboxBrokerWithResponse(ctx context.Contex
 }
 
 // ServeSandboxBrokerWithResponse request returning *ServeSandboxBrokerResponse
-func (c *ClientWithResponses) ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error) {
-	rsp, err := c.ServeSandboxBroker(ctx, namespace, sandboxId, brokerName, reqEditors...)
+func (c *ClientWithResponses) ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error) {
+	rsp, err := c.ServeSandboxBroker(ctx, namespace, sandboxId, brokerName, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -17471,6 +17972,114 @@ func ParseGetNamespaceResponse(rsp *http.Response) (*GetNamespaceResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBrokerActivityResponse parses an HTTP response from a ListBrokerActivityWithResponse call
+func ParseListBrokerActivityResponse(rsp *http.Response) (*ListBrokerActivityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBrokerActivityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerActivityPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrokerActivityResponse parses an HTTP response from a GetBrokerActivityWithResponse call
+func ParseGetBrokerActivityResponse(rsp *http.Response) (*GetBrokerActivityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrokerActivityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerActivity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -22787,6 +23396,12 @@ type ServerInterface interface {
 	// Read one namespace
 	// (GET /v1/namespaces/{namespace})
 	GetNamespace(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
+	// What the namespace's sandboxes did through their brokers, from a cursor
+	// (GET /v1/namespaces/{namespace}/activity)
+	ListBrokerActivity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListBrokerActivityParams)
+	// One record, with its bodies
+	// (GET /v1/namespaces/{namespace}/activity/{activityId})
+	GetBrokerActivity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, activityId BrokerActivityID)
 	// The shared brokers this namespace declares
 	// (GET /v1/namespaces/{namespace}/brokers)
 	ListBrokers(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
@@ -22894,7 +23509,7 @@ type ServerInterface interface {
 	AttachSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName)
 	// Give a sandbox a broker this caller serves, over a WebSocket
 	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}/serve)
-	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName)
+	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params ServeSandboxBrokerParams)
 	// Run one thing and collect what it printed
 	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/commands)
 	RunCommand(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
@@ -23919,6 +24534,124 @@ func (siw *ServerInterfaceWrapper) GetNamespace(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetNamespace(w, r, namespace)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBrokerActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListBrokerActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBrokerActivityParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "after", r.URL.Query(), &params.After)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sandbox" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sandbox", r.URL.Query(), &params.Sandbox)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandbox", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "broker" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "broker", r.URL.Query(), &params.Broker)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "broker", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "wait" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "wait", r.URL.Query(), &params.Wait)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBrokerActivity(w, r, namespace, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrokerActivity operation middleware
+func (siw *ServerInterfaceWrapper) GetBrokerActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "namespace" -------------
+	var namespace NamespaceInPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "activityId" -------------
+	var activityId BrokerActivityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "activityId", r.PathValue("activityId"), &activityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "activityId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrokerActivity(w, r, namespace, activityId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25532,8 +26265,19 @@ func (siw *ServerInterfaceWrapper) ServeSandboxBroker(w http.ResponseWriter, r *
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ServeSandboxBrokerParams
+
+	// ------------- Optional query parameter "record" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "record", r.URL.Query(), &params.Record)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "record", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ServeSandboxBroker(w, r, namespace, sandboxId, brokerName)
+		siw.Handler.ServeSandboxBroker(w, r, namespace, sandboxId, brokerName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28401,6 +29145,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces", wrapper.CreateNamespace)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}", wrapper.DeleteNamespace)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}", wrapper.GetNamespace)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/activity", wrapper.ListBrokerActivity)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/activity/{activityId}", wrapper.GetBrokerActivity)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/brokers", wrapper.ListBrokers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/brokers/{brokerName}", wrapper.DeleteBroker)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/brokers/{brokerName}", wrapper.GetBroker)

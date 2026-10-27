@@ -1227,3 +1227,44 @@ func TestShutdownOfAnHTTPServerOnTheListenerCutsWhatIsInFlight(t *testing.T) {
 		t.Errorf("Serve: %v", err)
 	}
 }
+
+// A caller that keeps its own record of a broker's requests serves it
+// Unrecorded, and the daemon has it so; any other is recorded, as the daemon
+// says of a broker given no word.
+func TestABrokerIsServedRecordedUnlessItsCallerSaysNot(t *testing.T) {
+	recordOf := func(d *fakedaemon.Daemon, sandbox *Sandbox, name string) bool {
+		t.Helper()
+		for _, s := range d.Sandboxes() {
+			if s.Id != sandbox.ID || s.Brokers == nil {
+				continue
+			}
+			for _, b := range *s.Brokers {
+				if b.Name == name {
+					return b.Record
+				}
+			}
+		}
+		t.Fatalf("the daemon does not have the broker %s", name)
+		return false
+	}
+	for _, c := range []struct {
+		name   string
+		opts   []ServeOption
+		record bool
+	}{
+		{"recorded by default", nil, true},
+		{"unrecorded", []ServeOption{Unrecorded()}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d, sandbox := brokered(t)
+			listener, err := sandbox.ServeBroker(t.Context(), "llm", c.opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = listener.Close() }()
+			if got := recordOf(d, sandbox, "llm"); got != c.record {
+				t.Errorf("the daemon has record %v, want %v", got, c.record)
+			}
+		})
+	}
+}

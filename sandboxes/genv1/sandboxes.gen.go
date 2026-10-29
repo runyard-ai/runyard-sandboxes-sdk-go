@@ -1828,7 +1828,19 @@ type Namespace struct {
 
 	// CreatedBy Who made it.
 	CreatedBy openapi_types.Email `json:"createdBy"`
-	Labels    map[string]string   `json:"labels"`
+
+	// Held What a namespace's sandboxes and volumes hold of the host now, beside
+	// its `quota`: on a read of one namespace and on the answer to setting
+	// its quota, and absent from a list and from a create. Counted exactly
+	// as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
+	// or `unreachable`; `memoryBytes` for those and `paused` ones;
+	// `diskBytes` for every volume, held by a sandbox in any state or by
+	// none, at the size it may grow to.
+	//
+	// It may be above a ceiling: a ceiling lowered below what is held
+	// stops nothing, and refuses what would add to it.
+	Held   *NamespaceHeld    `json:"held,omitempty"`
+	Labels map[string]string `json:"labels"`
 
 	// Name A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
 	Name NamespaceName `json:"name"`
@@ -1874,6 +1886,27 @@ type NamespaceCost struct {
 
 	// Total An amount, in the report's currency, by what it was for.
 	Total CostAmounts `json:"total"`
+}
+
+// NamespaceHeld What a namespace's sandboxes and volumes hold of the host now, beside
+// its `quota`: on a read of one namespace and on the answer to setting
+// its quota, and absent from a list and from a create. Counted exactly
+// as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
+// or `unreachable`; `memoryBytes` for those and `paused` ones;
+// `diskBytes` for every volume, held by a sandbox in any state or by
+// none, at the size it may grow to.
+//
+// It may be above a ceiling: a ceiling lowered below what is held
+// stops nothing, and refuses what would add to it.
+type NamespaceHeld struct {
+	// Cpus The vCPUs its sandboxes hold, together.
+	Cpus int64 `json:"cpus"`
+
+	// DiskBytes The disk its sandboxes and volumes hold, together.
+	DiskBytes int64 `json:"diskBytes"`
+
+	// MemoryBytes The memory its sandboxes hold, together.
+	MemoryBytes int64 `json:"memoryBytes"`
 }
 
 // NamespaceHoldings What a namespace holds, counted by kind: everything a forced delete destroys. Its tunnels are its sandboxes', and go with them.
@@ -13282,6 +13315,7 @@ type GetNamespaceResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -14060,6 +14094,7 @@ type SetNamespaceQuotaResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -17994,6 +18029,13 @@ func ParseGetNamespaceResponse(rsp *http.Response) (*GetNamespaceResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
 	}
 
 	return response, nil
@@ -19599,6 +19641,13 @@ func ParseSetNamespaceQuotaResponse(rsp *http.Response) (*SetNamespaceQuotaRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

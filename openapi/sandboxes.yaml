@@ -4825,10 +4825,11 @@ paths:
       description: >-
         `namespaces.read`, for a namespace the caller reaches; or any key
         bound to it. A namespace the caller does not reach is answered as one
-        that is not there.
+        that is not there. With its quota, and `held`: what its sandboxes
+        and volumes hold of it now.
       responses:
         "200":
-          description: The namespace.
+          description: The namespace, with what it holds.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Namespace" }
@@ -4838,6 +4839,13 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: >-
+            What its sandboxes and volumes hold could not be read on this
+            host, and the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: deleteNamespace
       tags: [Namespaces]
@@ -4903,6 +4911,10 @@ paths:
         **The quota is replaced whole**: a ceiling left out is none, so `{}`
         takes every ceiling away. What each counts is `NamespaceQuota`'s.
 
+        **A field it does not have is refused** `400`, naming it, and
+        nothing changes: `{"cpus": 12, "memory": "48Gi"}` read as `{"cpus":
+        12}` would take the memory and disk ceilings away and answer `200`.
+
         A namespace being deleted is answered `404`: what it holds is going
         whatever its quota says.
       requestBody:
@@ -4912,7 +4924,7 @@ paths:
             schema: { $ref: "#/components/schemas/NamespaceQuota" }
       responses:
         "200":
-          description: The namespace, with its quota as it now is.
+          description: The namespace, with its quota as it now is and what it holds.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Namespace" }
@@ -4924,6 +4936,13 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: >-
+            The quota is set, and what its sandboxes and volumes hold could
+            not be read on this host: the message says what the disk said.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/namespaces/{namespace}/keys:
     parameters:
       - $ref: "#/components/parameters/NamespaceInPath"
@@ -8761,6 +8780,41 @@ components:
           format: email
           description: Who made it.
         quota: { $ref: "#/components/schemas/NamespaceQuota" }
+        held: { $ref: "#/components/schemas/NamespaceHeld" }
+
+    NamespaceHeld:
+      type: object
+      description: |
+        What a namespace's sandboxes and volumes hold of the host now, beside
+        its `quota`: on a read of one namespace and on the answer to setting
+        its quota, and absent from a list and from a create. Counted exactly
+        as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
+        or `unreachable`; `memoryBytes` for those and `paused` ones;
+        `diskBytes` for every volume, held by a sandbox in any state or by
+        none, at the size it may grow to.
+
+        It may be above a ceiling: a ceiling lowered below what is held
+        stops nothing, and refuses what would add to it.
+      required: [cpus, memoryBytes, diskBytes]
+      properties:
+        cpus:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The vCPUs its sandboxes hold, together.
+          example: 2
+        memoryBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The memory its sandboxes hold, together.
+          example: 4294967296
+        diskBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The disk its sandboxes and volumes hold, together.
+          example: 21474836480
 
     NamespaceNotEmpty:
       type: object

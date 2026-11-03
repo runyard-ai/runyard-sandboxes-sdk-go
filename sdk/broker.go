@@ -19,13 +19,13 @@ import (
 // served on.
 const brokerProtocol = "runyard.broker.v1"
 
-// brokerKeepAlive is how often the daemon is asked whether it is still there
-// while a broker is served, and it is given twice that to answer: a daemon
+// brokerKeepAlive is how often the server is asked whether it is still there
+// while a broker is served, and it is given twice that to answer: a server
 // gone without a word — a network that dropped — is noticed within a quarter
-// of a minute, which is what the daemon gives a caller.
+// of a minute, which is what the server gives a caller.
 const brokerKeepAlive = 5 * time.Second
 
-// brokerPortHeader is where the daemon's answer to a serve says the port the
+// brokerPortHeader is where the server's answer to a serve says the port the
 // broker is on, inside the sandbox.
 const brokerPortHeader = "Runyard-Broker-Port"
 
@@ -47,8 +47,8 @@ const brokerPortHeader = "Runyard-Broker-Port"
 // (`sandbox_unreachable`).
 //
 // Close takes the broker away, and cuts the connections still open. When the
-// daemon hangs up — the sandbox was stopped, paused or deleted, the broker
-// detached, the daemon stopped — or the line to it is lost, Accept returns an
+// server hangs up — the sandbox was stopped, paused or deleted, the broker
+// detached, the server stopped — or the line to it is lost, Accept returns an
 // error and the listener is done: there is no reconnecting inside it, and a
 // caller that wants the broker back serves it again, on whatever port it is
 // given then.
@@ -64,7 +64,7 @@ const brokerPortHeader = "Runyard-Broker-Port"
 //
 // Accept is to be called as connections arrive, as a server does: at most 256
 // wait to be accepted, one made past that is closed as soon as it is made,
-// and one the daemon has waited 75 seconds for ends the serve. A connection
+// and one the server has waited 75 seconds for ends the serve. A connection
 // has a CloseWrite as a TCP one does, for an answer that ends before the
 // workload has finished asking; five minutes after either end has finished
 // writing, the connection is closed altogether.
@@ -73,7 +73,7 @@ func (s *Sandbox) ServeBroker(ctx context.Context, name string, opts ...ServeOpt
 	for _, opt := range opts {
 		opt(&o)
 	}
-	address := s.client.baseURL + "/v1/namespaces/" + url.PathEscape(s.Namespace) + "/sandboxes/" + url.PathEscape(s.ID.String()) + "/brokers/" + url.PathEscape(name) + "/serve"
+	address := s.client.baseURL + "/v1/sandboxes/" + url.PathEscape(s.ID.String()) + "/brokers/" + url.PathEscape(name) + "/serve"
 	if o.unrecorded {
 		address += "?record=false"
 	}
@@ -88,19 +88,19 @@ func (s *Sandbox) ServeBroker(ctx context.Context, name string, opts ...ServeOpt
 		// Whatever answered is not speaking this protocol, and its frames
 		// would be read as a session's.
 		_ = socket.CloseNow()
-		return nil, fmt.Errorf("serving broker %s of %s: the daemon did not agree to %s", name, s.ID, brokerProtocol)
+		return nil, fmt.Errorf("serving broker %s of %s: the server did not agree to %s", name, s.ID, brokerProtocol)
 	}
 	// The port is the whole of what the workload needs of the broker, and
-	// only the daemon knows: one that did not say has given this program a
+	// only the server knows: one that did not say has given this program a
 	// broker nothing can be pointed at.
 	port, err := strconv.Atoi(answer.Get(brokerPortHeader))
 	if err != nil || port < 1 || port > 65535 {
 		_ = socket.CloseNow()
-		return nil, fmt.Errorf("serving broker %s of %s: the daemon did not say which port the broker is on (%s: %q)", name, s.ID, brokerPortHeader, answer.Get(brokerPortHeader))
+		return nil, fmt.Errorf("serving broker %s of %s: the server did not say which port the broker is on (%s: %q)", name, s.ID, brokerPortHeader, answer.Get(brokerPortHeader))
 	}
 
 	listener := &BrokerListener{addr: brokerAddr(s.ID.String() + "/" + name), port: port}
-	// This end accepts, and the daemon opens. The error is the
+	// This end accepts, and the server opens. The error is the
 	// configuration's, and this one cannot be wrong.
 	listener.session, _ = yamux.Server(line{
 		// Not ctx, which bounds the handshake: the session lasts until Close.
@@ -114,11 +114,11 @@ func (s *Sandbox) ServeBroker(ctx context.Context, name string, opts ...ServeOpt
 	return listener, nil
 }
 
-// sessionConfig is how the session with the daemon is run.
+// sessionConfig is how the session with the server is run.
 func sessionConfig(keepAlive time.Duration) *yamux.Config {
 	config := yamux.DefaultConfig()
 	// Said, although it is the default: the keepalives are how this end
-	// learns the daemon is gone, when it went without closing anything.
+	// learns the server is gone, when it went without closing anything.
 	config.EnableKeepAlive = true
 	config.KeepAliveInterval = keepAlive
 	config.ConnectionWriteTimeout = 2 * keepAlive
@@ -130,7 +130,7 @@ func sessionConfig(keepAlive time.Duration) *yamux.Config {
 
 // brokerAddr is an end of a client broker's connection: the sandbox the
 // workload dialled from, or `<sandbox>/<broker>`, which is what it dialled.
-// There is no host and port to give: the connection came through the daemon.
+// There is no host and port to give: the connection came through the server.
 type brokerAddr string
 
 func (brokerAddr) Network() string  { return "runyard-broker" }
@@ -165,10 +165,10 @@ func (l line) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Close says goodbye before it hangs up, and waits to be answered: the daemon
+// Close says goodbye before it hangs up, and waits to be answered: the server
 // reads that this end stopped serving, rather than finding it gone. Not the
 // net.Conn's own Close, which cancels the read in flight as it says so, and
-// leaves which of the two the daemon sees to chance.
+// leaves which of the two the server sees to chance.
 func (l line) Close() error {
 	return l.socket.Close(websocket.StatusNormalClosure, "")
 }
@@ -189,7 +189,7 @@ type BrokerListener struct {
 	// port is where the broker is inside the sandbox, on its loopback.
 	port int
 	// closed is whether Close was called here, which is what Accept and the
-	// connections say afterwards rather than that the daemon hung up.
+	// connections say afterwards rather than that the server hung up.
 	closed atomic.Bool
 	// ended is what first went wrong with the line, once something has.
 	ended atomic.Pointer[error]
@@ -206,7 +206,7 @@ func (l *BrokerListener) Accept() (net.Conn, error) {
 		// A session that could not answer one stream is not one to wait on
 		// for the next: the listener is done, whatever went wrong. One that
 		// has ended already is not closed again, which would wait for its
-		// goodbye to a daemon that may not be there to hear it.
+		// goodbye to a server that may not be there to hear it.
 		if !l.session.IsClosed() {
 			_ = l.session.Close()
 		}
@@ -215,7 +215,7 @@ func (l *BrokerListener) Accept() (net.Conn, error) {
 	return &brokerConn{Stream: stream, listener: l}, nil
 }
 
-// Close takes the broker away: the daemon is told, every connection still
+// Close takes the broker away: the server is told, every connection still
 // open is cut, and the port inside the sandbox closes. It
 // returns once the socket is closed and the session's reading and writing
 // have ended. Closing again waits for the same, and is nothing.
@@ -227,7 +227,7 @@ func (l *BrokerListener) Close() error {
 func (l *BrokerListener) Addr() net.Addr { return l.addr }
 
 // Port is the port the broker is on inside the sandbox, on `127.0.0.1`: the
-// daemon chose it when the broker was given, and it is the broker's until
+// server chose it when the broker was given, and it is the broker's until
 // the listener is closed.
 func (l *BrokerListener) Port() int { return l.port }
 
@@ -237,9 +237,9 @@ func (l *BrokerListener) Port() int { return l.port }
 // capability.
 func (l *BrokerListener) URL() string { return fmt.Sprintf("http://127.0.0.1:%d", l.port) }
 
-// errHungUp is the daemon ending the session: the sandbox was stopped, paused
-// or deleted, the broker detached, or the daemon stopped.
-var errHungUp = errors.New("the daemon hung up")
+// errHungUp is the server ending the session: the sandbox was stopped, paused
+// or deleted, the broker detached, or the server stopped.
+var errHungUp = errors.New("the server hung up")
 
 // over is the error of a listener that is done, or of a connection of one:
 // that it was closed here, or else why the line ended, which err is when
@@ -257,7 +257,7 @@ func (l *BrokerListener) over(op string, err error) error {
 		// having finished.
 		err = errHungUp
 	default:
-		err = fmt.Errorf("the line to the daemon was lost: %w", err)
+		err = fmt.Errorf("the line to the server was lost: %w", err)
 	}
 	return &net.OpError{Op: op, Net: l.addr.Network(), Addr: l.addr, Err: err}
 }
@@ -323,6 +323,6 @@ type ServeOption func(*serveOptions)
 
 type serveOptions struct{ unrecorded bool }
 
-// Unrecorded serves a broker whose requests the daemon's access gateway does
+// Unrecorded serves a broker whose requests the server's access gateway does
 // not record: one whose caller keeps its own record of them.
 func Unrecorded() ServeOption { return func(o *serveOptions) { o.unrecorded = true } }

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 	"go.uber.org/goleak"
 )
@@ -23,12 +23,12 @@ func claude(_ context.Context, _ genv1.SandboxID, request genv1.CommandRequest) 
 	return genv1.CommandResult{Stdout: "\nyou said: " + request.Argv[4] + "\n"}
 }
 
-func daemon(t *testing.T, opts ...fakedaemon.Option) *fakedaemon.Daemon {
+func server(t *testing.T, opts ...fakeserver.Option) *fakeserver.Server {
 	t.Helper()
-	return fakedaemon.New(t, append([]fakedaemon.Option{fakedaemon.WithKey("k"), fakedaemon.WithBrokers("claude"), fakedaemon.WithRun(claude)}, opts...)...)
+	return fakeserver.New(t, append([]fakeserver.Option{fakeserver.WithKey("k"), fakeserver.WithBrokers("claude"), fakeserver.WithRun(claude)}, opts...)...)
 }
 
-func converse(t *testing.T, d *fakedaemon.Daemon, input string, extra ...string) (int, string, string) {
+func converse(t *testing.T, d *fakeserver.Server, input string, extra ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := run(append([]string{"-addr", d.URL, "-key", "k", "-volume", "talk"}, extra...), strings.NewReader(input), &stdout, &stderr)
@@ -37,7 +37,7 @@ func converse(t *testing.T, d *fakedaemon.Daemon, input string, extra ...string)
 
 // Nothing runs between turns: every turn's sandbox was released — keeping the
 // volume — and none is left.
-func requireNothingRunning(t *testing.T, d *fakedaemon.Daemon, turns int) {
+func requireNothingRunning(t *testing.T, d *fakeserver.Server, turns int) {
 	t.Helper()
 	if left := d.Sandboxes(); len(left) != 0 {
 		t.Fatalf("%d sandboxes are still running", len(left))
@@ -56,11 +56,11 @@ func requireNothingRunning(t *testing.T, d *fakedaemon.Daemon, turns int) {
 func TestEachTurnIsASandboxOnTheSameVolume(t *testing.T) {
 	var mu sync.Mutex
 	var volumes []string
-	d := daemon(t, fakedaemon.WithBoot(func(spec genv1.SandboxSpec) fakedaemon.Outcome {
+	d := server(t, fakeserver.WithBoot(func(spec genv1.SandboxSpec) fakeserver.Outcome {
 		mu.Lock()
 		defer mu.Unlock()
 		volumes = append(volumes, *spec.Disk.Volume)
-		return fakedaemon.Outcome{}
+		return fakeserver.Outcome{}
 	}))
 	code, stdout, stderr := converse(t, d, "make a file\n  what did I ask?  \n")
 	if code != 0 {
@@ -92,7 +92,7 @@ func TestEachTurnIsASandboxOnTheSameVolume(t *testing.T) {
 }
 
 func TestAVolumeThatExistsIsPickedUpAndANewOneIsNamed(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	d.PutVolume("talk", 1<<20)
 	if _, stdout, _ := converse(t, d, ""); !strings.Contains(stdout, "picking up the conversation on volume talk") {
 		t.Fatalf("an existing volume was not picked up:\n%s", stdout)
@@ -119,7 +119,7 @@ func TestAVolumeThatExistsIsPickedUpAndANewOneIsNamed(t *testing.T) {
 // Blank lines are not turns, /exit ends the conversation where it is, and
 // nothing after it is read as a prompt.
 func TestBlankLinesAreSkippedAndExitLeaves(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := converse(t, d, "\n   \n\t\nhello\n  /exit  \nnot a turn\n")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -134,7 +134,7 @@ func TestBlankLinesAreSkippedAndExitLeaves(t *testing.T) {
 }
 
 func TestResetForgetsEverything(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := converse(t, d, "remember banana\n/reset\n")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -147,11 +147,11 @@ func TestResetForgetsEverything(t *testing.T) {
 	}
 }
 
-// A /reset the daemon refuses leaves the volume as it was, and the
+// A /reset the server refuses leaves the volume as it was, and the
 // conversation goes on. It used to end the program.
 func TestARefusedResetDoesNotEndTheConversation(t *testing.T) {
-	d := daemon(t)
-	d.Intercept("deleteVolume", fakedaemon.Refuse(409, genv1.ErrorCodeVolumeInUse, "held by a sandbox"))
+	d := server(t)
+	d.Intercept("deleteVolume", fakeserver.Refuse(409, genv1.ErrorCodeVolumeInUse, "held by a sandbox"))
 	code, stdout, stderr := converse(t, d, "/reset\nstill here?\n")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -167,20 +167,20 @@ func TestARefusedResetDoesNotEndTheConversation(t *testing.T) {
 // One turn failing is not the conversation failing, however it fails, and
 // its sandbox is released each time so the next turn can have the volume.
 func TestAFailedTurnIsSaidAndTheNextOneStillRuns(t *testing.T) {
-	failFirst := func() fakedaemon.Option {
+	failFirst := func() fakeserver.Option {
 		var once sync.Once
-		return fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
+		return fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
 			failed := false
 			once.Do(func() { failed = true })
 			if failed {
-				return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "the volume belongs to another image"}
+				return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "the volume belongs to another image"}
 			}
-			return fakedaemon.Outcome{}
+			return fakeserver.Outcome{}
 		})
 	}
-	exitFirst := func() fakedaemon.Option {
+	exitFirst := func() fakeserver.Option {
 		var once sync.Once
-		return fakedaemon.WithRun(func(ctx context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
+		return fakeserver.WithRun(func(ctx context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
 			failed := false
 			once.Do(func() { failed = true })
 			if failed {
@@ -190,20 +190,20 @@ func TestAFailedTurnIsSaidAndTheNextOneStillRuns(t *testing.T) {
 		})
 	}
 	for name, tc := range map[string]struct {
-		opts      []fakedaemon.Option
-		intercept map[string]fakedaemon.Interceptor
+		opts      []fakeserver.Option
+		intercept map[string]fakeserver.Interceptor
 		want      string
 		drops     int
 	}{
 		// The failed sandbox holds the volume like any other, and used to be
 		// left holding it: every turn after it was `volume_in_use`.
-		"the sandbox fails":     {opts: []fakedaemon.Option{failFirst()}, want: "the volume belongs to another image", drops: 2},
-		"the create is refused": {intercept: map[string]fakedaemon.Interceptor{"createSandbox": fakedaemon.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight")}, want: "capacity_exceeded", drops: 1},
-		"claude exits non-zero": {opts: []fakedaemon.Option{exitFirst()}, want: "claude exited 1: API Error: overloaded", drops: 2},
-		"the command is lost":   {intercept: map[string]fakedaemon.Interceptor{"runCommand": fakedaemon.HangUp()}, want: "asking Claude", drops: 2},
+		"the sandbox fails":     {opts: []fakeserver.Option{failFirst()}, want: "the volume belongs to another image", drops: 2},
+		"the create is refused": {intercept: map[string]fakeserver.Interceptor{"createSandbox": fakeserver.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight")}, want: "capacity_exceeded", drops: 1},
+		"claude exits non-zero": {opts: []fakeserver.Option{exitFirst()}, want: "claude exited 1: API Error: overloaded", drops: 2},
+		"the command is lost":   {intercept: map[string]fakeserver.Interceptor{"runCommand": fakeserver.HangUp()}, want: "asking Claude", drops: 2},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := daemon(t, tc.opts...)
+			d := server(t, tc.opts...)
 			for op, intercept := range tc.intercept {
 				d.Intercept(op, intercept)
 			}
@@ -223,8 +223,8 @@ func TestAFailedTurnIsSaidAndTheNextOneStillRuns(t *testing.T) {
 }
 
 func TestAReleaseThatFailsIsTheTurnsFailure(t *testing.T) {
-	d := daemon(t)
-	d.Intercept("deleteSandbox", fakedaemon.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
+	d := server(t)
+	d.Intercept("deleteSandbox", fakeserver.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
 	code, _, stderr := converse(t, d, "hi\n")
 	if code != 0 || !strings.Contains(stderr, "that turn failed: dropping") || !strings.Contains(stderr, "the ruleset would not come down") {
 		t.Fatalf("exit %d: %q", code, stderr)
@@ -232,7 +232,7 @@ func TestAReleaseThatFailsIsTheTurnsFailure(t *testing.T) {
 }
 
 func TestForgetDeletesTheVolumeOnTheWayOut(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := converse(t, d, "hi\n", "-forget")
 	if code != 0 || !strings.Contains(stdout, "volume talk deleted") {
 		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
@@ -241,8 +241,8 @@ func TestForgetDeletesTheVolumeOnTheWayOut(t *testing.T) {
 		t.Fatal("-forget kept the volume")
 	}
 
-	refused := daemon(t)
-	refused.Intercept("deleteVolume", fakedaemon.Refuse(409, genv1.ErrorCodeVolumeInUse, "held"))
+	refused := server(t)
+	refused.Intercept("deleteVolume", fakeserver.Refuse(409, genv1.ErrorCodeVolumeInUse, "held"))
 	if code, _, stderr := converse(t, refused, "hi\n", "-forget"); code != 1 || !strings.Contains(stderr, "deleting volume talk") {
 		t.Fatalf("a refused -forget: exit %d: %s", code, stderr)
 	}
@@ -251,7 +251,7 @@ func TestForgetDeletesTheVolumeOnTheWayOut(t *testing.T) {
 // Ctrl-C at the prompt ends the conversation. It used to do nothing until
 // the person also pressed Enter: the read of the line was not interruptible.
 func TestCtrlCAtThePromptLeaves(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	input, typing := io.Pipe()
 	defer func() { _ = typing.Close() }()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -283,7 +283,7 @@ func TestCtrlCAtThePromptLeaves(t *testing.T) {
 // sandbox is still released.
 func TestCtrlCInATurnReleasesItsSandbox(t *testing.T) {
 	asked := make(chan struct{})
-	d := daemon(t, fakedaemon.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
+	d := server(t, fakeserver.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
 		close(asked)
 		<-ctx.Done()
 		return genv1.CommandResult{}
@@ -313,7 +313,7 @@ func TestCtrlCInATurnReleasesItsSandbox(t *testing.T) {
 // A line longer than the reader holds is an error that says what it was
 // doing, rather than a bare "token too long".
 func TestALineTooLongToReadEndsWithAnError(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, _, stderr := converse(t, d, strings.Repeat("x", 2<<20)+"\n")
 	if code != 1 || !strings.Contains(stderr, "reading a line: bufio.Scanner: token too long") {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -324,16 +324,16 @@ func TestALineTooLongToReadEndsWithAnError(t *testing.T) {
 }
 
 func TestAHostThatCannotServeTheConversationIsToldSo(t *testing.T) {
-	noBroker := fakedaemon.New(t, fakedaemon.WithKey("k"))
+	noBroker := fakeserver.New(t, fakeserver.WithKey("k"))
 	if code, _, stderr := converse(t, noBroker, "hi\n"); code != 1 || !strings.Contains(stderr, `declares no shared broker "claude"`) {
 		t.Fatalf("a host with no claude broker: exit %d: %s", code, stderr)
 	}
-	refused := daemon(t)
-	refused.Intercept("getInfo", fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no"))
+	refused := server(t)
+	refused.Intercept("getInfo", fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no"))
 	if code, _, stderr := converse(t, refused, "hi\n"); code != 1 || !strings.Contains(stderr, "asking the host what it is") {
 		t.Fatalf("a host that will not say what it is: exit %d: %s", code, stderr)
 	}
-	other := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBrokers("github"))
+	other := fakeserver.New(t, fakeserver.WithKey("k"), fakeserver.WithBrokers("github"))
 	if code, _, _ := converse(t, other, "hi\n"); code != 1 {
 		t.Fatalf("a host whose brokers do not include claude: exit %d", code)
 	}
@@ -342,8 +342,8 @@ func TestAHostThatCannotServeTheConversationIsToldSo(t *testing.T) {
 // What the volume holds is said when it can be asked, and left out when it
 // cannot, rather than failing the turn over a figure.
 func TestTheVolumesSizeIsLeftOutWhenItCannotBeAsked(t *testing.T) {
-	d := daemon(t)
-	d.InterceptAll("listVolumes", fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no"))
+	d := server(t)
+	d.InterceptAll("listVolumes", fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no"))
 	code, stdout, stderr := converse(t, d, "hi\n")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -381,7 +381,7 @@ func TestTheFlagsAreTheProgramsInterface(t *testing.T) {
 		t.Errorf("a bad boolean: exit %d, want 2", code)
 	}
 	stderr.Reset()
-	if code := run([]string{"-addr", "localhost:8099"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a daemon's address") {
+	if code := run([]string{"-addr", "localhost:8099"}, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a server's address") {
 		t.Errorf("an address with no scheme: exit %d, %s", code, stderr.String())
 	}
 }

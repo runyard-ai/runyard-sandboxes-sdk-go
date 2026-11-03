@@ -4,7 +4,7 @@
 //
 // Nothing in the machine can reach Anthropic on its own, and nothing in it
 // holds a key: the CLI talks to a port on its own loopback, the connection is
-// carried out over vsock to the daemon, and the daemon carries it to the Claude
+// carried out over vsock to the server, and the server carries it to the Claude
 // broker under this sandbox's certificate. The broker puts the real credential
 // on — on the host — and forwards what the CLI asked for.
 //
@@ -47,7 +47,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var o options
 	flags := flag.NewFlagSet("claude", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the daemon")
+	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the server")
 	flags.StringVar(&o.key, "key", os.Getenv("RUNYARD_SANDBOXES_KEY"), "an API key with sandboxes.read, sandboxes.write and exec")
 	flags.StringVar(&o.image, "image", "localhost:5001/runyard/claude-sandbox:latest", "the image with the Claude CLI in it (examples/claude/image)")
 	flags.StringVar(&o.name, "name", "claude", "the sandbox's name label")
@@ -82,12 +82,12 @@ func ask(ctx context.Context, o options, stdout io.Writer) (err error) {
 	}
 	declared, err := client.Brokers(ctx)
 	if err != nil {
-		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+		return fmt.Errorf("asking which brokers the server declares: %w", err)
 	}
 	if !declares(declared, broker) {
 		// Said before a machine is made, rather than discovered from a create
 		// that is refused — and with what to do about it.
-		return fmt.Errorf("%s declares no shared broker %q in this namespace; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
+		return fmt.Errorf("%s declares no shared broker %q; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
 	}
 
 	started := time.Now()
@@ -103,7 +103,7 @@ func ask(ctx context.Context, o options, stdout io.Writer) (err error) {
 	})
 	if err != nil {
 		// A create that failed, timed out or was interrupted still hands back
-		// the machine the daemon made, and -keep is no reason to keep one
+		// the machine the server made, and -keep is no reason to keep one
 		// that never became usable. It used to be left on the host, with
 		// nothing printed to say it was there.
 		if created != nil {
@@ -155,7 +155,7 @@ func ask(ctx context.Context, o options, stdout io.Writer) (err error) {
 		}
 		fmt.Fprintf(stdout, "\nopen   %s/console#/sandboxes/%s\n", strings.TrimSuffix(console, "/"), created.ID)
 		fmt.Fprintln(stdout, "then   Terminal → Open a terminal, and type: claude")
-		fmt.Fprintf(stdout, "it stays up until it is deleted — from the console, or DELETE /v1/namespaces/%s/sandboxes/%s\n", created.Namespace, created.ID)
+		fmt.Fprintf(stdout, "it stays up until it is deleted — from the console, or DELETE /v1/sandboxes/%s\n", created.ID)
 	}
 	return nil
 }

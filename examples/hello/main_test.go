@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 	"go.uber.org/goleak"
 )
@@ -32,12 +32,12 @@ func guest(_ context.Context, id genv1.SandboxID, request genv1.CommandRequest) 
 	return genv1.CommandResult{ExitCode: 127, Stderr: "not found"}
 }
 
-func daemon(t *testing.T, opts ...fakedaemon.Option) *fakedaemon.Daemon {
+func server(t *testing.T, opts ...fakeserver.Option) *fakeserver.Server {
 	t.Helper()
-	return fakedaemon.New(t, append([]fakedaemon.Option{fakedaemon.WithKey("k"), fakedaemon.WithBrokers("example"), fakedaemon.WithRun(guest)}, opts...)...)
+	return fakeserver.New(t, append([]fakeserver.Option{fakeserver.WithKey("k"), fakeserver.WithBrokers("example"), fakeserver.WithRun(guest)}, opts...)...)
 }
 
-func tour(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, string) {
+func tour(t *testing.T, d *fakeserver.Server, extra ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := run(append([]string{"-addr", d.URL, "-key", "k"}, extra...), &stdout, &stderr)
@@ -46,7 +46,7 @@ func tour(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, str
 
 // Nothing a failure or a success leaves behind: both machines are gone, and
 // each was dropped with its disk.
-func requireAllDropped(t *testing.T, d *fakedaemon.Daemon) {
+func requireAllDropped(t *testing.T, d *fakeserver.Server) {
 	t.Helper()
 	if left := d.Sandboxes(); len(left) != 0 {
 		t.Fatalf("%d sandboxes were left on the host: %+v", len(left), left)
@@ -61,11 +61,11 @@ func requireAllDropped(t *testing.T, d *fakedaemon.Daemon) {
 func TestTheTourMakesTwoSandboxesWorksInThemAndDropsBoth(t *testing.T) {
 	var mu sync.Mutex
 	hostnames := map[string]bool{}
-	d := daemon(t, fakedaemon.WithBoot(func(spec genv1.SandboxSpec) fakedaemon.Outcome {
+	d := server(t, fakeserver.WithBoot(func(spec genv1.SandboxSpec) fakeserver.Outcome {
 		mu.Lock()
 		defer mu.Unlock()
 		hostnames[*spec.Hostname] = true
-		return fakedaemon.Outcome{}
+		return fakeserver.Outcome{}
 	}))
 	code, stdout, stderr := tour(t, d, "-broker", "example")
 	if code != 0 {
@@ -100,7 +100,7 @@ func TestTheTourMakesTwoSandboxesWorksInThemAndDropsBoth(t *testing.T) {
 }
 
 func TestWithoutABrokerTheTourCallsNone(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := tour(t, d)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -113,11 +113,11 @@ func TestWithoutABrokerTheTourCallsNone(t *testing.T) {
 
 // hangUpOn hangs up on a command whose argv mentions word, and serves the
 // rest.
-func hangUpOn(word string) fakedaemon.Interceptor {
+func hangUpOn(word string) fakeserver.Interceptor {
 	return func(w http.ResponseWriter, r *http.Request, serve http.HandlerFunc) {
 		body, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(body), word) {
-			fakedaemon.HangUp()(w, r, serve)
+			fakeserver.HangUp()(w, r, serve)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
@@ -146,39 +146,39 @@ func withoutBrokers(w http.ResponseWriter, r *http.Request, serve http.HandlerFu
 // including one whose create failed, which used to come back as nil and stay
 // on the host.
 func TestEveryWayTheTourFailsDropsBothSandboxes(t *testing.T) {
-	failTwo := fakedaemon.WithBoot(func(spec genv1.SandboxSpec) fakedaemon.Outcome {
+	failTwo := fakeserver.WithBoot(func(spec genv1.SandboxSpec) fakeserver.Outcome {
 		if *spec.Hostname == "hello-two" {
-			return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "the image has no /sbin/init"}
+			return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "the image has no /sbin/init"}
 		}
-		return fakedaemon.Outcome{}
+		return fakeserver.Outcome{}
 	})
-	exitOne := fakedaemon.WithRun(func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult {
+	exitOne := fakeserver.WithRun(func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult {
 		return genv1.CommandResult{ExitCode: 1, Stderr: "sh: hostname: not found"}
 	})
-	brokerFails := fakedaemon.WithRun(func(ctx context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
+	brokerFails := fakeserver.WithRun(func(ctx context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
 		if strings.Contains(strings.Join(request.Argv, " "), "wget") {
 			return genv1.CommandResult{ExitCode: 1, Stderr: "wget: can't connect to remote host: Connection refused"}
 		}
 		return guest(ctx, id, request)
 	})
 	for name, tc := range map[string]struct {
-		opts      []fakedaemon.Option
-		intercept map[string]fakedaemon.Interceptor
+		opts      []fakeserver.Option
+		intercept map[string]fakeserver.Interceptor
 		want      string
 		created   int
 	}{
-		"a create fails":            {opts: []fakedaemon.Option{failTwo}, want: "creating hello-two: the image has no /sbin/init", created: 2},
-		"a command is refused":      {intercept: map[string]fakedaemon.Interceptor{"runCommand": fakedaemon.Refuse(503, genv1.ErrorCodeSandboxUnreachable, "the agent is not answering")}, want: "running in", created: 2},
-		"a command exits non-zero":  {opts: []fakedaemon.Option{exitOne}, want: "exit 1: sh: hostname: not found", created: 2},
-		"the file is not written":   {intercept: map[string]fakedaemon.Interceptor{"writeFile": fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no files.write")}, want: "writing a file", created: 2},
-		"the file is not read back": {intercept: map[string]fakedaemon.Interceptor{"readFile": fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no files.read")}, want: "reading it back", created: 2},
-		"the broker is not given":   {intercept: map[string]fakedaemon.Interceptor{"getSandbox": withoutBrokers}, want: `was not given broker "example"`, created: 2},
-		"the brokered call fails":   {opts: []fakedaemon.Option{brokerFails}, want: "the brokered call failed: wget", created: 2},
-		"the brokered call is lost": {intercept: map[string]fakedaemon.Interceptor{"runCommand": hangUpOn("wget")}, want: "calling the broker", created: 2},
-		"the host cannot be asked":  {intercept: map[string]fakedaemon.Interceptor{"getInfo": fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no")}, want: "asking the host what it is", created: 0},
+		"a create fails":            {opts: []fakeserver.Option{failTwo}, want: "creating hello-two: the image has no /sbin/init", created: 2},
+		"a command is refused":      {intercept: map[string]fakeserver.Interceptor{"runCommand": fakeserver.Refuse(503, genv1.ErrorCodeSandboxUnreachable, "the agent is not answering")}, want: "running in", created: 2},
+		"a command exits non-zero":  {opts: []fakeserver.Option{exitOne}, want: "exit 1: sh: hostname: not found", created: 2},
+		"the file is not written":   {intercept: map[string]fakeserver.Interceptor{"writeFile": fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no files.write")}, want: "writing a file", created: 2},
+		"the file is not read back": {intercept: map[string]fakeserver.Interceptor{"readFile": fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no files.read")}, want: "reading it back", created: 2},
+		"the broker is not given":   {intercept: map[string]fakeserver.Interceptor{"getSandbox": withoutBrokers}, want: `was not given broker "example"`, created: 2},
+		"the brokered call fails":   {opts: []fakeserver.Option{brokerFails}, want: "the brokered call failed: wget", created: 2},
+		"the brokered call is lost": {intercept: map[string]fakeserver.Interceptor{"runCommand": hangUpOn("wget")}, want: "calling the broker", created: 2},
+		"the host cannot be asked":  {intercept: map[string]fakeserver.Interceptor{"getInfo": fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no")}, want: "asking the host what it is", created: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := daemon(t, tc.opts...)
+			d := server(t, tc.opts...)
 			for op, intercept := range tc.intercept {
 				d.InterceptAll(op, intercept)
 			}
@@ -197,8 +197,8 @@ func TestEveryWayTheTourFailsDropsBothSandboxes(t *testing.T) {
 // A drop that fails is said, per sandbox, and does not stop the other one
 // being dropped.
 func TestADropThatFailsIsSaidAndTheOtherIsStillDropped(t *testing.T) {
-	d := daemon(t)
-	d.Intercept("deleteSandbox", fakedaemon.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
+	d := server(t)
+	d.Intercept("deleteSandbox", fakeserver.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
 	code, stdout, stderr := tour(t, d)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -215,7 +215,7 @@ func TestADropThatFailsIsSaidAndTheOtherIsStillDropped(t *testing.T) {
 // dropped — on a context Ctrl-C did not cancel.
 func TestACancelledTourStillDropsBoth(t *testing.T) {
 	running := make(chan struct{}, 2)
-	d := daemon(t, fakedaemon.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
+	d := server(t, fakeserver.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
 		running <- struct{}{}
 		<-ctx.Done()
 		return genv1.CommandResult{}
@@ -254,7 +254,7 @@ func TestTheFlagsAreTheProgramsInterface(t *testing.T) {
 		t.Errorf("an unknown flag: exit %d, want 2", code)
 	}
 	stderr.Reset()
-	if code := run([]string{"-addr", "127.0.0.1:8099"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a daemon's address") {
+	if code := run([]string{"-addr", "127.0.0.1:8099"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a server's address") {
 		t.Errorf("an address with no scheme: exit %d, %s", code, stderr.String())
 	}
 }

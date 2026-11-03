@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"go.uber.org/goleak"
 )
 
@@ -32,9 +32,9 @@ const (
 	failingUnrecorded
 )
 
-func daemon(t *testing.T, behaves guest, opts ...fakedaemon.Option) *fakedaemon.Daemon {
+func server(t *testing.T, behaves guest, opts ...fakeserver.Option) *fakeserver.Server {
 	t.Helper()
-	var d *fakedaemon.Daemon
+	var d *fakeserver.Server
 	curl := func(_ context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
 		if request.Argv[0] != "curl" {
 			return genv1.CommandResult{ExitCode: 127, Stderr: "not found"}
@@ -61,11 +61,11 @@ func daemon(t *testing.T, behaves guest, opts ...fakedaemon.Option) *fakedaemon.
 		}
 		return genv1.CommandResult{ExitCode: 6, Stderr: "curl: (6) Could not resolve host: " + host}
 	}
-	d = fakedaemon.New(t, append([]fakedaemon.Option{fakedaemon.WithKey("k"), fakedaemon.WithNetwork(), fakedaemon.WithRun(curl)}, opts...)...)
+	d = fakeserver.New(t, append([]fakeserver.Option{fakeserver.WithKey("k"), fakeserver.WithNetwork(), fakeserver.WithRun(curl)}, opts...)...)
 	return d
 }
 
-func example(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, string) {
+func example(t *testing.T, d *fakeserver.Server, extra ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := run(append([]string{"-addr", d.URL, "-key", "k"}, extra...), &stdout, &stderr)
@@ -73,7 +73,7 @@ func example(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, 
 }
 
 // Nothing is left on the host, whatever happened.
-func requireDropped(t *testing.T, d *fakedaemon.Daemon) {
+func requireDropped(t *testing.T, d *fakeserver.Server) {
 	t.Helper()
 	if left := d.Sandboxes(); len(left) != 0 {
 		t.Fatalf("%d sandboxes were left on the host", len(left))
@@ -82,9 +82,9 @@ func requireDropped(t *testing.T, d *fakedaemon.Daemon) {
 
 func TestTheExampleReachesWhatItsRulesAllowAndIsRefusedTheRest(t *testing.T) {
 	var spec genv1.SandboxSpec
-	d := daemon(t, asTheRulesSay, fakedaemon.WithBoot(func(asked genv1.SandboxSpec) fakedaemon.Outcome {
+	d := server(t, asTheRulesSay, fakeserver.WithBoot(func(asked genv1.SandboxSpec) fakeserver.Outcome {
 		spec = asked
-		return fakedaemon.Outcome{}
+		return fakeserver.Outcome{}
 	}))
 	code, stdout, stderr := example(t, d)
 	if code != 0 {
@@ -120,7 +120,7 @@ func TestTheExampleReachesWhatItsRulesAllowAndIsRefusedTheRest(t *testing.T) {
 }
 
 func TestAHostThatGivesNoNetworkIsSaidAndNothingIsMade(t *testing.T) {
-	d := fakedaemon.New(t, fakedaemon.WithKey("k"))
+	d := fakeserver.New(t, fakeserver.WithKey("k"))
 	code, _, stderr := example(t, d)
 	if code != 1 || !strings.Contains(stderr, "-network=false") {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -138,7 +138,7 @@ func TestWhatTheRulesDoNotExplainIsAFailure(t *testing.T) {
 		reachingEverything: "curl https://httpbin.org/ip was reached, though no rule allows it",
 		failingUnrecorded:  "curl https://ifconfig.me/ip was refused, though a rule allows it: exit 28",
 	} {
-		d := daemon(t, behaves)
+		d := server(t, behaves)
 		code, _, stderr := example(t, d)
 		if code != 1 || !strings.Contains(stderr, want) {
 			t.Errorf("exit %d: %s, want %q", code, stderr, want)
@@ -149,7 +149,7 @@ func TestWhatTheRulesDoNotExplainIsAFailure(t *testing.T) {
 
 // A refusal the host has no record of is curl failing for some other reason.
 func TestARefusalTheHostDidNotMakeIsSaid(t *testing.T) {
-	d := daemon(t, asTheRulesSay)
+	d := server(t, asTheRulesSay)
 	d.InterceptAll("getSandboxEgress", func(w http.ResponseWriter, _ *http.Request, _ http.HandlerFunc) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"policy":{},"interface":{"tap":"t","guest":"g","host":"h","mask":30},"resolved":[],"rules":[],"connections":[],"refusals":[{"at":"2026-09-28T12:00:00Z","target":"other.example"}],"truncated":false}`))
@@ -161,7 +161,7 @@ func TestARefusalTheHostDidNotMakeIsSaid(t *testing.T) {
 	requireDropped(t, d)
 }
 
-func TestEachRefusalOfTheDaemonsIsTheExamplesFailure(t *testing.T) {
+func TestEachRefusalOfTheServersIsTheExamplesFailure(t *testing.T) {
 	for operation, want := range map[string]string{
 		"getInfo":          "asking the host what it is",
 		"putEgressRule":    "adding the rule httpbin",
@@ -171,8 +171,8 @@ func TestEachRefusalOfTheDaemonsIsTheExamplesFailure(t *testing.T) {
 		"deleteSandbox":    "dropping the sandbox",
 	} {
 		t.Run(operation, func(t *testing.T) {
-			d := daemon(t, asTheRulesSay)
-			d.InterceptAll(operation, fakedaemon.Refuse(http.StatusServiceUnavailable, "sandbox_unreachable", "it stopped answering"))
+			d := server(t, asTheRulesSay)
+			d.InterceptAll(operation, fakeserver.Refuse(http.StatusServiceUnavailable, "sandbox_unreachable", "it stopped answering"))
 			code, _, stderr := example(t, d)
 			if code != 1 || !strings.Contains(stderr, want) {
 				t.Fatalf("exit %d: %s", code, stderr)
@@ -185,8 +185,8 @@ func TestEachRefusalOfTheDaemonsIsTheExamplesFailure(t *testing.T) {
 }
 
 func TestASandboxThatFailsToBootIsDroppedAndSaid(t *testing.T) {
-	d := daemon(t, asTheRulesSay, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "pulling curlimages/curl: not found"}
+	d := server(t, asTheRulesSay, fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+		return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "pulling curlimages/curl: not found"}
 	}))
 	code, stdout, stderr := example(t, d)
 	if code != 1 || !strings.Contains(stderr, "not found") || !strings.Contains(stdout, "dropped.") {
@@ -208,9 +208,9 @@ func TestFlagsAreReadAndRefused(t *testing.T) {
 		t.Errorf("an address with no scheme = %d: %s", code, stderr.String())
 	}
 	var spec genv1.SandboxSpec
-	d := daemon(t, asTheRulesSay, fakedaemon.WithBoot(func(asked genv1.SandboxSpec) fakedaemon.Outcome {
+	d := server(t, asTheRulesSay, fakeserver.WithBoot(func(asked genv1.SandboxSpec) fakeserver.Outcome {
 		spec = asked
-		return fakedaemon.Outcome{}
+		return fakeserver.Outcome{}
 	}))
 	if code, _, stderr := example(t, d, "-image", "registry.example/curl:1"); code != 0 || spec.Image != "registry.example/curl:1" {
 		t.Errorf("-image = %d %s, made from %q", code, stderr, spec.Image)

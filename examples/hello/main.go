@@ -11,7 +11,7 @@
 //
 // Everything it does goes through sdk/, which goes through the generated
 // client, which is produced from openapi/sandboxes.yaml. There is no path from
-// this program to the daemon that the contract does not describe.
+// this program to the server that the contract does not describe.
 //
 //	go run ./examples/hello -addr http://127.0.0.1:8099 -key "$RUNYARD_KEY"
 package main
@@ -42,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var o options
 	flags := flag.NewFlagSet("hello", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the daemon")
+	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the server")
 	flags.StringVar(&o.key, "key", os.Getenv("RUNYARD_SANDBOXES_KEY"), "an API key. Mint one with: runyard-sandboxes keys mint")
 	flags.StringVar(&o.image, "image", "alpine:3.20", "the OCI image each sandbox boots")
 	flags.StringVar(&o.broker, "broker", "", "a broker this host declares, to call from inside a sandbox")
@@ -81,7 +81,7 @@ func hello(ctx context.Context, o options, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "host %s — %s\n", info.Id, info.Hypervisor.Version)
 	declared, err := client.Brokers(ctx)
 	if err != nil {
-		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+		return fmt.Errorf("asking which brokers the server declares: %w", err)
 	}
 	for _, broker := range declared {
 		fmt.Fprintf(stdout, "  broker %s → %s\n", broker.Name, broker.Url)
@@ -104,7 +104,7 @@ func hello(ctx context.Context, o options, stdout, stderr io.Writer) error {
 	for i, name := range names {
 		creating.Go(func() { //task:unowned joined by creating.Wait, below
 			// The name is a label, and the hostname is sent with it rather
-			// than derived from it: the daemon interprets no label, so a
+			// than derived from it: the server interprets no label, so a
 			// caller that wants a shell prompt to say "hello-one" says so.
 			own := spec
 			own.Hostname = &name
@@ -120,7 +120,7 @@ func hello(ctx context.Context, o options, stdout, stderr io.Writer) error {
 	// somebody memory until a person notices.
 	//
 	// On a context of its own, because ctx may be the one Ctrl-C cancelled;
-	// and bounded, because a daemon that stopped answering would otherwise
+	// and bounded, because a server that stopped answering would otherwise
 	// hold the program open forever on the way out.
 	defer func() {
 		dropping, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

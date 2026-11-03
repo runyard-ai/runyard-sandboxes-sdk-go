@@ -1,4 +1,4 @@
-package fakedaemon
+package fakeserver
 
 import (
 	"context"
@@ -33,15 +33,15 @@ type Terminal struct {
 // WithTerminal decides what a terminal does: it runs for as long as what the
 // terminal runs would, and what it returns is the exit code the caller is
 // told. Its context ends when the caller hangs up; one that ignores that keeps
-// the terminal's handler running. A daemon without it refuses terminals, as
+// the terminal's handler running. A server without it refuses terminals, as
 // `not_implemented`.
 func WithTerminal(run func(ctx context.Context, id genv1.SandboxID, terminal *Terminal) int) Option {
-	return func(d *Daemon) { d.tty = run }
+	return func(d *Server) { d.tty = run }
 }
 
 const terminalProtocol = "runyard.terminal.v1"
 
-func (d *Daemon) openTerminal(w http.ResponseWriter, r *http.Request) {
+func (d *Server) openTerminal(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	terminal := &Terminal{Argv: query["argv"], User: query.Get("user"), Cols: 80, Rows: 24}
 	for name, size := range map[string]*int{"cols": &terminal.Cols, "rows": &terminal.Rows} {
@@ -67,7 +67,7 @@ func (d *Daemon) openTerminal(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "the sandbox is "+string(state))
 		return
 	case d.tty == nil:
-		refuse(w, http.StatusNotImplemented, genv1.ErrorCodeNotImplemented, "this fake daemon was given no WithTerminal")
+		refuse(w, http.StatusNotImplemented, genv1.ErrorCodeNotImplemented, "this fake server was given no WithTerminal")
 		return
 	case !strings.EqualFold(r.Header.Get("Upgrade"), "websocket"):
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "this route is a WebSocket: send the handshake, offering "+terminalProtocol)
@@ -150,16 +150,16 @@ func (s screen) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// hangUpTerminals closes every terminal still open, as a daemon going down
+// hangUpTerminals closes every terminal still open, as a server going down
 // does, and returns once their handlers have.
-func (d *Daemon) hangUpTerminals() {
+func (d *Server) hangUpTerminals() {
 	d.mu.Lock()
 	open := slices.Collect(maps.Keys(d.terminals))
 	d.mu.Unlock()
 	// Outside the lock: a close waits for the other end to answer it, and a
 	// handler ending takes the lock to say it has.
 	for _, conn := range open {
-		_ = conn.Close(websocket.StatusGoingAway, "the daemon is going down")
+		_ = conn.Close(websocket.StatusGoingAway, "the server is going down")
 	}
 	d.serving.Wait()
 }

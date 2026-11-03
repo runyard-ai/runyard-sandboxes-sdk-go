@@ -48,5 +48,5 @@ It checks what it shows: a site a rule allows that is not reached, or one no
 rule allows that is, fails the run rather than printing a tour that looks
 right. The sandbox is dropped in either case, and on Ctrl-C.
 
-It needs a daemon that gives sandboxes a network, which is the default, and a
+It needs a server that gives sandboxes a network, which is the default, and a
 key with `network.write`. `-image` takes any image with `curl` and a shell.

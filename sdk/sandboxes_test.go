@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 	"go.uber.org/goleak"
 )
@@ -26,9 +26,9 @@ import (
 // running once they are done fails them.
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 
-// A daemon that makes one sandbox and keeps it `creating` until the test says
+// A server that makes one sandbox and keeps it `creating` until the test says
 // it is ready — and counts how often it is asked.
-type slowDaemon struct {
+type slowServer struct {
 	id    string
 	ready chan struct{}
 	once  sync.Once
@@ -41,22 +41,22 @@ type slowDaemon struct {
 	queries atomic.Int32
 }
 
-func newSlowDaemon(t *testing.T, cut int32) (*slowDaemon, *Client) {
+func newSlowServer(t *testing.T, cut int32) (*slowServer, *Client) {
 	t.Helper()
-	d := &slowDaemon{id: "0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53", ready: make(chan struct{}), following: make(chan struct{}, 16)}
+	d := &slowServer{id: "0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53", ready: make(chan struct{}), following: make(chan struct{}, 16)}
 	d.cut.Store(cut)
 	server := httptest.NewServer(d)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, WithKey("k"), WithNamespace("default"))
+	client, err := New(server.URL, WithKey("k"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return d, client
 }
 
-func (d *slowDaemon) makeReady() { d.once.Do(func() { close(d.ready) }) }
+func (d *slowServer) makeReady() { d.once.Do(func() { close(d.ready) }) }
 
-func (d *slowDaemon) state() string {
+func (d *slowServer) state() string {
 	select {
 	case <-d.ready:
 		return "ready"
@@ -65,19 +65,19 @@ func (d *slowDaemon) state() string {
 	}
 }
 
-func (d *slowDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (d *slowServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sandbox := func(status int) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		fmt.Fprintf(w, `{"id":%q,"state":%q}`, d.id, d.state())
 	}
 	switch {
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/default/sandboxes":
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
 		sandbox(http.StatusAccepted)
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/default/sandboxes/"+d.id:
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes/"+d.id:
 		d.queries.Add(1)
 		sandbox(http.StatusOK)
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/default/sandboxes/"+d.id+"/events":
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes/"+d.id+"/events":
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		fmt.Fprintln(w, `{"seq":1,"type":"state","state":"creating","at":"2026-09-26T00:00:00Z"}`)
 		fmt.Fprintln(w, `{"seq":2,"type":"progress","message":"forking a disk","at":"2026-09-26T00:00:00Z"}`)
@@ -116,27 +116,27 @@ func create(t *testing.T, client *Client) <-chan error {
 	return done
 }
 
-// Create returns when the daemon says `ready`, and asks nothing while it
+// Create returns when the server says `ready`, and asks nothing while it
 // waits: it follows the events, and asks once they say it is time.
 func TestCreateReturnsWhenTheEventsSayReady(t *testing.T) {
-	daemon, client := newSlowDaemon(t, 0)
+	server, client := newSlowServer(t, 0)
 	done := create(t, client)
 
-	<-daemon.following
+	<-server.following
 	select {
 	case err := <-done:
 		t.Fatalf("Create returned while the sandbox was creating: %v", err)
 	default:
 	}
-	if got := daemon.queries.Load(); got != 0 {
+	if got := server.queries.Load(); got != 0 {
 		t.Fatalf("the sandbox was asked about %d times while its events were being followed", got)
 	}
 
-	daemon.makeReady()
+	server.makeReady()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := daemon.queries.Load(); got != 1 {
+	if got := server.queries.Load(); got != 1 {
 		t.Fatalf("the sandbox was asked about %d times, want once: after the events said ready", got)
 	}
 }
@@ -144,26 +144,26 @@ func TestCreateReturnsWhenTheEventsSayReady(t *testing.T) {
 // A stream that ends before the sandbox settled is followed again, and the
 // sandbox is asked once after each — never every so often in between.
 func TestCreateFollowsTheEventsAgainWhenTheyEndEarly(t *testing.T) {
-	daemon, client := newSlowDaemon(t, 2)
+	server, client := newSlowServer(t, 2)
 	done := create(t, client)
 
 	for range 3 {
-		<-daemon.following
+		<-server.following
 	}
-	daemon.makeReady()
+	server.makeReady()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := daemon.queries.Load(); got != 3 {
+	if got := server.queries.Load(); got != 3 {
 		t.Fatalf("the sandbox was asked about %d times, want once after each of the three follows", got)
 	}
 }
 
-// fake is a daemon that answers the way the contract says, and a client
+// fake is a server that answers the way the contract says, and a client
 // pointed at it with the key it wants.
-func fake(t *testing.T, opts ...fakedaemon.Option) (*fakedaemon.Daemon, *Client) {
+func fake(t *testing.T, opts ...fakeserver.Option) (*fakeserver.Server, *Client) {
 	t.Helper()
-	d := fakedaemon.New(t, append([]fakedaemon.Option{fakedaemon.WithKey("k")}, opts...)...)
+	d := fakeserver.New(t, append([]fakeserver.Option{fakeserver.WithKey("k")}, opts...)...)
 	client, err := New(d.URL+"/", WithKey("k"))
 	if err != nil {
 		t.Fatal(err)
@@ -171,8 +171,8 @@ func fake(t *testing.T, opts ...fakedaemon.Option) (*fakedaemon.Daemon, *Client)
 	return d, client
 }
 
-func holding(genv1.SandboxSpec) fakedaemon.Outcome {
-	return fakedaemon.Outcome{State: genv1.SandboxStateCreating}
+func holding(genv1.SandboxSpec) fakeserver.Outcome {
+	return fakeserver.Outcome{State: genv1.SandboxStateCreating}
 }
 
 type createResult struct {
@@ -203,7 +203,7 @@ func within(t *testing.T, done <-chan createResult) createResult {
 	}
 }
 
-func TestNewRefusesAnAddressThatIsNotADaemons(t *testing.T) {
+func TestNewRefusesAnAddressThatIsNotAServers(t *testing.T) {
 	for _, address := range []string{"", "127.0.0.1:8099", "localhost", "ftp://host", "http://", "http://%zz", "unix:///run/sock"} {
 		if client, err := New(address); err == nil || client != nil {
 			t.Errorf("New(%q) = %v, %v; want a refusal", address, client, err)
@@ -229,9 +229,9 @@ func TestInfoSaysWhatTheHostIs(t *testing.T) {
 	}
 }
 
-// The shared brokers are the namespace's, read from its own path.
-func TestBrokersAreTheNamespaces(t *testing.T) {
-	_, client := fake(t, fakedaemon.WithBrokers("claude", "github"))
+// The shared brokers are what the server declares.
+func TestBrokersAreWhatTheServerDeclares(t *testing.T) {
+	_, client := fake(t, fakeserver.WithBrokers("claude", "github"))
 	declared, err := client.Brokers(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestBrokersAreTheNamespaces(t *testing.T) {
 	}
 }
 
-// A daemon that wants a key says so in the contract's words when it is not
+// A server that wants a key says so in the contract's words when it is not
 // given one.
 func TestAMissingKeyIsRefusedWithTheContractsCode(t *testing.T) {
 	d, _ := fake(t)
@@ -279,14 +279,13 @@ func TestWithHTTPClientIsTheTransportEveryCallUses(t *testing.T) {
 	if _, err := client.List(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The info, the list, and who the key is, which the list needed first.
-	if got := transport.calls.Load(); got != 3 {
-		t.Fatalf("the caller's transport carried %d requests, want 3", got)
+	if got := transport.calls.Load(); got != 2 {
+		t.Fatalf("the caller's transport carried %d requests, want 2", got)
 	}
 }
 
 func TestCreateReturnsAReadyHandleWithItsNameBrokersAndIdentity(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithBrokers("claude"))
+	d, client := fake(t, fakeserver.WithBrokers("claude"))
 	labels := map[string]string{"team": "infra", "name": "overwritten"}
 	sandbox, err := client.Create(context.Background(), "hello-one", Spec{
 		Image:   "alpine:3.20",
@@ -308,7 +307,7 @@ func TestCreateReturnsAReadyHandleWithItsNameBrokersAndIdentity(t *testing.T) {
 	}
 	made := d.Sandboxes()[0]
 	if got := *made.Labels; got["name"] != "hello-one" || got["team"] != "infra" {
-		t.Fatalf("the daemon was sent labels %v", got)
+		t.Fatalf("the server was sent labels %v", got)
 	}
 	// The caller's map is the caller's: Create adds the name to a copy.
 	if labels["name"] != "overwritten" || len(labels) != 2 {
@@ -327,11 +326,11 @@ func TestCreateWithNoNameSetsNoLabel(t *testing.T) {
 	}
 }
 
-// The daemon made the machine and the answer was lost. The retry carries the
+// The server made the machine and the answer was lost. The retry carries the
 // same key, and gets that machine back rather than a second one.
 func TestARetriedCreateCarriesOneKeyAndMakesOneMachine(t *testing.T) {
 	d, client := fake(t)
-	d.Intercept("createSandbox", fakedaemon.HangUpAfter())
+	d.Intercept("createSandbox", fakeserver.HangUpAfter())
 	sandbox, err := client.Create(context.Background(), "once", Spec{Image: "alpine"})
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +339,7 @@ func TestARetriedCreateCarriesOneKeyAndMakesOneMachine(t *testing.T) {
 		t.Fatalf("%d sandboxes were made, want 1", got)
 	}
 	if sandbox.ID != d.Sandboxes()[0].Id {
-		t.Fatalf("Create returned %s, and the daemon made %s", sandbox.ID, d.Sandboxes()[0].Id)
+		t.Fatalf("Create returned %s, and the server made %s", sandbox.ID, d.Sandboxes()[0].Id)
 	}
 	keys := d.IdempotencyKeys()
 	if len(keys) < 2 {
@@ -353,11 +352,11 @@ func TestARetriedCreateCarriesOneKeyAndMakesOneMachine(t *testing.T) {
 	}
 }
 
-// A daemon that never answers is not asked forever, and every attempt is the
+// A server that never answers is not asked forever, and every attempt is the
 // same create.
-func TestCreateGivesUpOnADaemonThatNeverAnswers(t *testing.T) {
+func TestCreateGivesUpOnAServerThatNeverAnswers(t *testing.T) {
 	d, client := fake(t)
-	d.InterceptAll("createSandbox", fakedaemon.HangUp())
+	d.InterceptAll("createSandbox", fakeserver.HangUp())
 	sandbox, err := client.Create(context.Background(), "", Spec{Image: "alpine"})
 	if err == nil || sandbox != nil {
 		t.Fatalf("Create = %v, %v; want an error and no handle", sandbox, err)
@@ -367,7 +366,7 @@ func TestCreateGivesUpOnADaemonThatNeverAnswers(t *testing.T) {
 	if calls := d.Calls("createSandbox"); calls < createAttempts || calls > 2*createAttempts {
 		t.Fatalf("the create was attempted %d times, want %d", calls, createAttempts)
 	}
-	// The interceptor answered before the daemon read the header, so the
+	// The interceptor answered before the server read the header, so the
 	// keys are the transport's to prove: every request is the same create.
 	if len(d.Sandboxes()) != 0 {
 		t.Fatal("a create nobody answered made a machine")
@@ -380,7 +379,7 @@ func TestACancelledCreateStopsRetrying(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.InterceptAll("createSandbox", func(w http.ResponseWriter, r *http.Request, _ http.HandlerFunc) {
 		cancel()
-		fakedaemon.HangUp()(w, r, nil)
+		fakeserver.HangUp()(w, r, nil)
 	})
 	got := within(t, createAsync(ctx, t, client, Spec{Image: "alpine"}))
 	if got.err == nil || got.sandbox != nil {
@@ -392,7 +391,7 @@ func TestACancelledCreateStopsRetrying(t *testing.T) {
 }
 
 // A refusal is an answer, and answers are not retried: a second attempt at a
-// create the daemon refused would be refused the same way.
+// create the server refused would be refused the same way.
 func TestARefusedCreateIsNotRetriedAndSaysWhy(t *testing.T) {
 	d, client := fake(t)
 	d.PutVolume("busy", 0)
@@ -414,7 +413,7 @@ func TestARefusedCreateIsNotRetriedAndSaysWhy(t *testing.T) {
 // the machine the first one had been answered about.
 func TestACreateAnsweredWithGarbageIsAnError(t *testing.T) {
 	d, client := fake(t)
-	d.Intercept("createSandbox", fakedaemon.Answer(202, "application/json", "{not json"))
+	d.Intercept("createSandbox", fakeserver.Answer(202, "application/json", "{not json"))
 	sandbox, err := client.Create(context.Background(), "", Spec{Image: "alpine"})
 	if err == nil || sandbox != nil || !strings.Contains(err.Error(), "answered 202 with a body that does not parse") {
 		t.Fatalf("Create = %v, %v", sandbox, err)
@@ -424,11 +423,11 @@ func TestACreateAnsweredWithGarbageIsAnError(t *testing.T) {
 	}
 }
 
-// A sandbox that fails says why in the daemon's own sentence, and the handle
+// A sandbox that fails says why in the server's own sentence, and the handle
 // comes back with the error so the caller can drop what failed.
 func TestAFailedCreateSaysWhyAndCanBeDropped(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked mounting its root filesystem"}
+	d, client := fake(t, fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+		return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked mounting its root filesystem"}
 	}))
 	sandbox, err := client.Create(context.Background(), "doomed", Spec{Image: "alpine"})
 	if err == nil || err.Error() != "the kernel panicked mounting its root filesystem" {
@@ -446,8 +445,8 @@ func TestAFailedCreateSaysWhyAndCanBeDropped(t *testing.T) {
 }
 
 func TestAFailedCreateWithNoSentenceStillSaysItFailed(t *testing.T) {
-	_, client := fake(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{State: genv1.SandboxStateFailed}
+	_, client := fake(t, fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+		return fakeserver.Outcome{State: genv1.SandboxStateFailed}
 	}))
 	if _, err := client.Create(context.Background(), "", Spec{Image: "alpine"}); err == nil || err.Error() != "the sandbox failed" {
 		t.Fatalf("err = %v", err)
@@ -460,7 +459,7 @@ func TestAFailedCreateWithNoSentenceStillSaysItFailed(t *testing.T) {
 func TestCreateReturnsAtOnceWhenTheSandboxWillNeverBeReady(t *testing.T) {
 	for _, state := range []genv1.SandboxState{genv1.SandboxStateGone, genv1.SandboxStateStopped, genv1.SandboxStatePaused} {
 		t.Run(string(state), func(t *testing.T) {
-			d, client := fake(t, fakedaemon.WithBoot(holding))
+			d, client := fake(t, fakeserver.WithBoot(holding))
 			done := createAsync(t.Context(), t, client, Spec{Image: "alpine"})
 			id := <-d.Created()
 			d.Settle(id, state, "")
@@ -475,10 +474,10 @@ func TestCreateReturnsAtOnceWhenTheSandboxWillNeverBeReady(t *testing.T) {
 	}
 }
 
-// Ctrl-C while the machine boots. The daemon is making it regardless, so the
+// Ctrl-C while the machine boots. The server is making it regardless, so the
 // handle comes back — it used to be nil, and the machine was nobody's to drop.
 func TestACreateCancelledWhileWaitingReturnsWhatToDrop(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithBoot(holding))
+	d, client := fake(t, fakeserver.WithBoot(holding))
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancelled once the caller follows the events, which is after it has the
 	// 202: before that, it has no id to hand back.
@@ -507,7 +506,7 @@ func TestACreateCancelledWhileWaitingReturnsWhatToDrop(t *testing.T) {
 }
 
 func TestCreateGivesUpAfterWaitTimeoutAndSaysWhatItWasStill(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithBoot(holding))
+	d, client := fake(t, fakeserver.WithBoot(holding))
 	client.WaitTimeout = 50 * time.Millisecond
 	sandbox, err := client.Create(context.Background(), "", Spec{Image: "alpine"})
 	if err == nil || !strings.Contains(err.Error(), "still creating after 50ms") {
@@ -525,16 +524,16 @@ func TestTheDefaultWaitIsThreeMinutes(t *testing.T) {
 }
 
 // A stream that ends before it says anything settled — a proxy cutting it, a
-// daemon restarting — is not an answer: the sandbox is asked instead.
+// server restarting — is not an answer: the sandbox is asked instead.
 func TestCreateFallsBackToAskingWhenTheEventsStopShort(t *testing.T) {
-	for name, intercept := range map[string]fakedaemon.Interceptor{
-		"ends":    fakedaemon.Answer(200, "application/x-ndjson", `{"seq":1,"type":"state","state":"creating","at":"2026-09-26T00:00:00Z"}`+"\n"),
-		"garbage": fakedaemon.Answer(200, "application/x-ndjson", "{this is not an event\n"),
-		"refused": fakedaemon.Refuse(404, genv1.ErrorCodeNotFound, "no"),
-		"hung up": fakedaemon.HangUp(),
+	for name, intercept := range map[string]fakeserver.Interceptor{
+		"ends":    fakeserver.Answer(200, "application/x-ndjson", `{"seq":1,"type":"state","state":"creating","at":"2026-09-26T00:00:00Z"}`+"\n"),
+		"garbage": fakeserver.Answer(200, "application/x-ndjson", "{this is not an event\n"),
+		"refused": fakeserver.Refuse(404, genv1.ErrorCodeNotFound, "no"),
+		"hung up": fakeserver.HangUp(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			d, client := fake(t, fakedaemon.WithBoot(holding))
+			d, client := fake(t, fakeserver.WithBoot(holding))
 			d.InterceptAll("streamSandboxEvents", intercept)
 			done := createAsync(t.Context(), t, client, Spec{Image: "alpine"})
 			id := <-d.Created()
@@ -548,10 +547,10 @@ func TestCreateFallsBackToAskingWhenTheEventsStopShort(t *testing.T) {
 
 // The question that decides can itself fail; the handle still comes back.
 func TestCreateSaysSoWhenTheSandboxCannotBeAskedAbout(t *testing.T) {
-	for name, intercept := range map[string]fakedaemon.Interceptor{
-		"refused": fakedaemon.Refuse(500, genv1.ErrorCodeInternal, "the state file is unreadable"),
-		"garbage": fakedaemon.Answer(200, "application/json", "[]"),
-		"hung up": fakedaemon.HangUp(),
+	for name, intercept := range map[string]fakeserver.Interceptor{
+		"refused": fakeserver.Refuse(500, genv1.ErrorCodeInternal, "the state file is unreadable"),
+		"garbage": fakeserver.Answer(200, "application/json", "[]"),
+		"hung up": fakeserver.HangUp(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, client := fake(t)
@@ -617,7 +616,7 @@ func TestOpenAndListSeeWhatIsThere(t *testing.T) {
 	if _, err := client.Open(context.Background(), uuid.New()); CodeOf(err) != "not_found" {
 		t.Fatalf("Open of a sandbox that is not there = %v", err)
 	}
-	d.Intercept("listSandboxes", fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no sandboxes.read"))
+	d.Intercept("listSandboxes", fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no sandboxes.read"))
 	if _, err := client.List(context.Background()); CodeOf(err) != "forbidden" {
 		t.Fatalf("a refused List = %v", err)
 	}
@@ -634,7 +633,7 @@ func ready(t *testing.T, client *Client) *Sandbox {
 
 // A non-zero exit is an answer, not an error: the exchange worked.
 func TestRunReturnsWhatTheCommandDidIncludingFailing(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithRun(func(_ context.Context, _ genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
+	d, client := fake(t, fakeserver.WithRun(func(_ context.Context, _ genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult {
 		return genv1.CommandResult{ExitCode: 2, Stdout: "out:" + request.Argv[0], Stderr: "err", Truncated: true, DurationMs: 12}
 	}))
 	sandbox := ready(t, client)
@@ -657,7 +656,7 @@ func TestRunReturnsWhatTheCommandDidIncludingFailing(t *testing.T) {
 	}
 }
 
-func TestRunIsRefusedInTheDaemonsWords(t *testing.T) {
+func TestRunIsRefusedInTheServersWords(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	if _, err := sandbox.Run(context.Background()); CodeOf(err) != "bad_request" {
@@ -679,7 +678,7 @@ func TestFilesGoInAndComeOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body, mode, ok := d.File(sandbox.ID, "/work/a.txt"); !ok || string(body) != "hello" || mode != "0600" {
-		t.Fatalf("the daemon holds %q mode %q (%v)", body, mode, ok)
+		t.Fatalf("the server holds %q mode %q (%v)", body, mode, ok)
 	}
 	if body, mode, ok := d.File(sandbox.ID, "/work/empty"); !ok || len(body) != 0 || mode != "" {
 		t.Fatalf("an empty file with no mode arrived as %q mode %q (%v)", body, mode, ok)
@@ -697,7 +696,7 @@ func TestFilesGoInAndComeOut(t *testing.T) {
 }
 
 // Close takes the disk with it and Release keeps it; that is the whole
-// difference, and it is in the parameter the daemon receives.
+// difference, and it is in the parameter the server receives.
 func TestCloseDeletesTheDiskAndReleaseKeepsIt(t *testing.T) {
 	d, client := fake(t)
 	closed, released := ready(t, client), ready(t, client)
@@ -708,8 +707,8 @@ func TestCloseDeletesTheDiskAndReleaseKeepsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	deletes := d.Deletes()
-	if len(deletes) != 2 || deletes[0] != (fakedaemon.Delete{ID: closed.ID, Disk: "delete"}) || deletes[1] != (fakedaemon.Delete{ID: released.ID, Disk: "keep"}) {
-		t.Fatalf("the daemon was asked %+v", deletes)
+	if len(deletes) != 2 || deletes[0] != (fakeserver.Delete{ID: closed.ID, Disk: "delete"}) || deletes[1] != (fakeserver.Delete{ID: released.ID, Disk: "keep"}) {
+		t.Fatalf("the server was asked %+v", deletes)
 	}
 	// A deferred Close after an explicit one says what happened rather than
 	// pretending it dropped something.
@@ -738,15 +737,15 @@ func TestVolumesAreListedAndLetGo(t *testing.T) {
 	if err := client.DeleteVolume(context.Background(), "never-was"); err != nil {
 		t.Fatalf("deleting a volume that is not there = %v, want success", err)
 	}
-	d.Intercept("listVolumes", fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no"))
+	d.Intercept("listVolumes", fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no"))
 	if _, err := client.Volumes(context.Background()); CodeOf(err) != "forbidden" {
 		t.Fatalf("a refused Volumes = %v", err)
 	}
 }
 
 func TestConsoleIsWhatTheGuestWrote(t *testing.T) {
-	_, client := fake(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-		return fakedaemon.Outcome{Console: "[    0.000000] Linux version 6.12\n"}
+	_, client := fake(t, fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+		return fakeserver.Outcome{Console: "[    0.000000] Linux version 6.12\n"}
 	}))
 	sandbox := ready(t, client)
 	if got, err := sandbox.Console(context.Background()); err != nil || got != "[    0.000000] Linux version 6.12\n" {
@@ -768,18 +767,18 @@ func TestConsoleOfASandboxThatIsGoneIsAnError(t *testing.T) {
 	}
 }
 
-// Something between the caller and the daemon — a proxy, a load balancer —
+// Something between the caller and the server — a proxy, a load balancer —
 // answers in its own shape, and what it said is the only diagnosis there is.
 // Error() used to drop it and say only the status.
 func TestAnErrorThatIsNotTheContractsShapeKeepsWhatItSaid(t *testing.T) {
 	for name, tc := range map[string]struct {
-		intercept fakedaemon.Interceptor
+		intercept fakeserver.Interceptor
 		want      string
 	}{
-		"html page":         {fakedaemon.Answer(502, "text/html", "<h1>502 Bad Gateway</h1>\n"), "runyard-sandboxes: HTTP 502: <h1>502 Bad Gateway</h1>"},
-		"json without code": {fakedaemon.Answer(500, "application/json", `{"message":"boom"}`), `runyard-sandboxes: HTTP 500: {"message":"boom"}`},
-		"empty":             {fakedaemon.Answer(503, "", ""), "runyard-sandboxes: HTTP 503"},
-		"the contract's":    {fakedaemon.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight"), "runyard-sandboxes: capacity_exceeded: eight of eight"},
+		"html page":         {fakeserver.Answer(502, "text/html", "<h1>502 Bad Gateway</h1>\n"), "runyard-sandboxes: HTTP 502: <h1>502 Bad Gateway</h1>"},
+		"json without code": {fakeserver.Answer(500, "application/json", `{"message":"boom"}`), `runyard-sandboxes: HTTP 500: {"message":"boom"}`},
+		"empty":             {fakeserver.Answer(503, "", ""), "runyard-sandboxes: HTTP 503"},
+		"the contract's":    {fakeserver.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight"), "runyard-sandboxes: capacity_exceeded: eight of eight"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, client := fake(t)
@@ -805,13 +804,13 @@ func TestCodeOfFindsTheCodeThroughWrapping(t *testing.T) {
 	}
 }
 
-// Every call says so when the daemon hangs up, rather than returning a zero
+// Every call says so when the server hangs up, rather than returning a zero
 // value that looks like an answer.
-func TestEveryCallFailsWhenTheDaemonHangsUp(t *testing.T) {
+func TestEveryCallFailsWhenTheServerHangsUp(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	for _, op := range []string{"getInfo", "getSandbox", "listSandboxes", "runCommand", "writeFile", "readFile", "deleteSandbox", "listVolumes", "deleteVolume", "getSandboxConsole"} {
-		d.InterceptAll(op, fakedaemon.HangUp())
+		d.InterceptAll(op, fakeserver.HangUp())
 	}
 	ctx := context.Background()
 	for name, call := range map[string]func() error{
@@ -827,7 +826,7 @@ func TestEveryCallFailsWhenTheDaemonHangsUp(t *testing.T) {
 		"Console":      func() error { _, err := sandbox.Console(ctx); return err },
 	} {
 		if err := call(); err == nil {
-			t.Errorf("%s succeeded against a daemon that hung up", name)
+			t.Errorf("%s succeeded against a server that hung up", name)
 		}
 	}
 }
@@ -838,7 +837,7 @@ func TestAnAnswerThatDoesNotDecodeIsAnError(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	for _, op := range []string{"getInfo", "getSandbox", "listSandboxes", "runCommand", "listVolumes"} {
-		d.InterceptAll(op, fakedaemon.Answer(200, "application/json", "{"))
+		d.InterceptAll(op, fakeserver.Answer(200, "application/json", "{"))
 	}
 	ctx := context.Background()
 	if _, err := client.Info(ctx); err == nil {
@@ -859,16 +858,16 @@ func TestAnAnswerThatDoesNotDecodeIsAnError(t *testing.T) {
 }
 
 // A success status whose body is not the JSON the contract declares leaves
-// the generated response with no typed field filled in. That is a daemon — or
+// the generated response with no typed field filled in. That is a server — or
 // something in front of one — answering outside the contract, and it is an
 // error that says so rather than a zero-valued struct that reads as an answer.
 func TestASuccessTheContractDoesNotDescribeIsAnError(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	for _, op := range []string{"getInfo", "getSandbox", "listSandboxes", "runCommand", "listVolumes"} {
-		d.InterceptAll(op, fakedaemon.Answer(200, "text/html", "<h1>welcome</h1>"))
+		d.InterceptAll(op, fakeserver.Answer(200, "text/html", "<h1>welcome</h1>"))
 	}
-	d.InterceptAll("createSandbox", fakedaemon.Answer(202, "text/plain", "accepted"))
+	d.InterceptAll("createSandbox", fakeserver.Answer(202, "text/plain", "accepted"))
 	ctx := context.Background()
 	for name, call := range map[string]func() error{
 		"Info":    func() error { _, err := client.Info(ctx); return err },
@@ -893,10 +892,10 @@ func TestAnOperationAnsweredWithTheWrongSuccessIsAnError(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	for _, op := range []string{"writeFile", "deleteSandbox", "deleteVolume"} {
-		d.InterceptAll(op, fakedaemon.Answer(200, "application/json", "{}"))
+		d.InterceptAll(op, fakeserver.Answer(200, "application/json", "{}"))
 	}
-	d.InterceptAll("readFile", fakedaemon.Answer(204, "", ""))
-	d.InterceptAll("getSandboxConsole", fakedaemon.Answer(202, "text/plain", "later"))
+	d.InterceptAll("readFile", fakeserver.Answer(204, "", ""))
+	d.InterceptAll("getSandboxConsole", fakeserver.Answer(202, "text/plain", "later"))
 	ctx := context.Background()
 	for name, call := range map[string]func() error{
 		"WriteFile":    func() error { return sandbox.WriteFile(ctx, "/a", []byte("x"), "") },
@@ -917,7 +916,7 @@ func TestAnOperationAnsweredWithTheWrongSuccessIsAnError(t *testing.T) {
 // proxy is not an error message anybody reads to the end.
 func TestARefusalIsQuotedUpToAMebibyte(t *testing.T) {
 	d, client := fake(t)
-	d.Intercept("getInfo", fakedaemon.Answer(500, "text/plain", strings.Repeat("x", 3<<20)))
+	d.Intercept("getInfo", fakeserver.Answer(500, "text/plain", strings.Repeat("x", 3<<20)))
 	_, err := client.Info(context.Background())
 	var refusal *Error
 	if !errors.As(err, &refusal) || refusal.Status != 500 || len(refusal.Message) != 1<<20 {
@@ -925,15 +924,15 @@ func TestARefusalIsQuotedUpToAMebibyte(t *testing.T) {
 	}
 }
 
-// API is the generated client on the same daemon, with the same key: an
+// API is the generated client on the same server, with the same key: an
 // operation this package does not wrap is one call away, not a second client
 // to configure.
-func TestAPIIsTheGeneratedClientOnTheSameDaemonAndKey(t *testing.T) {
+func TestAPIIsTheGeneratedClientOnTheSameServerAndKey(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	ctx := context.Background()
 
-	got, err := client.API().GetSandboxWithResponse(ctx, fakedaemon.DefaultNamespace, sandbox.ID)
+	got, err := client.API().GetSandboxWithResponse(ctx, sandbox.ID)
 	if err != nil || got.JSON200 == nil || got.JSON200.Id != sandbox.ID {
 		t.Fatalf("GetSandbox through API() = %v %d %s", err, got.StatusCode(), got.Body)
 	}
@@ -950,8 +949,8 @@ func TestAPIIsTheGeneratedClientOnTheSameDaemonAndKey(t *testing.T) {
 // methods the typed client embeds — which is what its doc comment promises
 // and what a `…WithResponse` method, reading to the end first, could not do.
 func TestAFollowedStreamThroughAPIIsNotBuffered(t *testing.T) {
-	d, client := fake(t, fakedaemon.WithBoot(holding))
-	created, err := client.API().CreateSandboxWithResponse(context.Background(), fakedaemon.DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "k"}, Spec{Image: "alpine"})
+	d, client := fake(t, fakeserver.WithBoot(holding))
+	created, err := client.API().CreateSandboxWithResponse(context.Background(), &genv1.CreateSandboxParams{IdempotencyKey: "k"}, Spec{Image: "alpine"})
 	if err != nil || created.JSON202 == nil {
 		t.Fatalf("create = %v", err)
 	}
@@ -960,7 +959,7 @@ func TestAFollowedStreamThroughAPIIsNotBuffered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	follow := genv1.FollowQuery(true)
-	res, err := client.API().StreamSandboxEvents(ctx, fakedaemon.DefaultNamespace, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
+	res, err := client.API().StreamSandboxEvents(ctx, id, &genv1.StreamSandboxEventsParams{Follow: &follow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1002,14 +1001,14 @@ func TestARuleIsPutAndDeletedByItsName(t *testing.T) {
 	}
 	rules := d.Rules(sandbox.ID)
 	if len(rules) != 2 || rules[0].Name != "ifconfig" || (*rules[0].Ports)[0] != "tcp/22" || rules[1].Name != "mirror" {
-		t.Fatalf("the daemon has %+v", rules)
+		t.Fatalf("the server has %+v", rules)
 	}
 
 	if err := sandbox.DeleteRule(ctx, "ifconfig"); err != nil {
 		t.Fatal(err)
 	}
 	if rules := d.Rules(sandbox.ID); len(rules) != 1 || rules[0].Name != "mirror" {
-		t.Fatalf("after deleting one, the daemon has %+v", rules)
+		t.Fatalf("after deleting one, the server has %+v", rules)
 	}
 	if err := sandbox.DeleteRule(ctx, "ifconfig"); CodeOf(err) != "not_found" {
 		t.Fatalf("deleting it again = %v", err)
@@ -1038,7 +1037,7 @@ func TestARuleIsPausedAndResumedByItsName(t *testing.T) {
 	}
 	rules := d.Rules(sandbox.ID)
 	if len(rules) != 2 || rules[0].Name != "github-ssh" || rules[0].Paused == nil || rules[1].Paused != nil {
-		t.Fatalf("the daemon has %+v", rules)
+		t.Fatalf("the server has %+v", rules)
 	}
 	for range 2 {
 		resumed, err := sandbox.ResumeRule(ctx, "github-ssh")
@@ -1076,7 +1075,7 @@ func TestARuleIsPausedAndResumedByItsName(t *testing.T) {
 	}
 }
 
-func TestARuleIsRefusedInTheDaemonsWords(t *testing.T) {
+func TestARuleIsRefusedInTheServersWords(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	ctx := context.Background()
@@ -1093,7 +1092,7 @@ func TestARuleIsRefusedInTheDaemonsWords(t *testing.T) {
 	}
 	// An answer outside the contract is said to be, rather than read as a
 	// rule that was added.
-	d.Intercept("putEgressRule", fakedaemon.Answer(http.StatusOK, "text/html", "<html>proxy</html>"))
+	d.Intercept("putEgressRule", fakeserver.Answer(http.StatusOK, "text/html", "<html>proxy</html>"))
 	if _, err := sandbox.PutRule(ctx, "a", Rule{Domains: &domains}); err == nil || !strings.Contains(err.Error(), "does not describe") {
 		t.Fatalf("a body the contract does not describe = %v", err)
 	}
@@ -1172,7 +1171,7 @@ func TestConnectionsAreKilledByWhatIsNamed(t *testing.T) {
 }
 
 // A transport that fails is the error, for each of them.
-func TestRuleCallsThatNeverReachTheDaemonSaySo(t *testing.T) {
+func TestRuleCallsThatNeverReachTheServerSaySo(t *testing.T) {
 	_, client := fake(t)
 	sandbox := ready(t, client)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1300,7 +1299,7 @@ func TestATunnelIsPublishedPausedTokenedAndTakenAwayByItsName(t *testing.T) {
 	}
 }
 
-func TestATunnelRefusedByTheDaemonIsTheDaemonsWords(t *testing.T) {
+func TestATunnelRefusedByTheServerIsTheServersWords(t *testing.T) {
 	_, client := fake(t)
 	sandbox := ready(t, client)
 	ctx := context.Background()
@@ -1334,7 +1333,7 @@ func TestATunnelRefusedByTheDaemonIsTheDaemonsWords(t *testing.T) {
 	}
 }
 
-func TestTunnelCallsThatNeverReachTheDaemonSaySo(t *testing.T) {
+func TestTunnelCallsThatNeverReachTheServerSaySo(t *testing.T) {
 	_, client := fake(t)
 	sandbox := ready(t, client)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1363,11 +1362,11 @@ func TestTunnelCallsThatNeverReachTheDaemonSaySo(t *testing.T) {
 	}
 }
 
-func TestATunnelsGuestsWhileTheGatewayIsAwayAreTheDaemonsWords(t *testing.T) {
+func TestATunnelsGuestsWhileTheGatewayIsAwayAreTheServersWords(t *testing.T) {
 	d, client := fake(t)
 	sandbox := ready(t, client)
 	ctx := context.Background()
-	away := fakedaemon.Refuse(http.StatusServiceUnavailable, genv1.ErrorCodeUpstreamError, "the gateway is not answering")
+	away := fakeserver.Refuse(http.StatusServiceUnavailable, genv1.ErrorCodeUpstreamError, "the gateway is not answering")
 	d.Intercept("listTunnelGuests", away)
 	d.Intercept("revokeTunnelGuest", away)
 	if _, err := sandbox.TunnelGuests(ctx, "web"); CodeOf(err) != "upstream_error" || !strings.Contains(err.Error(), "gateway") {
@@ -1400,9 +1399,9 @@ func TestATunnelsShareButtonIsPutAndReadBack(t *testing.T) {
 	}
 }
 
-func TestTheHostsTunnelsRefusedAreTheDaemonsWords(t *testing.T) {
+func TestTheHostsTunnelsRefusedAreTheServersWords(t *testing.T) {
 	d, client := fake(t)
-	d.Intercept("listHostTunnels", fakedaemon.Refuse(http.StatusForbidden, genv1.ErrorCodeForbidden, "no scope"))
+	d.Intercept("listHostTunnels", fakeserver.Refuse(http.StatusForbidden, genv1.ErrorCodeForbidden, "no scope"))
 	if _, err := client.HostTunnels(context.Background()); CodeOf(err) != "forbidden" {
 		t.Errorf("HostTunnels = %v", err)
 	}

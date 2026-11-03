@@ -9,8 +9,8 @@ import (
 // cannot say when it is worth trying again: first, then twice as long each
 // time, up to most.
 //
-// Its own, rather than the daemon's: the SDK is a module that requires nothing
-// of the daemon's code, and is imported by programs that are not the daemon.
+// Its own, rather than the server's: the SDK is a module that requires nothing
+// of the server's code, and is imported by programs that are not the server.
 type backoff struct {
 	first, most time.Duration
 

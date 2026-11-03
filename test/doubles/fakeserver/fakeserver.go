@@ -1,23 +1,23 @@
-// Package fakedaemon is a runyard-sandboxes daemon made of maps: the WIRE of
+// Package fakeserver is a runyard-sandboxes server made of maps: the WIRE of
 // the real one, answering the way openapi/sandboxes.yaml says, with no
 // hypervisor behind it.
 //
-// It is the double for everything that talks to a daemon through the SDK — the
+// It is the double for everything that talks to a server through the SDK — the
 // SDK itself and the example programs — so that each of them is tested against
 // HTTP exchanges rather than against an interface invented for the purpose.
-// The daemon's repository holds it to the contract with the same harness that
-// holds the real daemon to it, so a shape it gets wrong is a failing test there
+// The server's repository holds it to the contract with the same harness that
+// holds the real server to it, so a shape it gets wrong is a failing test there
 // rather than a false pass everywhere it is used. Its behaviour is tested here,
 // beside it.
 //
-// A test is whatever the daemon would have behind it: Settle is the machine
+// A test is whatever the server would have behind it: Settle is the machine
 // booting, DialBroker the workload connecting to a broker the code under
 // test serves.
 //
 // It is in the SDK's module so that the SDK's tests can use it — and so that a
-// program built on the SDK can test against it too, without a daemon. Import
+// program built on the SDK can test against it too, without a server. Import
 // it from tests only: it is a double, not a server.
-package fakedaemon
+package fakeserver
 
 import (
 	"bytes"
@@ -30,7 +30,6 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,34 +47,33 @@ import (
 // calls Settle, which is how a test holds a create in the middle.
 type Outcome struct {
 	State genv1.SandboxState
-	// Error is the daemon's sentence for a `failed` one.
+	// Error is the server's sentence for a `failed` one.
 	Error string
 	// Console is what its serial port says.
 	Console string
 }
 
-// Interceptor answers an operation in place of the daemon, once. serve is the
-// daemon's own handler, for an interceptor that wants the operation to happen
+// Interceptor answers an operation in place of the server, once. serve is the
+// server's own handler, for an interceptor that wants the operation to happen
 // and the answer to go astray.
 type Interceptor func(w http.ResponseWriter, r *http.Request, serve http.HandlerFunc)
 
-// Delete is one DELETE of a sandbox, as the daemon received it.
+// Delete is one DELETE of a sandbox, as the server received it.
 type Delete struct {
 	ID   genv1.SandboxID
 	Disk string
 }
 
-// Option configures a daemon.
-type Option func(*Daemon)
+// Option configures a server.
+type Option func(*Server)
 
 // WithKey makes every request carry `Authorization: Bearer key`, as a real
-// daemon does, and answers 401 to one that does not.
-func WithKey(key string) Option { return func(d *Daemon) { d.key = key } }
+// server does, and answers 401 to one that does not.
+func WithKey(key string) Option { return func(d *Server) { d.key = key } }
 
-// WithBrokers declares shared brokers, by name, in every namespace the double
-// has: what is told apart is which broker a sandbox is given, not whose.
+// WithBrokers declares shared brokers, by name.
 func WithBrokers(names ...string) Option {
-	return func(d *Daemon) {
+	return func(d *Server) {
 		for _, name := range names {
 			d.brokers = append(d.brokers, genv1.Broker{Name: name, Url: "https://" + name + ".invalid:8443/"})
 		}
@@ -84,26 +82,26 @@ func WithBrokers(names ...string) Option {
 
 // WithBoot decides what each created sandbox becomes.
 func WithBoot(boot func(genv1.SandboxSpec) Outcome) Option {
-	return func(d *Daemon) { d.boot = boot }
+	return func(d *Server) { d.boot = boot }
 }
 
 // WithRun decides what a command does. The context is the request's, so a
 // command that blocks on it ends when the caller gives up.
 func WithRun(run func(ctx context.Context, id genv1.SandboxID, request genv1.CommandRequest) genv1.CommandResult) Option {
-	return func(d *Daemon) { d.run = run }
+	return func(d *Server) { d.run = run }
 }
 
 // WithNetwork is a host that gives sandboxes an interface, as `-network`
 // does, and says so in its info.
-func WithNetwork() Option { return func(d *Daemon) { d.network = true } }
+func WithNetwork() Option { return func(d *Server) { d.network = true } }
 
 // WithClock is the time it goes by — when a tunnel expires, what a record
 // says it was made at — for a test about time that moves it rather than
 // waiting for it to pass.
-func WithClock(now func() time.Time) Option { return func(d *Daemon) { d.now = now } }
+func WithClock(now func() time.Time) Option { return func(d *Server) { d.now = now } }
 
-// Daemon is the fake. Its methods are safe to call while requests are served.
-type Daemon struct {
+// Server is the fake. Its methods are safe to call while requests are served.
+type Server struct {
 	// URL is where it listens.
 	URL string
 
@@ -113,16 +111,12 @@ type Daemon struct {
 	run     func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult
 	tty     func(context.Context, genv1.SandboxID, *Terminal) int
 	network bool
-	// namespaces are the daemon's; the first is its keys' (WithNamespaces).
-	namespaces []string
-	// global is a daemon whose keys are bound to no namespace.
-	global bool
 	// brokerKeepAlive is how often a caller serving a broker is asked whether
 	// it is still there.
 	brokerKeepAlive time.Duration
 	now             func() time.Time
 	created         chan genv1.SandboxID
-	// costRates price what each namespace holds (WithCostRates).
+	// costRates price what the server holds (WithCostRates).
 	costRates genv1.CostRates
 	// trusted is each shared broker's trusted plane (WithTrustedPlane).
 	trusted map[string]TrustedPlane
@@ -130,15 +124,15 @@ type Daemon struct {
 	mu        sync.Mutex
 	sandboxes map[genv1.SandboxID]*sandbox
 	order     []genv1.SandboxID
-	volumes   map[volumeKey]*volume
-	// principals is each namespace's, by namespace and id.
-	principals map[volumeKey]*genv1.Principal
+	volumes   map[string]*volume
+	// principals is every principal, by id.
+	principals map[string]*genv1.Principal
 	// retired is every id a deleted principal had, which is never made again.
-	retired map[volumeKey]bool
-	// images is each namespace's cache, by namespace and id (PutImage).
-	images map[volumeKey]*genv1.Image
-	// idempotent is what each create's key made, by namespace and key.
-	idempotent   map[[2]string]idempotent
+	retired map[string]bool
+	// images is the image cache, by id (PutImage).
+	images map[string]*genv1.Image
+	// idempotent is what each create's key made, by key.
+	idempotent   map[string]idempotent
 	keys         []string
 	deletes      []Delete
 	commands     []genv1.CommandRequest
@@ -148,7 +142,7 @@ type Daemon struct {
 	// changed is closed, and made again, whenever a caller's broker is given,
 	// served or taken away.
 	changed chan struct{}
-	// terminals is every terminal open, which the daemon's end hangs up.
+	// terminals is every terminal open, which the server's end hangs up.
 	terminals map[*websocket.Conn]struct{}
 
 	// serving is every terminal's handler and every client broker's, which
@@ -194,15 +188,15 @@ type idempotent struct {
 	spec []byte
 }
 
-// New starts a daemon for the length of the test.
-func New(tb testing.TB, opts ...Option) *Daemon {
+// New starts a server for the length of the test.
+func New(tb testing.TB, opts ...Option) *Server {
 	tb.Helper()
-	d := &Daemon{
+	d := &Server{
 		created:         make(chan genv1.SandboxID, 128),
 		sandboxes:       map[genv1.SandboxID]*sandbox{},
-		volumes:         map[volumeKey]*volume{},
-		images:          map[volumeKey]*genv1.Image{},
-		idempotent:      map[[2]string]idempotent{},
+		volumes:         map[string]*volume{},
+		images:          map[string]*genv1.Image{},
+		idempotent:      map[string]idempotent{},
 		calls:           map[string]int{},
 		intercepts:      map[string][]Interceptor{},
 		interceptAll:    map[string]Interceptor{},
@@ -213,9 +207,6 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 	}
 	for _, opt := range opts {
 		opt(d)
-	}
-	if len(d.namespaces) == 0 {
-		d.namespaces = []string{DefaultNamespace}
 	}
 	server := httptest.NewServer(d.routes())
 	// Streams that follow a sandbox hold their connections open; closing the
@@ -230,7 +221,7 @@ func New(tb testing.TB, opts ...Option) *Daemon {
 	return d
 }
 
-func (d *Daemon) routes() http.Handler {
+func (d *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	handle := func(pattern, operation string, unauthorized http.HandlerFunc) {
 		serve := d.authorized(unauthorized)
@@ -251,82 +242,74 @@ func (d *Daemon) routes() http.Handler {
 			serve(w, r)
 		})
 	}
-	// namespaced is a route about what is in a namespace: pattern is its
-	// path after /v1/namespaces/{namespace}.
-	namespaced := func(pattern, operation string, serve http.HandlerFunc) {
-		method, path, _ := strings.Cut(pattern, " ")
-		handle(method+" /v1/namespaces/{namespace}"+strings.TrimPrefix(path, "/v1"), operation, d.inNamespace(serve))
-	}
-	for _, path := range movedPaths {
-		mux.HandleFunc(path, moved)
-	}
 	handle("GET /v1/info", "getInfo", d.getInfo)
-	namespaced("GET /v1/counts", "getCounts", d.getCounts)
-	namespaced("GET /v1/brokers", "listBrokers", d.listBrokers)
+	handle("GET /v1/counts", "getCounts", d.getCounts)
+	handle("GET /v1/brokers", "listBrokers", d.listBrokers)
 	handle("GET /v1/host/commitments", "getHostCommitments", d.getHostCommitments)
-	namespaced("GET /v1/sandboxes", "listSandboxes", d.listSandboxes)
-	namespaced("POST /v1/sandboxes", "createSandbox", d.createSandbox)
-	namespaced("GET /v1/sandboxes/{id}", "getSandbox", d.getSandbox)
-	namespaced("DELETE /v1/sandboxes/{id}", "deleteSandbox", d.deleteSandbox)
-	namespaced("POST /v1/sandboxes/{id}/stop", "stopSandbox", d.stopSandbox)
-	namespaced("POST /v1/sandboxes/{id}/start", "startSandbox", d.startSandbox)
-	namespaced("POST /v1/sandboxes/{id}/seal", "sealSandbox", d.sealing(true))
-	namespaced("POST /v1/sandboxes/{id}/unseal", "unsealSandbox", d.sealing(false))
-	namespaced("PUT /v1/sandboxes/{id}/labels", "setSandboxLabels", d.setSandboxLabels)
-	namespaced("GET /v1/sandboxes/{id}/events", "streamSandboxEvents", d.streamEvents)
-	namespaced("GET /v1/sandboxes/{id}/console", "getSandboxConsole", d.console)
-	namespaced("GET /v1/sandboxes/{id}/processes/{process}/stdout", "readProcessStdout", d.processOutput("stdout"))
-	namespaced("GET /v1/sandboxes/{id}/processes/{process}/stderr", "readProcessStderr", d.processOutput("stderr"))
-	namespaced("GET /v1/sandboxes/{id}/terminal", "openTerminal", d.openTerminal)
-	namespaced("GET /v1/sandboxes/{id}/brokers", "listSandboxBrokers", d.listSandboxBrokers)
-	namespaced("PUT /v1/sandboxes/{id}/brokers/{broker}", "attachSandboxBroker", d.attachSandboxBroker)
-	namespaced("DELETE /v1/sandboxes/{id}/brokers/{broker}", "detachSandboxBroker", d.detachSandboxBroker)
-	namespaced("GET /v1/sandboxes/{id}/brokers/{broker}/serve", "serveSandboxBroker", d.serveSandboxBroker)
-	namespaced("POST /v1/sandboxes/{id}/commands", "runCommand", d.runCommand)
-	namespaced("GET /v1/sandboxes/{id}/files", "readFile", d.readFile)
-	namespaced("PUT /v1/sandboxes/{id}/files", "writeFile", d.writeFile)
-	namespaced("GET /v1/sandboxes/{id}/egress", "getSandboxEgress", d.getEgress)
-	namespaced("PUT /v1/sandboxes/{id}/egress", "setSandboxEgress", d.setEgress)
-	namespaced("GET /v1/sandboxes/{id}/egress/rules", "listEgressRules", d.listRules)
-	namespaced("GET /v1/sandboxes/{id}/egress/rules/{rule}", "getEgressRule", d.getRule)
-	namespaced("PUT /v1/sandboxes/{id}/egress/rules/{rule}", "putEgressRule", d.putRule)
-	namespaced("DELETE /v1/sandboxes/{id}/egress/rules/{rule}", "deleteEgressRule", d.deleteRule)
-	namespaced("POST /v1/sandboxes/{id}/egress/rules/{rule}/pause", "pauseEgressRule", d.pausingRule(true))
-	namespaced("POST /v1/sandboxes/{id}/egress/rules/{rule}/resume", "resumeEgressRule", d.pausingRule(false))
-	namespaced("POST /v1/sandboxes/{id}/egress/connections/kill", "killConnections", d.killConnections)
-	namespaced("GET /v1/tunnels", "listHostTunnels", d.listHostTunnels)
-	namespaced("GET /v1/sandboxes/{id}/tunnels", "listTunnels", d.listTunnels)
-	namespaced("GET /v1/sandboxes/{id}/tunnels/{tunnel}", "getTunnel", d.getTunnel)
-	namespaced("PUT /v1/sandboxes/{id}/tunnels/{tunnel}", "putTunnel", d.putTunnel)
-	namespaced("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}", "deleteTunnel", d.deleteTunnel)
-	namespaced("POST /v1/sandboxes/{id}/tunnels/{tunnel}/pause", "pauseTunnel", d.pausingTunnel(true))
-	namespaced("POST /v1/sandboxes/{id}/tunnels/{tunnel}/resume", "resumeTunnel", d.pausingTunnel(false))
-	namespaced("POST /v1/sandboxes/{id}/tunnels/{tunnel}/tokens", "createTunnelToken", d.createTunnelToken)
-	namespaced("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/tokens/{token}", "revokeTunnelToken", d.revokeTunnelToken)
-	namespaced("GET /v1/sandboxes/{id}/tunnels/{tunnel}/activity", "getTunnelActivity", d.tunnelActivity)
-	namespaced("GET /v1/sandboxes/{id}/tunnels/{tunnel}/guests", "listTunnelGuests", d.listTunnelGuests)
-	namespaced("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
-	namespaced("GET /v1/volumes", "listVolumes", d.listVolumes)
-	namespaced("GET /v1/images", "listImages", d.listImages)
-	namespaced("GET /v1/images/{imageId}", "getImage", d.getImage)
-	namespaced("DELETE /v1/images/{imageId}", "deleteImage", d.deleteImage)
-	namespaced("GET /v1/costs", "getNamespaceCosts", d.getNamespaceCosts)
-	namespaced("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
-	namespaced("PUT /v1/volumes/{name}/principal", "moveVolume", d.moveVolume)
-	namespaced("GET /v1/principals", "listPrincipals", d.listPrincipals)
-	namespaced("GET /v1/principals/{principal}", "getPrincipal", d.getPrincipal)
-	namespaced("PUT /v1/principals/{principal}", "putPrincipal", d.putPrincipal)
-	namespaced("DELETE /v1/principals/{principal}", "deletePrincipal", d.deletePrincipal)
-	namespaced("GET /v1/principals/{principal}/brokers/{broker}/trusted/{path}", "getBrokerTrusted", d.getBrokerTrusted)
+	handle("GET /v1/sandboxes", "listSandboxes", d.listSandboxes)
+	handle("POST /v1/sandboxes", "createSandbox", d.createSandbox)
+	handle("GET /v1/sandboxes/{id}", "getSandbox", d.getSandbox)
+	handle("DELETE /v1/sandboxes/{id}", "deleteSandbox", d.deleteSandbox)
+	handle("POST /v1/sandboxes/{id}/stop", "stopSandbox", d.stopSandbox)
+	handle("POST /v1/sandboxes/{id}/start", "startSandbox", d.startSandbox)
+	handle("POST /v1/sandboxes/{id}/seal", "sealSandbox", d.sealing(true))
+	handle("POST /v1/sandboxes/{id}/unseal", "unsealSandbox", d.sealing(false))
+	handle("PUT /v1/sandboxes/{id}/labels", "setSandboxLabels", d.setSandboxLabels)
+	handle("GET /v1/sandboxes/{id}/events", "streamSandboxEvents", d.streamEvents)
+	handle("GET /v1/sandboxes/{id}/console", "getSandboxConsole", d.console)
+	handle("GET /v1/sandboxes/{id}/processes/{process}/stdout", "readProcessStdout", d.processOutput("stdout"))
+	handle("GET /v1/sandboxes/{id}/processes/{process}/stderr", "readProcessStderr", d.processOutput("stderr"))
+	handle("GET /v1/sandboxes/{id}/terminal", "openTerminal", d.openTerminal)
+	handle("GET /v1/sandboxes/{id}/brokers", "listSandboxBrokers", d.listSandboxBrokers)
+	handle("PUT /v1/sandboxes/{id}/brokers/{broker}", "attachSandboxBroker", d.attachSandboxBroker)
+	handle("DELETE /v1/sandboxes/{id}/brokers/{broker}", "detachSandboxBroker", d.detachSandboxBroker)
+	handle("GET /v1/sandboxes/{id}/brokers/{broker}/serve", "serveSandboxBroker", d.serveSandboxBroker)
+	handle("POST /v1/sandboxes/{id}/commands", "runCommand", d.runCommand)
+	handle("GET /v1/sandboxes/{id}/files", "readFile", d.readFile)
+	handle("PUT /v1/sandboxes/{id}/files", "writeFile", d.writeFile)
+	handle("GET /v1/sandboxes/{id}/egress", "getSandboxEgress", d.getEgress)
+	handle("PUT /v1/sandboxes/{id}/egress", "setSandboxEgress", d.setEgress)
+	handle("GET /v1/sandboxes/{id}/egress/rules", "listEgressRules", d.listRules)
+	handle("GET /v1/sandboxes/{id}/egress/rules/{rule}", "getEgressRule", d.getRule)
+	handle("PUT /v1/sandboxes/{id}/egress/rules/{rule}", "putEgressRule", d.putRule)
+	handle("DELETE /v1/sandboxes/{id}/egress/rules/{rule}", "deleteEgressRule", d.deleteRule)
+	handle("POST /v1/sandboxes/{id}/egress/rules/{rule}/pause", "pauseEgressRule", d.pausingRule(true))
+	handle("POST /v1/sandboxes/{id}/egress/rules/{rule}/resume", "resumeEgressRule", d.pausingRule(false))
+	handle("POST /v1/sandboxes/{id}/egress/connections/kill", "killConnections", d.killConnections)
+	handle("GET /v1/tunnels", "listHostTunnels", d.listHostTunnels)
+	handle("GET /v1/sandboxes/{id}/tunnels", "listTunnels", d.listTunnels)
+	handle("GET /v1/sandboxes/{id}/tunnels/{tunnel}", "getTunnel", d.getTunnel)
+	handle("PUT /v1/sandboxes/{id}/tunnels/{tunnel}", "putTunnel", d.putTunnel)
+	handle("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}", "deleteTunnel", d.deleteTunnel)
+	handle("POST /v1/sandboxes/{id}/tunnels/{tunnel}/pause", "pauseTunnel", d.pausingTunnel(true))
+	handle("POST /v1/sandboxes/{id}/tunnels/{tunnel}/resume", "resumeTunnel", d.pausingTunnel(false))
+	handle("POST /v1/sandboxes/{id}/tunnels/{tunnel}/tokens", "createTunnelToken", d.createTunnelToken)
+	handle("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/tokens/{token}", "revokeTunnelToken", d.revokeTunnelToken)
+	handle("GET /v1/sandboxes/{id}/tunnels/{tunnel}/activity", "getTunnelActivity", d.tunnelActivity)
+	handle("GET /v1/sandboxes/{id}/tunnels/{tunnel}/guests", "listTunnelGuests", d.listTunnelGuests)
+	handle("DELETE /v1/sandboxes/{id}/tunnels/{tunnel}/guests/{email}", "revokeTunnelGuest", d.revokeTunnelGuest)
+	handle("GET /v1/volumes", "listVolumes", d.listVolumes)
+	handle("GET /v1/images", "listImages", d.listImages)
+	handle("GET /v1/images/{imageId}", "getImage", d.getImage)
+	handle("DELETE /v1/images/{imageId}", "deleteImage", d.deleteImage)
+	handle("GET /v1/costs", "getCosts", d.getCosts)
+	handle("DELETE /v1/volumes/{name}", "deleteVolume", d.deleteVolume)
+	handle("PUT /v1/volumes/{name}/principal", "moveVolume", d.moveVolume)
+	handle("POST /v1/volumes/{name}/clone", "cloneVolume", d.cloneVolume)
+	handle("GET /v1/principals", "listPrincipals", d.listPrincipals)
+	handle("GET /v1/principals/{principal}", "getPrincipal", d.getPrincipal)
+	handle("PUT /v1/principals/{principal}", "putPrincipal", d.putPrincipal)
+	handle("DELETE /v1/principals/{principal}", "deletePrincipal", d.deletePrincipal)
+	handle("GET /v1/principals/{principal}/brokers/{broker}/trusted/{path}", "getBrokerTrusted", d.getBrokerTrusted)
 	handle("GET /v1/me", "getMe", d.getMe)
 	return mux
 }
 
-func (d *Daemon) authorized(serve http.HandlerFunc) http.HandlerFunc {
+func (d *Server) authorized(serve http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authorization := authorizationOf(r)
 		if d.key != "" && authorization != "Bearer "+d.key {
-			refuse(w, http.StatusUnauthorized, genv1.ErrorCodeUnauthorized, "no key, or one this daemon will not accept")
+			refuse(w, http.StatusUnauthorized, genv1.ErrorCodeUnauthorized, "no key, or one this server will not accept")
 			return
 		}
 		serve(w, r)
@@ -365,8 +348,8 @@ func offered(r *http.Request) []string {
 }
 
 // Intercept answers the next call of an operation, by operationId, in the
-// daemon's place. Several queue up in order.
-func (d *Daemon) Intercept(operation string, intercept Interceptor) {
+// server's place. Several queue up in order.
+func (d *Server) Intercept(operation string, intercept Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.intercepts[operation] = append(d.intercepts[operation], intercept)
@@ -374,7 +357,7 @@ func (d *Daemon) Intercept(operation string, intercept Interceptor) {
 
 // InterceptAll answers every call of an operation that no queued Intercept
 // answers.
-func (d *Daemon) InterceptAll(operation string, intercept Interceptor) {
+func (d *Server) InterceptAll(operation string, intercept Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.interceptAll[operation] = intercept
@@ -387,7 +370,7 @@ func Refuse(status int, code genv1.ErrorCode, message string) Interceptor {
 	}
 }
 
-// Answer answers with exactly these bytes: what a proxy in front of a daemon
+// Answer answers with exactly these bytes: what a proxy in front of a server
 // says, say, which is not the contract's shape at all.
 func Answer(status int, contentType, body string) Interceptor {
 	return func(w http.ResponseWriter, _ *http.Request, _ http.HandlerFunc) {
@@ -405,7 +388,7 @@ func HangUp() Interceptor {
 }
 
 // HangUpAfter does what was asked and then closes the connection without
-// saying so: the daemon that made the machine and lost the response.
+// saying so: the server that made the machine and lost the response.
 func HangUpAfter() Interceptor {
 	return func(w http.ResponseWriter, r *http.Request, serve http.HandlerFunc) {
 		serve(httptest.NewRecorder(), r)
@@ -416,17 +399,17 @@ func HangUpAfter() Interceptor {
 func hangUp(w http.ResponseWriter) {
 	conn, _, err := http.NewResponseController(w).Hijack()
 	if err != nil {
-		panic(fmt.Sprintf("fakedaemon: hanging up: %v", err))
+		panic(fmt.Sprintf("fakeserver: hanging up: %v", err))
 	}
 	_ = conn.Close()
 }
 
-// Created receives each sandbox's id as the daemon makes it.
-func (d *Daemon) Created() <-chan genv1.SandboxID { return d.created }
+// Created receives each sandbox's id as the server makes it.
+func (d *Server) Created() <-chan genv1.SandboxID { return d.created }
 
 // Settle moves a sandbox to a state, as a real one moves when its machine
 // boots or does not.
-func (d *Daemon) Settle(id genv1.SandboxID, state genv1.SandboxState, message string) {
+func (d *Server) Settle(id genv1.SandboxID, state genv1.SandboxState, message string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -434,7 +417,7 @@ func (d *Daemon) Settle(id genv1.SandboxID, state genv1.SandboxState, message st
 	}
 }
 
-func (d *Daemon) settle(s *sandbox, state genv1.SandboxState, message string) {
+func (d *Server) settle(s *sandbox, state genv1.SandboxState, message string) {
 	s.record.State = state
 	if state != genv1.SandboxStateReady {
 		// A broker a caller serves is a running machine's: stopped or
@@ -454,7 +437,7 @@ func (d *Daemon) settle(s *sandbox, state genv1.SandboxState, message string) {
 	}
 }
 
-func (d *Daemon) publish(s *sandbox, event genv1.SandboxEvent) {
+func (d *Server) publish(s *sandbox, event genv1.SandboxEvent) {
 	event.Seq = int64(len(s.events) + 1)
 	event.At = d.now().UTC()
 	s.events = append(s.events, event)
@@ -463,35 +446,35 @@ func (d *Daemon) publish(s *sandbox, event genv1.SandboxEvent) {
 }
 
 // Calls is how often an operation was asked for, intercepted or not.
-func (d *Daemon) Calls(operation string) int {
+func (d *Server) Calls(operation string) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.calls[operation]
 }
 
 // IdempotencyKeys is the key each create carried, in order.
-func (d *Daemon) IdempotencyKeys() []string {
+func (d *Server) IdempotencyKeys() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]string(nil), d.keys...)
 }
 
-// Deletes is every sandbox DELETE the daemon carried out, in order.
-func (d *Daemon) Deletes() []Delete {
+// Deletes is every sandbox DELETE the server carried out, in order.
+func (d *Server) Deletes() []Delete {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]Delete(nil), d.deletes...)
 }
 
 // Commands is every command a sandbox was asked to run, in order.
-func (d *Daemon) Commands() []genv1.CommandRequest {
+func (d *Server) Commands() []genv1.CommandRequest {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]genv1.CommandRequest(nil), d.commands...)
 }
 
 // Sandboxes is every sandbox on the host now.
-func (d *Daemon) Sandboxes() []genv1.Sandbox {
+func (d *Server) Sandboxes() []genv1.Sandbox {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := []genv1.Sandbox{}
@@ -504,7 +487,7 @@ func (d *Daemon) Sandboxes() []genv1.Sandbox {
 }
 
 // File is what a sandbox holds at a path, and whether it holds anything.
-func (d *Daemon) File(id genv1.SandboxID, path string) ([]byte, string, bool) {
+func (d *Server) File(id genv1.SandboxID, path string) ([]byte, string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.sandboxes[id]
@@ -515,28 +498,28 @@ func (d *Daemon) File(id genv1.SandboxID, path string) ([]byte, string, bool) {
 	return body, s.modes[path], ok
 }
 
-// Volume says whether a volume exists in the first namespace, and which
+// Volume says whether a volume exists, and which
 // sandbox holds it.
-func (d *Daemon) Volume(name string) (exists bool, holder *genv1.SandboxID) {
+func (d *Server) Volume(name string) (exists bool, holder *genv1.SandboxID) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	v, ok := d.volumes[volumeKey{d.namespaces[0], name}]
+	v, ok := d.volumes[name]
 	if !ok {
 		return false, nil
 	}
 	return true, v.holder
 }
 
-// PutVolume makes a volume in the first namespace, as an earlier run would
+// PutVolume makes a volume, as an earlier run would
 // have left it.
-func (d *Daemon) PutVolume(name string, bytes int64) {
+func (d *Server) PutVolume(name string, bytes int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now().UTC()
-	d.volumes[volumeKey{d.namespaces[0], name}] = &volume{createdAt: now, lastUsedAt: now, bytes: bytes}
+	d.volumes[name] = &volume{createdAt: now, lastUsedAt: now, bytes: bytes}
 }
 
-func (d *Daemon) getInfo(w http.ResponseWriter, _ *http.Request) {
+func (d *Server) getInfo(w http.ResponseWriter, _ *http.Request) {
 	var info genv1.HostInfo
 	info.Id = "fake-host"
 	info.Instance = "fake"
@@ -548,7 +531,7 @@ func (d *Daemon) getInfo(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, info)
 }
 
-func (d *Daemon) listSandboxes(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	wanted := map[string]string{}
 	for _, pair := range r.URL.Query()["label"] {
 		key, value, ok := strings.Cut(pair, "=")
@@ -560,9 +543,6 @@ func (d *Daemon) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []genv1.Sandbox{}
 	for _, item := range d.Sandboxes() {
-		if valueOf(item.Namespace) != r.PathValue("namespace") {
-			continue
-		}
 		if item.Labels != nil && carries(*item.Labels, wanted) || item.Labels == nil && len(wanted) == 0 {
 			items = append(items, item)
 		}
@@ -571,7 +551,7 @@ func (d *Daemon) listSandboxes(w http.ResponseWriter, r *http.Request) {
 }
 
 // stopSandbox switches a machine off and keeps its disk, as a real one does.
-func (d *Daemon) stopSandbox(w http.ResponseWriter, r *http.Request) {
+func (d *Server) stopSandbox(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -585,7 +565,7 @@ func (d *Daemon) stopSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 // startSandbox boots a stopped machine again, on the disk it had.
-func (d *Daemon) startSandbox(w http.ResponseWriter, r *http.Request) {
+func (d *Server) startSandbox(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -601,7 +581,7 @@ func (d *Daemon) startSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 // setSandboxLabels replaces what a sandbox is labelled now.
-func (d *Daemon) setSandboxLabels(w http.ResponseWriter, r *http.Request) {
+func (d *Server) setSandboxLabels(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Labels *map[string]string `json:"labels"`
 	}
@@ -621,9 +601,9 @@ func (d *Daemon) setSandboxLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 // entered answers a call that would run something in, or write into, a
-// sealed sandbox as the daemon does, and reports whether it did; let in, the
-// first such call taints it, as the daemon's does. Called with d.mu held.
-func (d *Daemon) entered(w http.ResponseWriter, r *http.Request, s *sandbox) bool {
+// sealed sandbox as the server does, and reports whether it did; let in, the
+// first such call taints it, as the server's does. Called with d.mu held.
+func (d *Server) entered(w http.ResponseWriter, r *http.Request, s *sandbox) bool {
 	if s.record.Spec.Sealed != nil && *s.record.Spec.Sealed {
 		refuse(w, http.StatusForbidden, genv1.ErrorCodeSealed, "this sandbox is sealed: nothing is run in it or written into it but what its image runs")
 		return true
@@ -638,9 +618,9 @@ func (d *Daemon) entered(w http.ResponseWriter, r *http.Request, s *sandbox) boo
 	return false
 }
 
-// sealing seals a sandbox, or unseals it, as the daemon does: a taint
+// sealing seals a sandbox, or unseals it, as the server does: a taint
 // stays, and a sandbox on a named volume is not sealed.
-func (d *Daemon) sealing(sealed bool) http.HandlerFunc {
+func (d *Server) sealing(sealed bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -657,7 +637,7 @@ func (d *Daemon) sealing(sealed bool) http.HandlerFunc {
 	}
 }
 
-func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
+func (d *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	key := r.Header.Get("Idempotency-Key")
 	body, _ := io.ReadAll(r.Body)
 	var spec genv1.SandboxSpec
@@ -673,7 +653,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "spec.secretNames is what a read answers; a create sends spec.secrets")
 		return
 	}
-	// Compared with the values, as the daemon's retry is, and then never
+	// Compared with the values, as the server's retry is, and then never
 	// answered: what a read shows is their names.
 	canonical, err := json.Marshal(spec)
 	if err != nil {
@@ -681,11 +661,10 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	namespace := r.PathValue("namespace")
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.keys = append(d.keys, key)
-	if earlier, ok := d.idempotent[[2]string{namespace, key}]; ok {
+	if earlier, ok := d.idempotent[key]; ok {
 		s, alive := d.sandboxes[earlier.id]
 		switch {
 		case !bytes.Equal(earlier.spec, canonical):
@@ -706,7 +685,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		spec.Secrets = nil
 	}
 	id := uuid.Must(uuid.NewV7())
-	record := genv1.Sandbox{Id: id, Namespace: &namespace, Spec: spec, State: genv1.SandboxStateCreating, CreatedAt: d.now().UTC(), Labels: spec.Labels}
+	record := genv1.Sandbox{Id: id, Spec: spec, State: genv1.SandboxStateCreating, CreatedAt: d.now().UTC(), Labels: spec.Labels}
 	if spec.Brokers != nil {
 		attached := []genv1.SandboxBroker{}
 		for i, wanted := range *spec.Brokers {
@@ -735,9 +714,9 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 		record.Spec.Disk = &disk
 	}
 	volumeName := *record.Spec.Disk.Volume
-	v, ok := d.volumes[volumeKey{namespace, volumeName}]
+	v, ok := d.volumes[volumeName]
 	principal := valueOf(spec.Principal)
-	if code, status, why := d.actsFor(namespace, principal, v); code != "" {
+	if code, status, why := d.actsFor(principal, v); code != "" {
 		refuse(w, status, code, why)
 		return
 	}
@@ -747,7 +726,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		v = &volume{createdAt: d.now().UTC(), createdBy: d.creatorOf(r)}
-		d.volumes[volumeKey{namespace, volumeName}] = v
+		d.volumes[volumeName] = v
 	}
 	// Bound on its first attach by a sandbox bound to a principal.
 	if v.principal == "" && principal != "" {
@@ -770,7 +749,7 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 	s := &sandbox{record: record, onVolume: spec.Disk != nil && spec.Disk.Volume != nil, callers: map[string]*caller{}, files: map[string][]byte{}, modes: map[string]string{}, changed: make(chan struct{})}
 	d.sandboxes[id] = s
 	d.order = append(d.order, id)
-	d.idempotent[[2]string{namespace, key}] = idempotent{id: id, spec: canonical}
+	d.idempotent[key] = idempotent{id: id, spec: canonical}
 	creating := genv1.SandboxStateCreating
 	d.publish(s, genv1.SandboxEvent{Type: genv1.SandboxEventTypeState, State: &creating})
 
@@ -794,22 +773,21 @@ func (d *Daemon) createSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 // lookup is the sandbox a path names, or an answer saying there is none.
-func (d *Daemon) lookup(w http.ResponseWriter, r *http.Request) (*sandbox, bool) {
+func (d *Server) lookup(w http.ResponseWriter, r *http.Request) (*sandbox, bool) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a sandbox id is a UUID")
 		return nil, false
 	}
 	s, ok := d.sandboxes[id]
-	// One in another namespace is not there, as the daemon says it.
-	if !ok || !s.in(r.PathValue("namespace")) {
+	if !ok {
 		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no sandbox "+id.String())
 		return nil, false
 	}
 	return s, true
 }
 
-func (d *Daemon) getSandbox(w http.ResponseWriter, r *http.Request) {
+func (d *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.lookup(w, r); ok {
@@ -817,7 +795,7 @@ func (d *Daemon) getSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) deleteSandbox(w http.ResponseWriter, r *http.Request) {
+func (d *Server) deleteSandbox(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -833,7 +811,7 @@ func (d *Daemon) deleteSandbox(w http.ResponseWriter, r *http.Request) {
 	id := s.record.Id
 	d.deletes = append(d.deletes, Delete{ID: id, Disk: disk})
 	if s.record.Spec.Disk != nil && s.record.Spec.Disk.Volume != nil {
-		name := volumeKey{valueOf(s.record.Namespace), *s.record.Spec.Disk.Volume}
+		name := *s.record.Spec.Disk.Volume
 		if v, ok := d.volumes[name]; ok && v.holder != nil && *v.holder == id {
 			v.holder = nil
 			v.lastUsedAt = d.now().UTC()
@@ -851,7 +829,7 @@ func (d *Daemon) deleteSandbox(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (d *Daemon) streamEvents(w http.ResponseWriter, r *http.Request) {
+func (d *Server) streamEvents(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	s, ok := d.lookup(w, r)
 	d.mu.Unlock()
@@ -888,7 +866,7 @@ func (d *Daemon) streamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) console(w http.ResponseWriter, r *http.Request) {
+func (d *Server) console(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.lookup(w, r); ok {
@@ -899,7 +877,7 @@ func (d *Daemon) console(w http.ResponseWriter, r *http.Request) {
 
 // SetOutput is what a process of a sandbox has written to stream, stdout
 // or stderr: the process `entrypoint` is the image's own.
-func (d *Daemon) SetOutput(id genv1.SandboxID, process, stream, text string) {
+func (d *Server) SetOutput(id genv1.SandboxID, process, stream, text string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -913,7 +891,7 @@ func (d *Daemon) SetOutput(id genv1.SandboxID, process, stream, text string) {
 // processOutput answers what a process wrote to stream from ?from=. A
 // followed read ends with what there is: this double's processes write
 // nothing more.
-func (d *Daemon) processOutput(stream string) http.HandlerFunc {
+func (d *Server) processOutput(stream string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from := 0
 		if value := r.URL.Query().Get("from"); value != "" {
@@ -942,7 +920,7 @@ func (d *Daemon) processOutput(stream string) http.HandlerFunc {
 	}
 }
 
-func (d *Daemon) runCommand(w http.ResponseWriter, r *http.Request) {
+func (d *Server) runCommand(w http.ResponseWriter, r *http.Request) {
 	var request genv1.CommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Argv) == 0 {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "argv is required")
@@ -972,7 +950,7 @@ func (d *Daemon) runCommand(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, result)
 }
 
-func (d *Daemon) readFile(w http.ResponseWriter, r *http.Request) {
+func (d *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -988,7 +966,7 @@ func (d *Daemon) readFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-func (d *Daemon) writeFile(w http.ResponseWriter, r *http.Request) {
+func (d *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if !strings.HasPrefix(path, "/") {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "path must be absolute")
@@ -1006,49 +984,32 @@ func (d *Daemon) writeFile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listBrokers is the shared brokers, which the double declares in every
-// namespace alike.
-func (d *Daemon) listBrokers(w http.ResponseWriter, _ *http.Request) {
+// listBrokers is the shared brokers the double declares.
+func (d *Server) listBrokers(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	reply(w, http.StatusOK, genv1.BrokerPage{Items: append([]genv1.Broker{}, d.brokers...)})
 }
 
-// getCounts counts what the double holds in a namespace. Its keys may read
-// everything.
-func (d *Daemon) getCounts(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
+// getCounts counts what the double holds. Its keys may read everything.
+func (d *Server) getCounts(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	count := func(n int) *int { return &n }
-	sandboxes, tunnels, volumes := 0, 0, 0
+	tunnels := 0
 	for _, s := range d.sandboxes {
-		if s.in(namespace) {
-			sandboxes++
-			tunnels += len(s.tunnels)
-		}
-	}
-	for key := range d.volumes {
-		if key.namespace == namespace {
-			volumes++
-		}
-	}
-	images := 0
-	for key := range d.images {
-		if key.namespace == namespace {
-			images++
-		}
+		tunnels += len(s.tunnels)
 	}
 	reply(w, http.StatusOK, genv1.HostCounts{
-		Sandboxes: count(sandboxes), Tunnels: count(tunnels), Volumes: count(volumes),
-		Images: count(images), Brokers: count(len(d.brokers)),
+		Sandboxes: count(len(d.sandboxes)), Tunnels: count(tunnels), Volumes: count(len(d.volumes)),
+		Images: count(len(d.images)), Brokers: count(len(d.brokers)),
 	})
 }
 
 // getHostCommitments adds up the specs the double's running sandboxes were
-// made with, and the sizes of its volumes, as the daemon does. The double has
+// made with, and the sizes of its volumes, as the server does. The double has
 // no defaults, so a size a spec left out is none.
-func (d *Daemon) getHostCommitments(w http.ResponseWriter, _ *http.Request) {
+func (d *Server) getHostCommitments(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	var out genv1.HostCommitments
@@ -1072,7 +1033,7 @@ func (d *Daemon) getHostCommitments(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, out)
 }
 
-// isRunning is whether a sandbox in state is running, as the daemon counts
+// isRunning is whether a sandbox in state is running, as the server counts
 // it: a paused one is, a stopped one is not.
 func isRunning(state genv1.SandboxState) bool {
 	switch state {
@@ -1103,28 +1064,20 @@ func sizeOf(size string) int64 {
 	return 0
 }
 
-func (d *Daemon) listVolumes(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
+func (d *Server) listVolumes(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	names := make([]string, 0, len(d.volumes))
-	for key := range d.volumes {
-		if key.namespace == namespace {
-			names = append(names, key.name)
-		}
-	}
-	sort.Strings(names)
 	list := genv1.VolumeList{Items: []genv1.Volume{}}
-	for _, name := range names {
-		list.Items = append(list.Items, volumeOf(namespace, name, d.volumes[volumeKey{namespace, name}]))
+	for _, name := range slices.Sorted(maps.Keys(d.volumes)) {
+		list.Items = append(list.Items, volumeOf(name, d.volumes[name]))
 	}
 	reply(w, http.StatusOK, list)
 }
 
 // volumeOf is a volume as the contract has it.
-func volumeOf(namespace, name string, v *volume) genv1.Volume {
+func volumeOf(name string, v *volume) genv1.Volume {
 	out := genv1.Volume{
-		Name: name, Namespace: &namespace, CreatedAt: v.createdAt, LastUsedAt: v.lastUsedAt, SandboxId: v.holder, CreatedBy: v.createdBy,
+		Name: name, CreatedAt: v.createdAt, LastUsedAt: v.lastUsedAt, SandboxId: v.holder, CreatedBy: v.createdBy,
 		Bytes: v.bytes, AllocatedBytes: v.bytes, Digest: "sha256:" + strings.Repeat("0", 64),
 	}
 	if v.principal != "" {
@@ -1143,9 +1096,9 @@ func carries(labels, wanted map[string]string) bool {
 	return true
 }
 
-func (d *Daemon) deleteVolume(w http.ResponseWriter, r *http.Request) {
+func (d *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	key := volumeKey{r.PathValue("namespace"), name}
+	key := name
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if v, ok := d.volumes[key]; ok {
@@ -1158,12 +1111,56 @@ func (d *Daemon) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// cloneVolume copies a volume as the server does: not one a running
+// sandbox holds, not into a name a volume has, and bound as its source is
+// unless the body names another.
+func (d *Server) cloneVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body genv1.VolumeClone
+	if err := strictly(r, &body); err != nil || !volumeName.MatchString(body.Name) || (body.Principal != nil && !principalID.MatchString(*body.Principal)) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is {\"name\": \"<volume>\", \"principal\": \"<id>\"}")
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	source, ok := d.volumes[name]
+	if !ok {
+		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no such volume: "+name)
+		return
+	}
+	principal := source.principal
+	if body.Principal != nil {
+		principal = *body.Principal
+		if _, ok := d.principals[principal]; !ok {
+			refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no such principal: "+principal)
+			return
+		}
+	}
+	if _, ok := d.volumes[body.Name]; ok {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeVolumeExists, "there is already a volume of that name: "+body.Name)
+		return
+	}
+	if source.holder != nil {
+		if s, ok := d.sandboxes[*source.holder]; ok && s.record.State != genv1.SandboxStateStopped && s.record.State != genv1.SandboxStateFailed {
+			refuse(w, http.StatusConflict, genv1.ErrorCodeVolumeInUse, fmt.Sprintf("volume %s is in use by the machine of %s: stop it first", name, *source.holder))
+			return
+		}
+	}
+	now := d.now().UTC()
+	clone := &volume{createdAt: now, lastUsedAt: now, bytes: source.bytes, createdBy: d.creatorOf(r), principal: principal}
+	d.volumes[body.Name] = clone
+	reply(w, http.StatusCreated, volumeOf(body.Name, clone))
+}
+
+// volumeName is the contract's pattern for a volume's name.
+var volumeName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
 func reply(w http.ResponseWriter, status int, body any) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		// Encoded before the status is sent, so a body the double cannot
 		// encode is a 500 that says so rather than a 200 cut short.
-		http.Error(w, "fakedaemon: encoding the reply: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "fakeserver: encoding the reply: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1178,7 +1175,7 @@ func refuse(w http.ResponseWriter, status int, code genv1.ErrorCode, message str
 	reply(w, status, envelope)
 }
 
-// The egress plane: rules kept in the sandbox's spec, as the daemon keeps
+// The egress plane: rules kept in the sandbox's spec, as the server keeps
 // them, and a report whose refusals are what a test recorded — there is no
 // firewall here to refuse anything.
 
@@ -1186,7 +1183,7 @@ func refuse(w http.ResponseWriter, status int, code genv1.ErrorCode, message str
 var ruleName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // Rules is a sandbox's egress rules now.
-func (d *Daemon) Rules(id genv1.SandboxID) []genv1.EgressRule {
+func (d *Server) Rules(id genv1.SandboxID) []genv1.EgressRule {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.sandboxes[id]
@@ -1199,7 +1196,7 @@ func (d *Daemon) Rules(id genv1.SandboxID) []genv1.EgressRule {
 // RecordRefusal makes a sandbox's egress report say it was refused this, as a
 // real sandbox's firewall or resolver would. A test's command double calls it
 // when the command it answers is one the sandbox's rules would not let out.
-func (d *Daemon) RecordRefusal(id genv1.SandboxID, refusal genv1.EgressRefusal) {
+func (d *Server) RecordRefusal(id genv1.SandboxID, refusal genv1.EgressRefusal) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -1209,7 +1206,7 @@ func (d *Daemon) RecordRefusal(id genv1.SandboxID, refusal genv1.EgressRefusal) 
 
 // OpenConnection makes a sandbox's egress report list this connection as
 // open, as the kernel would, until it is killed.
-func (d *Daemon) OpenConnection(id genv1.SandboxID, c genv1.Connection) {
+func (d *Server) OpenConnection(id genv1.SandboxID, c genv1.Connection) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -1218,9 +1215,9 @@ func (d *Daemon) OpenConnection(id genv1.SandboxID, c genv1.Connection) {
 }
 
 // killConnections kills what matches everything the body names, as the
-// daemon does, and answers with what it killed. The body is checked as far
+// server does, and answers with what it killed. The body is checked as far
 // as the fake needs: one end is named, and nothing it does not know.
-func (d *Daemon) killConnections(w http.ResponseWriter, r *http.Request) {
+func (d *Server) killConnections(w http.ResponseWriter, r *http.Request) {
 	var body genv1.KillConnections
 	if err := strictly(r, &body); err != nil {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is not a kill: "+err.Error())
@@ -1267,7 +1264,7 @@ func rulesOf(s *sandbox) []genv1.EgressRule {
 	return *s.record.Spec.Egress.Rules
 }
 
-func (d *Daemon) getEgress(w http.ResponseWriter, r *http.Request) {
+func (d *Server) getEgress(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -1290,8 +1287,8 @@ func (d *Daemon) getEgress(w http.ResponseWriter, r *http.Request) {
 }
 
 // changeable is the sandbox a path names, if its rules can change now: the
-// daemon changes them on a running interface.
-func (d *Daemon) changeable(w http.ResponseWriter, r *http.Request) (*sandbox, bool) {
+// server changes them on a running interface.
+func (d *Server) changeable(w http.ResponseWriter, r *http.Request) (*sandbox, bool) {
 	s, ok := d.lookup(w, r)
 	if !ok {
 		return nil, false
@@ -1303,7 +1300,7 @@ func (d *Daemon) changeable(w http.ResponseWriter, r *http.Request) (*sandbox, b
 	return s, true
 }
 
-// strictly reads a body the way the daemon reads an egress one: a field it
+// strictly reads a body the way the server reads an egress one: a field it
 // does not have is a refusal.
 func strictly(r *http.Request, into any) error {
 	decoder := json.NewDecoder(r.Body)
@@ -1311,7 +1308,7 @@ func strictly(r *http.Request, into any) error {
 	return decoder.Decode(into)
 }
 
-// checkRule says what the daemon would refuse a rule for, of what a double
+// checkRule says what the server would refuse a rule for, of what a double
 // can tell.
 func checkRule(name string, spec genv1.EgressRuleSpec) string {
 	if !ruleName.MatchString(name) {
@@ -1323,7 +1320,7 @@ func checkRule(name string, spec genv1.EgressRuleSpec) string {
 	return ""
 }
 
-func (d *Daemon) setEgress(w http.ResponseWriter, r *http.Request) {
+func (d *Server) setEgress(w http.ResponseWriter, r *http.Request) {
 	var spec genv1.EgressSpec
 	if err := strictly(r, &spec); err != nil {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is not an egress policy: "+err.Error())
@@ -1355,7 +1352,7 @@ func (d *Daemon) setEgress(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (d *Daemon) listRules(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listRules(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.lookup(w, r); ok {
@@ -1363,7 +1360,7 @@ func (d *Daemon) listRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) getRule(w http.ResponseWriter, r *http.Request) {
+func (d *Server) getRule(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("rule")
 	if !ruleName.MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("%q is not a rule name", name))
@@ -1384,7 +1381,7 @@ func (d *Daemon) getRule(w http.ResponseWriter, r *http.Request) {
 	refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, fmt.Sprintf("this sandbox has no egress rule %q", name))
 }
 
-func (d *Daemon) putRule(w http.ResponseWriter, r *http.Request) {
+func (d *Server) putRule(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("rule")
 	var spec genv1.EgressRuleSpec
 	if err := strictly(r, &spec); err != nil {
@@ -1419,9 +1416,9 @@ func (d *Daemon) putRule(w http.ResponseWriter, r *http.Request) {
 	reply(w, status, rule)
 }
 
-// pausingRule pauses a rule, or resumes it, as the daemon does: kept where it
+// pausingRule pauses a rule, or resumes it, as the server does: kept where it
 // is, answered as it is now, and answered the same when it already was.
-func (d *Daemon) pausingRule(paused bool) http.HandlerFunc {
+func (d *Server) pausingRule(paused bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("rule")
 		if !ruleName.MatchString(name) {
@@ -1451,7 +1448,7 @@ func (d *Daemon) pausingRule(paused bool) http.HandlerFunc {
 	}
 }
 
-func (d *Daemon) deleteRule(w http.ResponseWriter, r *http.Request) {
+func (d *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("rule")
 	if !ruleName.MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("%q is not a rule name", name))

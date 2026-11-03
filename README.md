@@ -10,7 +10,7 @@ reach on the network, and drop it.
 go get github.com/runyard-ai/runyard-sandboxes-sdk-go
 ```
 
-It needs Go 1.26 or later, and the address of a runyard-sandboxes daemon with
+It needs Go 1.26 or later, and the address of a runyard-sandboxes server with
 an API key.
 
 ## Example
@@ -37,7 +37,7 @@ func main() {
 	// Create returns once the machine answers.
 	sandbox, err := client.Create(ctx, "hello", sdk.Spec{Image: "debian:bookworm-slim"})
 	if sandbox != nil {
-		// A sandbox the daemon accepted exists even when Create fails.
+		// A sandbox the server accepted exists even when Create fails.
 		defer sandbox.Close(ctx)
 	}
 	if err != nil {
@@ -59,31 +59,6 @@ The SDK covers what most programs need: sandboxes, commands, terminals,
 files, egress rules, tunnels, volumes and serving a client broker. Everything
 else in the API is on `client.API()`, the client generated from the OpenAPI
 document, on the same address and key.
-
-## Namespaces
-
-Every sandbox, volume and tunnel is in a namespace, and so is every call about
-one. A key bound to a namespace binds the client to it: the first such call
-asks the daemon once who the key is (`GET /v1/me`), and every call after goes
-to that namespace with nothing more said.
-
-A global key reaches several, so a call about a sandbox returns
-`sdk.ErrNamespaceRequired`, without sending anything, until the client is told
-which:
-
-```go
-acme := client.Namespace("acme") // the same client, bound to acme
-sandbox, err := acme.Create(ctx, "hello", sdk.Spec{Image: "debian:bookworm-slim"})
-
-reached, err := client.Namespaces(ctx) // what the key reaches
-```
-
-`sdk.WithNamespace("acme")` names it in `New`, and spares the question. Naming
-a namespace other than the one a key is bound to fails at the first call, in
-the SDK, with an error naming both. A sandbox's handle carries the namespace
-it is in (`sandbox.Namespace`), and `client.ResolveNamespace(ctx)` is the one a
-client's calls go to: both are what a caller of `client.API()` passes beside
-an id.
 
 ## Answering a sandbox from your own program
 
@@ -111,7 +86,7 @@ address := listener.URL() // http://127.0.0.1:<port>, inside the sandbox
 Nothing declares the broker beforehand, and it lasts as long as the listener:
 closing it takes the broker away, port and all. `ctx` bounds the handshake
 only. The sandbox must be running, and the name one it has no broker of yet:
-either is refused with the code `conflict`. When the daemon hangs up — the
+either is refused with the code `conflict`. When the server hangs up — the
 sandbox was stopped, paused or deleted, the broker detached — or the line to
 it is lost, `Accept` returns an error and the listener is done: serve the
 broker again to have it back, on the port it is given then.
@@ -125,8 +100,8 @@ and close the listener once it has ended.
 
 ## Examples
 
-Each is a program you can run against a daemon, with tests that run it against
-the fake daemon:
+Each is a program you can run against a server, with tests that run it against
+the fake server:
 
 | Example | What it shows |
 |---|---|
@@ -146,18 +121,18 @@ go run github.com/runyard-ai/runyard-sandboxes-sdk-go/examples/hello@latest \
 |---|---|
 | [`sdk`](https://pkg.go.dev/github.com/runyard-ai/runyard-sandboxes-sdk-go/sdk) | The client. |
 | [`sandboxes/genv1`](https://pkg.go.dev/github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1) | The API's types and the generated client, from [`openapi/sandboxes.yaml`](openapi/sandboxes.yaml). |
-| [`test/doubles/fakedaemon`](https://pkg.go.dev/github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon) | A daemon in memory, for your tests. |
+| [`test/doubles/fakeserver`](https://pkg.go.dev/github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver) | A server in memory, for your tests. |
 | [`test/doubles/spawn`](https://pkg.go.dev/github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn) | Runs a function beside a test, which does not end before it has. |
 
 ## Testing your code
 
-`fakedaemon` answers the same HTTP API as the real daemon, from memory and
+`fakeserver` answers the same HTTP API as the real server, from memory and
 with no virtual machines, so your tests exercise real requests and responses:
 
 ```go
 func TestHello(t *testing.T) {
-	daemon := fakedaemon.New(t, fakedaemon.WithKey("test-key"))
-	client, err := sdk.New(daemon.URL, sdk.WithKey("test-key"))
+	server := fakeserver.New(t, fakeserver.WithKey("test-key"))
+	client, err := sdk.New(server.URL, sdk.WithKey("test-key"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,9 +145,7 @@ func TestHello(t *testing.T) {
 }
 ```
 
-The fake's key is bound to its namespace, `fakedaemon.DefaultNamespace`;
-`fakedaemon.WithNamespaces` gives it others, and `fakedaemon.WithGlobalKeys`
-makes its keys global. `fakedaemon.WithRun` decides what a command prints, and `Intercept` makes one
+`fakeserver.WithRun` decides what a command prints, and `Intercept` makes one
 operation fail the way you want to test. For a client broker your code serves,
 `DialBroker` is a connection as the workload would make it, and `BrokerServed`
 waits until your code is serving it.
@@ -180,13 +153,13 @@ waits until your code is serving it.
 ## The API itself
 
 [`openapi/sandboxes.yaml`](openapi/sandboxes.yaml) is the OpenAPI document
-for the whole API, for generating a client in another language. A daemon
+for the whole API, for generating a client in another language. A server
 also serves it at `GET /v1/openapi.yaml`, and renders it at `GET /v1/docs`.
 
 ## Versions
 
-The SDK is released with the daemon, with the same version number: SDK
-`v0.9.0` is the client of daemon `v0.9.0`. While the version is `v0.x`, a
+The SDK is released with the server, with the same version number: SDK
+`v0.9.0` is the client of server `v0.9.0`. While the version is `v0.x`, a
 minor version may change the API.
 
 This repository is published from the runyard-sandboxes release process, and

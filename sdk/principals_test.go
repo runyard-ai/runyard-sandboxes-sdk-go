@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 )
 
 // A principal is made idempotently, read, listed and deleted, and its id is
@@ -56,7 +56,7 @@ func TestAPrincipalIsMadeReadListedAndDeleted(t *testing.T) {
 		t.Errorf("made again once deleted = %v, want principal_retired", err)
 	}
 	for _, operation := range []string{"listPrincipals", "getPrincipal", "putPrincipal", "deletePrincipal"} {
-		d.Intercept(operation, fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no"))
+		d.Intercept(operation, fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no"))
 	}
 	if _, err := client.Principals(ctx); CodeOf(err) != "forbidden" {
 		t.Errorf("a refused Principals = %v", err)
@@ -139,13 +139,13 @@ func TestASandboxActsForAPrincipalAndItsVolumeFollows(t *testing.T) {
 }
 
 // What the broker's trusted plane answers is returned as it was, a 404 among
-// them; what the daemon refuses is the error.
+// them; what the server refuses is the error.
 func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 	var asked struct {
 		principal genv1.Principal
 		path      string
 	}
-	d, client := fake(t, fakedaemon.WithBrokers("plain"), fakedaemon.WithTrustedPlane("github", func(p genv1.Principal, path string) (int, string, []byte) {
+	d, client := fake(t, fakeserver.WithBrokers("plain"), fakeserver.WithTrustedPlane("github", func(p genv1.Principal, path string) (int, string, []byte) {
 		asked.principal, asked.path = p, path
 		if path == ".well-known/runyard-contexts" {
 			return http.StatusNotFound, "text/plain", []byte("none")
@@ -185,13 +185,13 @@ func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 		}
 	}
 
-	// A body that is not the broker's, unmarked, is the daemon's error
+	// A body that is not the broker's, unmarked, is the server's error
 	// however it is spelled — a proxy's page, say.
-	d.Intercept("getBrokerTrusted", fakedaemon.Answer(502, "text/html", "<h1>bad gateway</h1>"))
+	d.Intercept("getBrokerTrusted", fakeserver.Answer(502, "text/html", "<h1>bad gateway</h1>"))
 	if _, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/x"); err == nil || !strings.Contains(err.Error(), "bad gateway") {
 		t.Errorf("an unmarked answer = %v", err)
 	}
-	// More than the daemon ever passes on is not read into memory.
+	// More than the server ever passes on is not read into memory.
 	d.Intercept("getBrokerTrusted", func(w http.ResponseWriter, _ *http.Request, _ http.HandlerFunc) {
 		w.Header().Set("Runyard-Broker-Answered", "true")
 		w.WriteHeader(http.StatusOK)
@@ -213,9 +213,9 @@ func TestABrokersTrustedDocumentIsReadForAPrincipal(t *testing.T) {
 	// Every call, not the next one: a GET whose reused connection is hung up
 	// on before it is answered is sent again by net/http on a new one, and
 	// that one, answered, failed this 2 runs in 20.
-	d.InterceptAll("getBrokerTrusted", fakedaemon.HangUp())
+	d.InterceptAll("getBrokerTrusted", fakeserver.HangUp())
 	if _, _, _, err := client.BrokerTrusted(ctx, "p1", "github", ".well-known/x"); err == nil {
-		t.Error("a daemon that hung up answered")
+		t.Error("a server that hung up answered")
 	}
 }
 
@@ -242,4 +242,54 @@ func TestACallThatNeverArrivesIsAnError(t *testing.T) {
 		t.Error("BrokerTrusted")
 	}
 	_ = d
+}
+
+// A volume is cloned once no machine is writing it, bound as its source is
+// unless the call says otherwise, and every refusal is one a caller can
+// branch on.
+func TestAVolumeIsClonedOnceNothingWritesIt(t *testing.T) {
+	d, client := fake(t)
+	ctx := t.Context()
+	for _, id := range []string{"p1", "p2"} {
+		if _, err := client.PutPrincipal(ctx, id, genv1.PrincipalSpec{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sandbox, err := client.Create(ctx, "", Spec{Image: "alpine", Principal: new("p1"), Disk: &genv1.DiskSpec{Volume: new("chat")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CloneVolume(ctx, "chat", "fork", ""); CodeOf(err) != "volume_in_use" {
+		t.Errorf("cloning a volume a machine is writing = %v", err)
+	}
+	if err := sandbox.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := client.CloneVolume(ctx, "chat", "fork", "")
+	if err != nil || fork.Name != "fork" || fork.Principal == nil || *fork.Principal != "p1" {
+		t.Fatalf("CloneVolume = %+v, %v", fork, err)
+	}
+	moved, err := client.CloneVolume(ctx, "chat", "moved", "p2")
+	if err != nil || moved.Principal == nil || *moved.Principal != "p2" {
+		t.Errorf("bound to p2 = %+v, %v", moved, err)
+	}
+	for name, tc := range map[string]struct {
+		volume, name, principal, code string
+	}{
+		"a name a volume has":           {"chat", "fork", "", "volume_exists"},
+		"a volume not on this host":     {"never-was", "x", "", "not_found"},
+		"a principal that is not there": {"chat", "x", "nobody", "not_found"},
+		"a name that is not one":        {"chat", "Not One", "", "bad_request"},
+	} {
+		if _, err := client.CloneVolume(ctx, tc.volume, tc.name, tc.principal); CodeOf(err) != tc.code {
+			t.Errorf("%s = %v, want %s", name, err, tc.code)
+		}
+	}
+	if exists, _ := d.Volume("x"); exists {
+		t.Error("a refused clone was made")
+	}
+	d.Intercept("cloneVolume", fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no"))
+	if _, err := client.CloneVolume(ctx, "chat", "y", ""); CodeOf(err) != "forbidden" {
+		t.Errorf("a refused clone = %v", err)
+	}
 }

@@ -1,4 +1,4 @@
-package fakedaemon
+package fakeserver
 
 import (
 	"fmt"
@@ -13,16 +13,16 @@ import (
 
 // The principal plane: identities that outlive a sandbox, the volumes that
 // follow them, and what brokers' trusted planes say about them — answered as
-// the daemon answers, with every principal the daemon's one key's.
+// the server answers, with every principal the server's one key's.
 
 // TrustedPlane is a shared broker's trusted plane: what it answers when the
-// daemon reads path (`.well-known/…`) for principal.
+// server reads path (`.well-known/…`) for principal.
 type TrustedPlane func(principal genv1.Principal, path string) (status int, contentType string, body []byte)
 
 // WithTrustedPlane gives the shared broker called broker a trusted plane,
 // declaring the broker if WithBrokers did not.
 func WithTrustedPlane(broker string, plane TrustedPlane) Option {
-	return func(d *Daemon) {
+	return func(d *Server) {
 		if d.trusted == nil {
 			d.trusted = map[string]TrustedPlane{}
 		}
@@ -41,24 +41,24 @@ func WithTrustedPlane(broker string, plane TrustedPlane) Option {
 // The contract's pattern for a principal's id.
 var principalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-// Principal is a principal of the first namespace, as the daemon holds it:
+// Principal is a principal, as the server holds it:
 // what a test reads to see what the code under test made.
-func (d *Daemon) Principal(id string) (genv1.Principal, bool) {
+func (d *Server) Principal(id string) (genv1.Principal, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	p, ok := d.principals[volumeKey{d.namespaces[0], id}]
+	p, ok := d.principals[id]
 	if !ok {
 		return genv1.Principal{}, false
 	}
 	return clonePrincipal(*p), true
 }
 
-// VolumePrincipal is the principal a volume of the first namespace is bound
+// VolumePrincipal is the principal a volume is bound
 // to, empty for none, and whether there is such a volume.
-func (d *Daemon) VolumePrincipal(name string) (string, bool) {
+func (d *Server) VolumePrincipal(name string) (string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	v, ok := d.volumes[volumeKey{d.namespaces[0], name}]
+	v, ok := d.volumes[name]
 	if !ok {
 		return "", false
 	}
@@ -70,15 +70,12 @@ func clonePrincipal(p genv1.Principal) genv1.Principal {
 	return p
 }
 
-func (d *Daemon) listPrincipals(w http.ResponseWriter, r *http.Request) {
-	namespace := r.PathValue("namespace")
+func (d *Server) listPrincipals(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	page := genv1.PrincipalPage{Items: []genv1.Principal{}}
-	for key, p := range d.principals {
-		if key.namespace == namespace {
-			page.Items = append(page.Items, clonePrincipal(*p))
-		}
+	for _, p := range d.principals {
+		page.Items = append(page.Items, clonePrincipal(*p))
 	}
 	sort.Slice(page.Items, func(i, j int) bool { return page.Items[i].Id < page.Items[j].Id })
 	reply(w, http.StatusOK, page)
@@ -86,13 +83,13 @@ func (d *Daemon) listPrincipals(w http.ResponseWriter, r *http.Request) {
 
 // principalOf is the principal a path names, or an answer saying why not.
 // Caller holds d.mu.
-func (d *Daemon) principalOf(w http.ResponseWriter, r *http.Request) (*genv1.Principal, bool) {
+func (d *Server) principalOf(w http.ResponseWriter, r *http.Request) (*genv1.Principal, bool) {
 	id := r.PathValue("principal")
 	if !principalID.MatchString(id) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a principal id is letters, digits, '_', '.' and '-', starting with a letter or a digit")
 		return nil, false
 	}
-	p, ok := d.principals[volumeKey{r.PathValue("namespace"), id}]
+	p, ok := d.principals[id]
 	if !ok {
 		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no such principal: "+id)
 		return nil, false
@@ -100,7 +97,7 @@ func (d *Daemon) principalOf(w http.ResponseWriter, r *http.Request) (*genv1.Pri
 	return p, true
 }
 
-func (d *Daemon) getPrincipal(w http.ResponseWriter, r *http.Request) {
+func (d *Server) getPrincipal(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if p, ok := d.principalOf(w, r); ok {
@@ -108,8 +105,8 @@ func (d *Daemon) getPrincipal(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) putPrincipal(w http.ResponseWriter, r *http.Request) {
-	namespace, id := r.PathValue("namespace"), r.PathValue("principal")
+func (d *Server) putPrincipal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("principal")
 	var spec genv1.PrincipalSpec
 	if err := strictly(r, &spec); err != nil {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, err.Error())
@@ -125,27 +122,27 @@ func (d *Daemon) putPrincipal(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// As the daemon: an id a deleted principal had is never made again,
+	// As the server: an id a deleted principal had is never made again,
 	// because a broker may hold grants under it.
-	if d.retired[volumeKey{namespace, id}] {
+	if d.retired[id] {
 		refuse(w, http.StatusConflict, genv1.ErrorCodePrincipalRetired, "that id was a principal's, which was deleted, and an id is never reused: "+id)
 		return
 	}
-	if existing, ok := d.principals[volumeKey{namespace, id}]; ok {
+	if existing, ok := d.principals[id]; ok {
 		existing.Labels = labels
 		reply(w, http.StatusOK, clonePrincipal(*existing))
 		return
 	}
-	p := &genv1.Principal{Id: id, Namespace: &namespace, Labels: labels, CreatedBy: d.creatorOf(r), CreatedAt: d.now().UTC()}
+	p := &genv1.Principal{Id: id, Labels: labels, CreatedBy: d.creatorOf(r), CreatedAt: d.now().UTC()}
 	if d.principals == nil {
-		d.principals = map[volumeKey]*genv1.Principal{}
+		d.principals = map[string]*genv1.Principal{}
 	}
-	d.principals[volumeKey{namespace, id}] = p
+	d.principals[id] = p
 	reply(w, http.StatusCreated, clonePrincipal(*p))
 }
 
-func (d *Daemon) deletePrincipal(w http.ResponseWriter, r *http.Request) {
-	namespace, id := r.PathValue("namespace"), r.PathValue("principal")
+func (d *Server) deletePrincipal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("principal")
 	if !principalID.MatchString(id) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a principal id is letters, digits, '_', '.' and '-'")
 		return
@@ -154,13 +151,13 @@ func (d *Daemon) deletePrincipal(w http.ResponseWriter, r *http.Request) {
 	defer d.mu.Unlock()
 	var using []string
 	for _, s := range d.sandboxes {
-		if s.in(namespace) && valueOf(s.record.Principal) == id {
+		if valueOf(s.record.Principal) == id {
 			using = append(using, "sandbox "+s.record.Id.String())
 		}
 	}
-	for key, v := range d.volumes {
-		if key.namespace == namespace && v.principal == id {
-			using = append(using, "volume "+key.name)
+	for name, v := range d.volumes {
+		if v.principal == id {
+			using = append(using, "volume "+name)
 		}
 	}
 	if len(using) > 0 {
@@ -168,19 +165,19 @@ func (d *Daemon) deletePrincipal(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodePrincipalInUse, strings.Join(using, ", ")+" uses "+id)
 		return
 	}
-	if _, ok := d.principals[volumeKey{namespace, id}]; ok {
-		delete(d.principals, volumeKey{namespace, id})
+	if _, ok := d.principals[id]; ok {
+		delete(d.principals, id)
 		if d.retired == nil {
-			d.retired = map[volumeKey]bool{}
+			d.retired = map[string]bool{}
 		}
-		d.retired[volumeKey{namespace, id}] = true
+		d.retired[id] = true
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// getBrokerTrusted reads a broker's trusted plane, as the daemon does: what
-// the plane answered, marked as the broker's, or the daemon's own refusal.
-func (d *Daemon) getBrokerTrusted(w http.ResponseWriter, r *http.Request) {
+// getBrokerTrusted reads a broker's trusted plane, as the server does: what
+// the plane answered, marked as the broker's, or the server's own refusal.
+func (d *Server) getBrokerTrusted(w http.ResponseWriter, r *http.Request) {
 	broker, path := r.PathValue("broker"), r.PathValue("path")
 	if !trustedPath(path) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a trusted plane is asked only for a path under .well-known/, with no '..' in it")
@@ -220,7 +217,7 @@ func (d *Daemon) getBrokerTrusted(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// trustedPath is the daemon's rule for what a trusted plane is asked for.
+// trustedPath is the server's rule for what a trusted plane is asked for.
 func trustedPath(path string) bool {
 	if !strings.HasPrefix(path, ".well-known/") || len(path) > 1024 || strings.ContainsAny(path, "?#\\") {
 		return false
@@ -233,8 +230,8 @@ func trustedPath(path string) bool {
 	return true
 }
 
-func (d *Daemon) moveVolume(w http.ResponseWriter, r *http.Request) {
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+func (d *Server) moveVolume(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
 	var body genv1.VolumePrincipal
 	if err := strictly(r, &body); err != nil || !principalID.MatchString(body.Principal) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "the body is {\"principal\": \"<id>\"}")
@@ -242,11 +239,11 @@ func (d *Daemon) moveVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if _, ok := d.principals[volumeKey{namespace, body.Principal}]; !ok {
+	if _, ok := d.principals[body.Principal]; !ok {
 		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no such principal: "+body.Principal)
 		return
 	}
-	v, ok := d.volumes[volumeKey{namespace, name}]
+	v, ok := d.volumes[name]
 	if !ok {
 		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no such volume: "+name)
 		return
@@ -256,14 +253,14 @@ func (d *Daemon) moveVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.principal = body.Principal
-	reply(w, http.StatusOK, volumeOf(namespace, name, v))
+	reply(w, http.StatusOK, volumeOf(name, v))
 }
 
-// actsFor is why a sandbox in namespace may not be bound to principal and
+// actsFor is why a sandbox may not be bound to principal and
 // have v, or empty. Caller holds d.mu.
-func (d *Daemon) actsFor(namespace, principal string, v *volume) (genv1.ErrorCode, int, string) {
+func (d *Server) actsFor(principal string, v *volume) (genv1.ErrorCode, int, string) {
 	if principal != "" {
-		if _, ok := d.principals[volumeKey{namespace, principal}]; !ok {
+		if _, ok := d.principals[principal]; !ok {
 			return genv1.ErrorCodeNotFound, http.StatusNotFound, "no such principal: " + principal
 		}
 	}

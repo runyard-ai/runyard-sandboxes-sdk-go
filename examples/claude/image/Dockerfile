@@ -24,7 +24,7 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 COPY claude-broker.sh /etc/profile.d/claude-broker.sh
 
 # Root, inside the machine. The VM is the boundary here, not a uid within it —
-# and a daemon that builds root filesystems without privilege cannot yet keep
+# and a server that builds root filesystems without privilege cannot yet keep
 # an image's file owners, so a non-root user would find its own home owned by
 # somebody else and Claude unable to save anything in it.
 COPY claude.json /root/.claude.json

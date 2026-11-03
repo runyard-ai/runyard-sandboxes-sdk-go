@@ -10,13 +10,13 @@ Three pieces, each usable without the others:
 | | |
 |---|---|
 | [`image/`](image) | an OCI image: Node, the Claude CLI, and a login script that points it at the broker |
-| the `claude` broker | run on the daemon's host by its operator: it holds the key and forwards messages |
+| the `claude` broker | run on the server's host by its operator: it holds the key and forwards messages |
 | [`main.go`](main.go) | the program that makes the sandbox |
 
 ## 1. The image
 
-Built wherever there is Docker, and pushed wherever the daemon can pull from. A
-registry on the daemon's own host is the simple case: the daemon speaks plain
+Built wherever there is Docker, and pushed wherever the server can pull from. A
+registry on the server's own host is the simple case: the server speaks plain
 HTTP to one on loopback, as Docker does.
 
 ```sh
@@ -27,10 +27,10 @@ docker push localhost:5001/runyard/claude-sandbox:latest
 
 ## 2. The broker
 
-The daemon's operator runs the Claude broker on its host and declares it as the
+The server's operator runs the Claude broker on its host and declares it as the
 shared broker `claude`. The credential it holds is an Anthropic API key, or a
 subscription token from `claude setup-token`. `client.Info` lists the brokers a
-daemon declares; this example needs one called `claude`.
+server declares; this example needs one called `claude`.
 
 ## 3. The sandbox
 

@@ -126,7 +126,6 @@ const (
 	ErrorCodePrincipalDeleting  ErrorCode = "principal_deleting"
 	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
 	ErrorCodePrincipalRetired   ErrorCode = "principal_retired"
-	ErrorCodeQuotaExceeded      ErrorCode = "quota_exceeded"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
 	ErrorCodeSandboxUnreachable ErrorCode = "sandbox_unreachable"
@@ -137,6 +136,7 @@ const (
 	ErrorCodeUnauthorized       ErrorCode = "unauthorized"
 	ErrorCodeUnsupportedSpec    ErrorCode = "unsupported_spec"
 	ErrorCodeUpstreamError      ErrorCode = "upstream_error"
+	ErrorCodeVolumeExists       ErrorCode = "volume_exists"
 	ErrorCodeVolumeInUse        ErrorCode = "volume_in_use"
 	ErrorCodeVolumePrincipal    ErrorCode = "volume_principal"
 )
@@ -166,12 +166,6 @@ const (
 	Window1h  MetricsWindow = "1h"
 	Window24h MetricsWindow = "24h"
 	Window6h  MetricsWindow = "6h"
-)
-
-// Defines values for NamespaceState.
-const (
-	NamespaceActive   NamespaceState = "active"
-	NamespaceDeleting NamespaceState = "deleting"
 )
 
 // Defines values for ProcessState.
@@ -229,9 +223,6 @@ const (
 	ImagesRead      Scope = "images.read"
 	ImagesWrite     Scope = "images.write"
 	KeysAdmin       Scope = "keys.admin"
-	MembersAdmin    Scope = "members.admin"
-	NamespacesRead  Scope = "namespaces.read"
-	NamespacesWrite Scope = "namespaces.write"
 	NetworkWrite    Scope = "network.write"
 	PrincipalsRead  Scope = "principals.read"
 	PrincipalsWrite Scope = "principals.write"
@@ -297,7 +288,7 @@ const (
 // ActivityHeaders Each header's values, by its name.
 type ActivityHeaders map[string][]string
 
-// AuthMethods How a person may sign in to this daemon's console.
+// AuthMethods How a person may sign in to this server's console.
 type AuthMethods struct {
 	// Google Whether `GET /v1/auth/google` signs somebody in here.
 	Google bool `json:"google"`
@@ -306,9 +297,9 @@ type AuthMethods struct {
 	Password bool `json:"password"`
 }
 
-// Broker A shared broker, as its namespace declares it.
+// Broker A shared broker, as it was declared.
 type Broker struct {
-	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this server dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/activity`), and any other connection's bytes as they were sent. `jwt`: this server serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 	Auth *BrokerAuth `json:"auth,omitempty"`
 
 	// Ca The PEM it verifies the upstream with, when it has its own.
@@ -349,14 +340,13 @@ type BrokerActivity struct {
 	Id BrokerActivityID `json:"id"`
 
 	// Kind What kind of broker it went through, when it reached one.
-	Kind      *BrokerActivityKind `json:"kind,omitempty"`
-	Namespace string              `json:"namespace"`
+	Kind *BrokerActivityKind `json:"kind,omitempty"`
 
 	// Outcome `ok`; `refused` here — not given, at the sandbox's limit, not
 	// naming a broker — with nothing sent anywhere; `unreachable`, a
 	// broker that could not be reached or would not take it; `broken`,
 	// cut part of the way; `lost`, standing for records that came faster
-	// than the daemon could keep them, how many in `reason`.
+	// than the server could keep them, how many in `reason`.
 	Outcome BrokerActivityOutcome `json:"outcome"`
 
 	// Principal The principal the sandbox was bound to, when it was.
@@ -376,7 +366,7 @@ type BrokerActivity struct {
 	// Sandbox Whose exchange it was. Absent for a record that stands for others (`lost`).
 	Sandbox *openapi_types.UUID `json:"sandbox,omitempty"`
 
-	// Seq Its place in the namespace's feed.
+	// Seq Its place in the feed.
 	Seq       int64              `json:"seq"`
 	StartedAt time.Time          `json:"startedAt"`
 	Type      BrokerActivityType `json:"type"`
@@ -389,7 +379,7 @@ type BrokerActivityKind string
 // naming a broker — with nothing sent anywhere; `unreachable`, a
 // broker that could not be reached or would not take it; `broken`,
 // cut part of the way; `lost`, standing for records that came faster
-// than the daemon could keep them, how many in `reason`.
+// than the server could keep them, how many in `reason`.
 type BrokerActivityOutcome string
 
 // BrokerActivityType defines model for BrokerActivity.Type.
@@ -438,10 +428,10 @@ type BrokerActivityResponse struct {
 	Status  int             `json:"status"`
 }
 
-// BrokerAuth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+// BrokerAuth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this server dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/activity`), and any other connection's bytes as they were sent. `jwt`: this server serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 type BrokerAuth string
 
-// BrokerKind `shared` is the namespace's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+// BrokerKind `shared` is the shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
 type BrokerKind string
 
 // BrokerName Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
@@ -454,7 +444,7 @@ type BrokerPage struct {
 
 // BrokerUpstream Where a broker's connections are carried, and how to trust it.
 type BrokerUpstream struct {
-	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this daemon dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/namespaces/{namespace}/activity`), and any other connection's bytes as they were sent. `jwt`: this daemon serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
+	// Auth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this server dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/activity`), and any other connection's bytes as they were sent. `jwt`: this server serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
 	Auth *BrokerAuth `json:"auth,omitempty"`
 
 	// Ca PEM certificates to verify the upstream with, for one with a private CA. Absent uses this host's roots. A certificate, not a key: there is nowhere in this document for a secret to go.
@@ -463,7 +453,7 @@ type BrokerUpstream struct {
 	// Description What it is for, for a person — in this API and in the console.
 	Description *string `json:"description,omitempty"`
 
-	// TrustedUrl The broker's trusted plane, which only this daemon reaches, with a principal's trusted certificate: `https`, with no user or password, verified with `ca` as `url` is. With `auth: jwt` it may be `http` too, and is reached with a token made from that certificate, as `url` is. Absent is a broker with no trusted plane. Only a shared broker's is ever dialled — see `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
+	// TrustedUrl The broker's trusted plane, which only this server reaches, with a principal's trusted certificate: `https`, with no user or password, verified with `ca` as `url` is. With `auth: jwt` it may be `http` too, and is reached with a token made from that certificate, as `url` is. Absent is a broker with no trusted plane. Only a shared broker's is ever dialled — see `GET .../principals/{principalId}/brokers/{brokerName}/trusted/{path}`.
 	TrustedUrl *string `json:"trustedUrl,omitempty"`
 
 	// Url With `auth: certificate`, `https`, always: the identity is a TLS client certificate, and plain http has nowhere to attach one. Only the host and port are used: the sandbox's request carries its own path. With `auth: jwt`, `https` or `http` — http is in the clear, and is for an upstream on loopback or a private link — and its path is a prefix: a sandbox's `/mcp` goes to this path, without its trailing slash, then `/mcp`.
@@ -484,12 +474,9 @@ type Build struct {
 	Image *string `json:"image,omitempty"`
 
 	// ImageId The cached image a sandbox boots, once `succeeded`.
-	ImageId *string `json:"imageId,omitempty"`
-
-	// Namespace The namespace it is in, as its path says: written in the body too, so that a build copied out of its URL still says where it is.
-	Namespace  *NamespaceName `json:"namespace,omitempty"`
-	Recipe     string         `json:"recipe"`
-	Repository string         `json:"repository"`
+	ImageId    *string `json:"imageId,omitempty"`
+	Recipe     string  `json:"recipe"`
+	Repository string  `json:"repository"`
 
 	// SandboxId The machine its steps run in, while it runs.
 	SandboxId *string    `json:"sandboxId,omitempty"`
@@ -501,7 +488,7 @@ type Build struct {
 	// | `running` | pulling its `FROM`, running its steps, or pushing |
 	// | `succeeded` | pushed and cached: `image` and `imageId` say what |
 	// | `failed` | it will not succeed; `error` says why |
-	// | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+	// | `cancelled` | stopped by `DELETE`, or by the server going down |
 	State BuildState  `json:"state"`
 	Steps []BuildStep `json:"steps"`
 }
@@ -532,12 +519,12 @@ type BuildRequest struct {
 // | `running` | pulling its `FROM`, running its steps, or pushing |
 // | `succeeded` | pushed and cached: `image` and `imageId` say what |
 // | `failed` | it will not succeed; `error` says why |
-// | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+// | `cancelled` | stopped by `DELETE`, or by the server going down |
 type BuildState string
 
 // BuildStep defines model for BuildStep.
 type BuildStep struct {
-	// Cached It was not run: an earlier build in the namespace ran the same step over the same image and the same steps before it, and its layer is reused. A step changed by the recipe, and every one after it, runs again; one that fetches from the network is not run again to see whether what it fetches changed.
+	// Cached It was not run: an earlier build ran the same step over the same image and the same steps before it, and its layer is reused. A step changed by the recipe, and every one after it, runs again; one that fetches from the network is not run again to see whether what it fetches changed.
 	Cached     *bool      `json:"cached,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 
@@ -649,7 +636,7 @@ type CostCharge struct {
 // CostKind defines model for CostKind.
 type CostKind string
 
-// CostRates What an hour of each thing costs now, in `currency`, as the daemon's configuration names it.
+// CostRates What an hour of each thing costs now, in `currency`, as the server's configuration names it.
 type CostRates struct {
 	Currency string `json:"currency"`
 
@@ -673,10 +660,7 @@ type CostReport struct {
 	// From The first step's start.
 	From time.Time `json:"from"`
 
-	// Namespaces Each namespace's, the most expensive first.
-	Namespaces []NamespaceCost `json:"namespaces"`
-
-	// Rates What an hour of each thing costs now, in `currency`, as the daemon's configuration names it.
+	// Rates What an hour of each thing costs now, in `currency`, as the server's configuration names it.
 	Rates CostRates `json:"rates"`
 
 	// Resources Everything that cost anything in the window, or was held in it, live or not, the most expensive first: at most 500.
@@ -733,9 +717,6 @@ type CostResource struct {
 
 	// Name What a person knows it by, when its id is not that — an image's reference, a tunnel's name.
 	Name *string `json:"name,omitempty"`
-
-	// Namespace A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-	Namespace NamespaceName `json:"namespace"`
 
 	// Paused A sandbox paused now, charged for its memory and not its vCPUs: a pause stops them and keeps the memory.
 	Paused *bool `json:"paused,omitempty"`
@@ -1073,9 +1054,6 @@ type Error struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
-		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-		// which is the same on every host: its next move is to free something,
-		// or to have the quota raised.
 		Code ErrorCode `json:"code"`
 
 		// Message For a person reading a log. It may quote something a sandbox produced, so do not render it as anything but text.
@@ -1090,9 +1068,6 @@ type Error struct {
 // that name something about this HOST rather than about the request, and
 // each has its own next move: pull something else, go to a different host,
 // come back later. A shared `bad_request` cannot tell them apart.
-// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-// which is the same on every host: its next move is to free something,
-// or to have the quota raised.
 type ErrorCode string
 
 // FirewallRule defines model for FirewallRule.
@@ -1120,9 +1095,6 @@ type GapError struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
-		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-		// which is the same on every host: its next move is to free something,
-		// or to have the quota raised.
 		Code    ErrorCode `json:"code"`
 		Message string    `json:"message"`
 	} `json:"error"`
@@ -1199,13 +1171,13 @@ type HostCommitments struct {
 	// Running The running sandboxes, paused ones included, which the CPUs and memory are of — as `sandboxes.running` in the host's history.
 	Running int `json:"running"`
 
-	// Volumes The volumes, held by a sandbox or not, which the disk is of — as `GET /v1/namespaces/{namespace}/volumes` lists them.
+	// Volumes The volumes, held by a sandbox or not, which the disk is of — as `GET /v1/volumes` lists them.
 	Volumes int `json:"volumes"`
 }
 
-// HostCounts Each is what its own list would hold, filters left off: every sandbox `GET /v1/namespaces/{namespace}/sandboxes` lists, every tunnel `GET /v1/namespaces/{namespace}/tunnels` does, and so on. Absent is a count this key may not read. For a key that acts only on its `own` sandboxes the sandboxes, tunnels and volumes are its own, as those lists are, and the images and shared brokers are the namespace's, as theirs are.
+// HostCounts Each is what its own list would hold, filters left off: every sandbox `GET /v1/sandboxes` lists, every tunnel `GET /v1/tunnels` does, and so on. Absent is a count this key may not read. For a key that acts only on its `own` sandboxes the sandboxes, tunnels and volumes are its own, as those lists are, and the images and shared brokers are all of them, as theirs are.
 type HostCounts struct {
-	// Brokers The namespace's shared brokers, as `GET /v1/namespaces/{namespace}/brokers` lists them.
+	// Brokers The shared brokers, as `GET /v1/brokers` lists them.
 	Brokers   *int `json:"brokers,omitempty"`
 	Images    *int `json:"images,omitempty"`
 	Sandboxes *int `json:"sandboxes,omitempty"`
@@ -1249,7 +1221,7 @@ type HostInfo struct {
 	// Id Stable for the life of the deployment. It is the host in every sandbox's identity, which is why it exists at all — a display name would be renamed one day and take every issued identity with it.
 	Id string `json:"id"`
 
-	// Instance This daemon's name among those on this host (`-instance`, `main` unless it was given another): one to six lowercase letters and digits. Its state directory is bound to it, and everything it makes on the host outside a sandbox's namespace is named by it — its table (`runyard_sandboxes_<instance>`), its sandboxes' namespaces (`runyard-<instance>-<id>`) and their links (`ry<instance>-<slot>`) — so that several daemons, each with a name, a state directory, an address and a subnet of its own, run side by side on one host.
+	// Instance This server's name among those on this host (`-instance`, `main` unless it was given another): one to six lowercase letters and digits. Its state directory is bound to it, and everything it makes on the host outside a sandbox's namespace is named by it — its table (`runyard_sandboxes_<instance>`), its sandboxes' namespaces (`runyard-<instance>-<id>`) and their links (`ry<instance>-<slot>`) — so that several servers, each with a name, a state directory, an address and a subnet of its own, run side by side on one host.
 	Instance string `json:"instance"`
 
 	// Limits What this host will accept, advertised so bounds agree.
@@ -1273,12 +1245,12 @@ type HostInfo struct {
 	// A sandbox's firewall is in its own namespace, but what it is allowed to
 	// send to the internet crosses this host's own stack, where every
 	// firewall on this host runs and a drop in any of them is final. So what
-	// this daemon changed to let it out is said here, and so is anything it
+	// this server changed to let it out is said here, and so is anything it
 	// found in the way that it did not change — a firewall somebody else
 	// chose is reported rather than edited.
 	Network *HostNetwork `json:"network,omitempty"`
 
-	// Protocol The wire protocol this build speaks. Checked at startup. 2 is the first where a sandbox's id is a UUID this daemon mints and creation is `POST /v1/namespaces/{namespace}/sandboxes`; a caller written against 1 names its sandboxes, and every such call is now a `400`. 3 is the first where `spec.brokers` is a list of objects rather than of names, so a one-off upstream can be written into a spec; a list of strings is now a `400`.
+	// Protocol The wire protocol this build speaks. Checked at startup. 2 is the first where a sandbox's id is a UUID this server mints and creation is `POST /v1/sandboxes`; a caller written against 1 names its sandboxes, and every such call is now a `400`. 3 is the first where `spec.brokers` is a list of objects rather than of names, so a one-off upstream can be written into a spec; a list of strings is now a `400`.
 	Protocol int `json:"protocol"`
 }
 
@@ -1293,7 +1265,7 @@ type HostMetricsHistory struct {
 	// Points Oldest first.
 	Points []HostUsagePoint `json:"points"`
 
-	// StepSeconds How far apart the points are meant to be. A gap wider than this is time the daemon was not running.
+	// StepSeconds How far apart the points are meant to be. A gap wider than this is time the server was not running.
 	StepSeconds int `json:"stepSeconds"`
 
 	// Window How far back. `15m` and `1h` are a reading every ten seconds; `6h` and `24h` are one point a minute, each the average of the readings in it.
@@ -1306,7 +1278,7 @@ type HostMetricsHistory struct {
 // A sandbox's firewall is in its own namespace, but what it is allowed to
 // send to the internet crosses this host's own stack, where every
 // firewall on this host runs and a drop in any of them is final. So what
-// this daemon changed to let it out is said here, and so is anything it
+// this server changed to let it out is said here, and so is anything it
 // found in the way that it did not change — a firewall somebody else
 // chose is reported rather than edited.
 type HostNetwork struct {
@@ -1325,7 +1297,7 @@ type HostNetwork struct {
 	// Forwarding Whether this host forwards IPv4, without which nothing leaves it.
 	Forwarding bool `json:"forwarding"`
 
-	// Subnet The range each sandbox's /30 is drawn from: the daemon's `-subnet`, `172.30.0.0/16` unless it was given another.
+	// Subnet The range each sandbox's /30 is drawn from: the server's `-subnet`, `172.30.0.0/16` unless it was given another.
 	Subnet *string `json:"subnet,omitempty"`
 
 	// Warnings What stands in the way, each with what to do about it.
@@ -1355,11 +1327,11 @@ type HostTunnels struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 
 	// Relay This host's relay: the separate service that carries visitors from the
-	// gateway into sandboxes, and keeps doing so while this daemon restarts.
+	// gateway into sandboxes, and keeps doing so while this server restarts.
 	Relay TunnelRelay `json:"relay"`
 }
 
-// HostUsagePoint One reading of the host. A field the host could not be read for is absent, and the CPU share is absent on the first reading after the daemon starts: it is a difference between two.
+// HostUsagePoint One reading of the host. A field the host could not be read for is absent, and the CPU share is absent on the first reading after the server starts: it is a difference between two.
 type HostUsagePoint struct {
 	At time.Time `json:"at"`
 
@@ -1478,13 +1450,13 @@ type Interface struct {
 	Mac  *string `json:"mac,omitempty"`
 	Mask int     `json:"mask"`
 
-	// Namespace The sandbox's network namespace, for an operator: `ip netns exec <namespace> nft list ruleset` is its firewall as the kernel has it. Named for this daemon's instance and the sandbox.
+	// Namespace The sandbox's network namespace, for an operator: `ip netns exec <namespace> nft list ruleset` is its firewall as the kernel has it. Named for this server's instance and the sandbox.
 	Namespace string `json:"namespace"`
 
 	// Tap The guest's device, inside `namespace`.
 	Tap string `json:"tap"`
 
-	// Veth The sandbox's only device in the host's own namespace: its link to the host, for an operator reading `ip link` there. Named for this daemon's instance and the sandbox's /30, in hexadecimal.
+	// Veth The sandbox's only device in the host's own namespace: its link to the host, for an operator reading `ip link` there. Named for this server's instance and the sandbox's /30, in hexadecimal.
 	Veth string `json:"veth"`
 }
 
@@ -1497,9 +1469,6 @@ type Key struct {
 	// LastUsedAt When it was last accepted, to the minute. Coarse on purpose: this is for deciding whether a key is still in use, and a precise timestamp on every request is a write on every request.
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 	Name       string     `json:"name"`
-
-	// Namespace The namespace it is bound to. Absent for a global key.
-	Namespace *NamespaceName `json:"namespace,omitempty"`
 
 	// Owner Who it belongs to. It does what its scopes say and its owner may still do, whichever is less, and nothing once its owner is not let in any more.
 	Owner openapi_types.Email `json:"owner"`
@@ -1522,16 +1491,16 @@ type Key struct {
 	// To an `own` key:
 	//
 	// - **A sandbox that is not its own is one that does not exist.** Every
-	//   route under `/v1/namespaces/{namespace}/sandboxes/{sandboxId}` answers `404`, with one
+	//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
 	//   body, for somebody else's sandbox and for an id nothing has — before
 	//   anything else about the request is looked at, so no other answer
 	//   tells the two apart.
-	// - **A list holds only its own**: `GET /v1/namespaces/{namespace}/sandboxes`, `/v1/namespaces/{namespace}/volumes`
-	//   and `/v1/namespaces/{namespace}/tunnels`, and the counts of them in `GET /v1/namespaces/{namespace}/counts`.
+	// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+	//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
 	// - **A volume is its own when a sandbox it made first laid it down**
 	//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
 	//   own or a name no volume has; any other is a `403`, which says
-	//   nothing of the volume. `DELETE /v1/namespaces/{namespace}/volumes/{name}` on one that is
+	//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
 	//   not its own answers as for a name no volume has.
 	// - **And a volume it laid down is its alone to attach.** No other
 	//   caller boots a sandbox from it — not another key, not one that
@@ -1541,8 +1510,7 @@ type Key struct {
 	//   could drop it still can, which is how its name is had again.
 	// - **What speaks for the whole host is refused**, `403`: what the host
 	//   has been using and has promised (`GET /v1/host/…`), and declaring
-	//   or withdrawing a shared broker, which moves every sandbox in its
-	//   namespace given it.
+	//   or withdrawing a shared broker, which moves every sandbox given it.
 	// - **How many sandboxes use an image or a shared broker is left out**:
 	//   most of them are not its own.
 	//
@@ -1566,9 +1534,6 @@ type KeyCreated struct {
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 	Name       string     `json:"name"`
 
-	// Namespace The namespace it is bound to. Absent for a global key.
-	Namespace *NamespaceName `json:"namespace,omitempty"`
-
 	// Owner Who it belongs to. It does what its scopes say and its owner may still do, whichever is less, and nothing once its owner is not let in any more.
 	Owner openapi_types.Email `json:"owner"`
 
@@ -1590,16 +1555,16 @@ type KeyCreated struct {
 	// To an `own` key:
 	//
 	// - **A sandbox that is not its own is one that does not exist.** Every
-	//   route under `/v1/namespaces/{namespace}/sandboxes/{sandboxId}` answers `404`, with one
+	//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
 	//   body, for somebody else's sandbox and for an id nothing has — before
 	//   anything else about the request is looked at, so no other answer
 	//   tells the two apart.
-	// - **A list holds only its own**: `GET /v1/namespaces/{namespace}/sandboxes`, `/v1/namespaces/{namespace}/volumes`
-	//   and `/v1/namespaces/{namespace}/tunnels`, and the counts of them in `GET /v1/namespaces/{namespace}/counts`.
+	// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+	//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
 	// - **A volume is its own when a sandbox it made first laid it down**
 	//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
 	//   own or a name no volume has; any other is a `403`, which says
-	//   nothing of the volume. `DELETE /v1/namespaces/{namespace}/volumes/{name}` on one that is
+	//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
 	//   not its own answers as for a name no volume has.
 	// - **And a volume it laid down is its alone to attach.** No other
 	//   caller boots a sandbox from it — not another key, not one that
@@ -1609,8 +1574,7 @@ type KeyCreated struct {
 	//   could drop it still can, which is how its name is had again.
 	// - **What speaks for the whole host is refused**, `403`: what the host
 	//   has been using and has promised (`GET /v1/host/…`), and declaring
-	//   or withdrawing a shared broker, which moves every sandbox in its
-	//   namespace given it.
+	//   or withdrawing a shared broker, which moves every sandbox given it.
 	// - **How many sandboxes use an image or a shared broker is left out**:
 	//   most of them are not its own.
 	//
@@ -1653,16 +1617,16 @@ type KeyPage struct {
 // To an `own` key:
 //
 //   - **A sandbox that is not its own is one that does not exist.** Every
-//     route under `/v1/namespaces/{namespace}/sandboxes/{sandboxId}` answers `404`, with one
+//     route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
 //     body, for somebody else's sandbox and for an id nothing has — before
 //     anything else about the request is looked at, so no other answer
 //     tells the two apart.
-//   - **A list holds only its own**: `GET /v1/namespaces/{namespace}/sandboxes`, `/v1/namespaces/{namespace}/volumes`
-//     and `/v1/namespaces/{namespace}/tunnels`, and the counts of them in `GET /v1/namespaces/{namespace}/counts`.
+//   - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+//     and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
 //   - **A volume is its own when a sandbox it made first laid it down**
 //     (`Volume.createdBy`). A sandbox it makes may name a volume of its
 //     own or a name no volume has; any other is a `403`, which says
-//     nothing of the volume. `DELETE /v1/namespaces/{namespace}/volumes/{name}` on one that is
+//     nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
 //     not its own answers as for a name no volume has.
 //   - **And a volume it laid down is its alone to attach.** No other
 //     caller boots a sandbox from it — not another key, not one that
@@ -1672,8 +1636,7 @@ type KeyPage struct {
 //     could drop it still can, which is how its name is had again.
 //   - **What speaks for the whole host is refused**, `403`: what the host
 //     has been using and has promised (`GET /v1/host/…`), and declaring
-//     or withdrawing a shared broker, which moves every sandbox in its
-//     namespace given it.
+//     or withdrawing a shared broker, which moves every sandbox given it.
 //   - **How many sandboxes use an image or a shared broker is left out**:
 //     most of them are not its own.
 //
@@ -1719,7 +1682,7 @@ type KillConnections struct {
 
 // Me Who a call is made as, and what they may do with it now.
 type Me struct {
-	// Admin Named on this daemon's command line as an administrator, and so holding every scope.
+	// Admin Named on this server's command line as an administrator, and so holding every scope.
 	Admin bool                `json:"admin"`
 	Email openapi_types.Email `json:"email"`
 
@@ -1727,9 +1690,6 @@ type Me struct {
 	Key *struct {
 		Id   string `json:"id"`
 		Name string `json:"name"`
-
-		// Namespace The namespace the key is bound to. Absent for a global key. A client holding a key bound to a namespace learns it here, once, rather than being told it a second time.
-		Namespace *NamespaceName `json:"namespace,omitempty"`
 
 		// Sandboxes | reach | which sandboxes and volumes the key acts on |
 		// |---|---|
@@ -1749,16 +1709,16 @@ type Me struct {
 		// To an `own` key:
 		//
 		// - **A sandbox that is not its own is one that does not exist.** Every
-		//   route under `/v1/namespaces/{namespace}/sandboxes/{sandboxId}` answers `404`, with one
+		//   route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
 		//   body, for somebody else's sandbox and for an id nothing has — before
 		//   anything else about the request is looked at, so no other answer
 		//   tells the two apart.
-		// - **A list holds only its own**: `GET /v1/namespaces/{namespace}/sandboxes`, `/v1/namespaces/{namespace}/volumes`
-		//   and `/v1/namespaces/{namespace}/tunnels`, and the counts of them in `GET /v1/namespaces/{namespace}/counts`.
+		// - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+		//   and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
 		// - **A volume is its own when a sandbox it made first laid it down**
 		//   (`Volume.createdBy`). A sandbox it makes may name a volume of its
 		//   own or a name no volume has; any other is a `403`, which says
-		//   nothing of the volume. `DELETE /v1/namespaces/{namespace}/volumes/{name}` on one that is
+		//   nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
 		//   not its own answers as for a name no volume has.
 		// - **And a volume it laid down is its alone to attach.** No other
 		//   caller boots a sandbox from it — not another key, not one that
@@ -1768,8 +1728,7 @@ type Me struct {
 		//   could drop it still can, which is how its name is had again.
 		// - **What speaks for the whole host is refused**, `403`: what the host
 		//   has been using and has promised (`GET /v1/host/…`), and declaring
-		//   or withdrawing a shared broker, which moves every sandbox in its
-		//   namespace given it.
+		//   or withdrawing a shared broker, which moves every sandbox given it.
 		// - **How many sandboxes use an image or a shared broker is left out**:
 		//   most of them are not its own.
 		//
@@ -1785,10 +1744,7 @@ type Me struct {
 	// Name The name Google gave, when the person has signed in.
 	Name *string `json:"name,omitempty"`
 
-	// Namespaces The namespaces this caller reaches, by name: exactly one for a key bound to a namespace; for a global key or a person, the ones they are a member of, or all of them for an administrator. None being deleted.
-	Namespaces *[]NamespaceName `json:"namespaces,omitempty"`
-
-	// Picture Where this daemon serves the picture Google gave, when the person has signed in and has one: `GET /v1/me/picture`, with the picture's version, so that the address changes when it does.
+	// Picture Where this server serves the picture Google gave, when the person has signed in and has one: `GET /v1/me/picture`, with the picture's version, so that the address changes when it does.
 	Picture *string `json:"picture,omitempty"`
 
 	// Scopes What this call may do: everything its person may, for a session; for a key, those of its scopes its owner still may.
@@ -1802,221 +1758,8 @@ type Me struct {
 // MeVia defines model for Me.Via.
 type MeVia string
 
-// Member defines model for Member.
-type Member struct {
-	AddedAt time.Time `json:"addedAt"`
-
-	// EffectiveScopes `scopes` intersected with what this daemon's configuration lets the person do, now: what they may actually do here. Empty for somebody the configuration no longer lets in.
-	EffectiveScopes []Scope             `json:"effectiveScopes"`
-	Email           openapi_types.Email `json:"email"`
-
-	// Scopes What the membership says they may do here.
-	Scopes []Scope `json:"scopes"`
-}
-
-// MemberList defines model for MemberList.
-type MemberList struct {
-	Members []Member `json:"members"`
-}
-
 // MetricsWindow How far back. `15m` and `1h` are a reading every ten seconds; `6h` and `24h` are one point a minute, each the average of the readings in it.
 type MetricsWindow string
-
-// Namespace defines model for Namespace.
-type Namespace struct {
-	CreatedAt time.Time `json:"createdAt"`
-
-	// CreatedBy Who made it.
-	CreatedBy openapi_types.Email `json:"createdBy"`
-
-	// Held What a namespace's sandboxes and volumes hold of the host now, beside
-	// its `quota`: on a read of one namespace and on the answer to setting
-	// its quota, and absent from a list and from a create. Counted exactly
-	// as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
-	// or `unreachable`; `memoryBytes` for those and `paused` ones;
-	// `diskBytes` for every volume, held by a sandbox in any state or by
-	// none, at the size it may grow to.
-	//
-	// It may be above a ceiling: a ceiling lowered below what is held
-	// stops nothing, and refuses what would add to it.
-	Held   *NamespaceHeld    `json:"held,omitempty"`
-	Labels map[string]string `json:"labels"`
-
-	// Name A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-	Name NamespaceName `json:"name"`
-
-	// Quota What a namespace's sandboxes may hold of the host together, each a
-	// ceiling of its own. **A ceiling left out is none**, which is what a
-	// namespace has until one is set; `0` is a ceiling, at which nothing
-	// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
-	// or when the namespace is made.
-	//
-	// What a sandbox holds is what it is charged for (`GET
-	// /v1/namespaces/{namespace}/costs`):
-	//
-	// | | held by a sandbox that is |
-	// |---|---|
-	// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
-	// | `memoryBytes` | those, and `paused`, which keeps its memory |
-	// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
-	//
-	// A create, a start or a resume that would take the namespace past a
-	// ceiling is refused `403` `quota_exceeded`, and the message names the
-	// ceiling, what is held, and by how much it would be passed. Only what
-	// each adds is measured — a create adds all three, a start vCPUs and
-	// memory, a resume vCPUs — so a ceiling lowered below what is held
-	// stops nothing: it refuses what would add to it.
-	Quota NamespaceQuota `json:"quota"`
-
-	// State `deleting` from the moment a delete is asked for: from then on nothing under it answers, every key bound to it is refused, and what it holds is being destroyed. Once nothing is left it is in no answer at all, and its name stays its own.
-	State NamespaceState `json:"state"`
-	Title *string        `json:"title,omitempty"`
-}
-
-// NamespaceState `deleting` from the moment a delete is asked for: from then on nothing under it answers, every key bound to it is refused, and what it holds is being destroyed. Once nothing is left it is in no answer at all, and its name stays its own.
-type NamespaceState string
-
-// NamespaceCost defines model for NamespaceCost.
-type NamespaceCost struct {
-	// Namespace A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-	Namespace NamespaceName `json:"namespace"`
-
-	// PerHour What it costs an hour now.
-	PerHour float64 `json:"perHour"`
-
-	// Total An amount, in the report's currency, by what it was for.
-	Total CostAmounts `json:"total"`
-}
-
-// NamespaceHeld What a namespace's sandboxes and volumes hold of the host now, beside
-// its `quota`: on a read of one namespace and on the answer to setting
-// its quota, and absent from a list and from a create. Counted exactly
-// as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
-// or `unreachable`; `memoryBytes` for those and `paused` ones;
-// `diskBytes` for every volume, held by a sandbox in any state or by
-// none, at the size it may grow to.
-//
-// It may be above a ceiling: a ceiling lowered below what is held
-// stops nothing, and refuses what would add to it.
-type NamespaceHeld struct {
-	// Cpus The vCPUs its sandboxes hold, together.
-	Cpus int64 `json:"cpus"`
-
-	// DiskBytes The disk its sandboxes and volumes hold, together.
-	DiskBytes int64 `json:"diskBytes"`
-
-	// MemoryBytes The memory its sandboxes hold, together.
-	MemoryBytes int64 `json:"memoryBytes"`
-}
-
-// NamespaceHoldings What a namespace holds, counted by kind: everything a forced delete destroys. Its tunnels are its sandboxes', and go with them.
-type NamespaceHoldings struct {
-	Brokers   int `json:"brokers"`
-	Builds    int `json:"builds"`
-	Images    int `json:"images"`
-	Sandboxes int `json:"sandboxes"`
-	Tunnels   int `json:"tunnels"`
-	Volumes   int `json:"volumes"`
-}
-
-// NamespaceList defines model for NamespaceList.
-type NamespaceList struct {
-	Namespaces []Namespace `json:"namespaces"`
-
-	// NextCursor Pass as `cursor` to continue. Absent means the end.
-	NextCursor *string `json:"nextCursor,omitempty"`
-}
-
-// NamespaceName A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-type NamespaceName = string
-
-// NamespaceNotEmpty defines model for NamespaceNotEmpty.
-type NamespaceNotEmpty struct {
-	Error struct {
-		// Code Closed, because callers branch on it and a branch over an open string is
-		// a branch with a silent default.
-		//
-		// `image_unknown`, `unsupported_spec` and `capacity_exceeded` are the three
-		// that name something about this HOST rather than about the request, and
-		// each has its own next move: pull something else, go to a different host,
-		// come back later. A shared `bad_request` cannot tell them apart.
-		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-		// which is the same on every host: its next move is to free something,
-		// or to have the quota raised.
-		Code    ErrorCode `json:"code"`
-		Message string    `json:"message"`
-	} `json:"error"`
-
-	// Holds What a namespace holds, counted by kind: everything a forced delete destroys. Its tunnels are its sandboxes', and go with them.
-	Holds NamespaceHoldings `json:"holds"`
-}
-
-// NamespaceQuota What a namespace's sandboxes may hold of the host together, each a
-// ceiling of its own. **A ceiling left out is none**, which is what a
-// namespace has until one is set; `0` is a ceiling, at which nothing
-// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
-// or when the namespace is made.
-//
-// What a sandbox holds is what it is charged for (`GET
-// /v1/namespaces/{namespace}/costs`):
-//
-// | | held by a sandbox that is |
-// |---|---|
-// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
-// | `memoryBytes` | those, and `paused`, which keeps its memory |
-// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
-//
-// A create, a start or a resume that would take the namespace past a
-// ceiling is refused `403` `quota_exceeded`, and the message names the
-// ceiling, what is held, and by how much it would be passed. Only what
-// each adds is measured — a create adds all three, a start vCPUs and
-// memory, a resume vCPUs — so a ceiling lowered below what is held
-// stops nothing: it refuses what would add to it.
-type NamespaceQuota struct {
-	// Cpus The vCPUs its sandboxes may hold, together.
-	Cpus *int64 `json:"cpus,omitempty"`
-
-	// DiskBytes The disk its sandboxes and volumes may hold, together.
-	DiskBytes *int64 `json:"diskBytes,omitempty"`
-
-	// MemoryBytes The memory its sandboxes may hold, together.
-	MemoryBytes *int64 `json:"memoryBytes,omitempty"`
-}
-
-// NamespaceRequest defines model for NamespaceRequest.
-type NamespaceRequest struct {
-	// Labels The caller's own, stored and echoed and never interpreted.
-	Labels *map[string]string `json:"labels,omitempty"`
-
-	// Name A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-	Name NamespaceName `json:"name"`
-
-	// Quota What a namespace's sandboxes may hold of the host together, each a
-	// ceiling of its own. **A ceiling left out is none**, which is what a
-	// namespace has until one is set; `0` is a ceiling, at which nothing
-	// more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
-	// or when the namespace is made.
-	//
-	// What a sandbox holds is what it is charged for (`GET
-	// /v1/namespaces/{namespace}/costs`):
-	//
-	// | | held by a sandbox that is |
-	// |---|---|
-	// | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
-	// | `memoryBytes` | those, and `paused`, which keeps its memory |
-	// | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
-	//
-	// A create, a start or a resume that would take the namespace past a
-	// ceiling is refused `403` `quota_exceeded`, and the message names the
-	// ceiling, what is held, and by how much it would be passed. Only what
-	// each adds is measured — a create adds all three, a start vCPUs and
-	// memory, a resume vCPUs — so a ceiling lowered below what is held
-	// stops nothing: it refuses what would add to it.
-	Quota *NamespaceQuota `json:"quota,omitempty"`
-
-	// Title What a person reads in a list. The name, when left out.
-	Title *string `json:"title,omitempty"`
-}
 
 // Page defines model for Page.
 type Page struct {
@@ -2024,7 +1767,7 @@ type Page struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
-// PasswordSignIn An address, and the password the daemon's htpasswd file holds for it.
+// PasswordSignIn An address, and the password the server's htpasswd file holds for it.
 type PasswordSignIn struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -2056,13 +1799,12 @@ type Principal struct {
 	// CreatedBy Who made it. When that is a key that acts only on its `own` sandboxes, only that key reaches it.
 	CreatedBy *Creator `json:"createdBy,omitempty"`
 
-	// Id Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
-	Id        PrincipalId       `json:"id"`
-	Labels    map[string]string `json:"labels"`
-	Namespace *NamespaceName    `json:"namespace,omitempty"`
+	// Id Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique on this server.
+	Id     PrincipalId       `json:"id"`
+	Labels map[string]string `json:"labels"`
 }
 
-// PrincipalId Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+// PrincipalId Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique on this server.
 type PrincipalId = string
 
 // PrincipalPage defines model for PrincipalPage.
@@ -2191,11 +1933,11 @@ type Sandbox struct {
 		// BootMs From the hypervisor starting to the agent answering, measured on this host rather than said by the guest. Here because it is the number anybody tuning this watches, and because a sandbox that takes thirty seconds and one that takes two look identical afterwards.
 		BootMs *int `json:"bootMs,omitempty"`
 
-		// Protocol The guest API version the agent says it speaks: what this daemon talks to it in, and nothing more.
+		// Protocol The guest API version the agent says it speaks: what this server talks to it in, and nothing more.
 		Protocol *int `json:"protocol,omitempty"`
 	} `json:"guest,omitempty"`
 
-	// Id Minted by this daemon and never reused on this host, so it names one machine for the whole of its life and no other machine after it. It is what the sandbox's identity is made of.
+	// Id Minted by this server and never reused on this host, so it names one machine for the whole of its life and no other machine after it. It is what the sandbox's identity is made of.
 	Id openapi_types.UUID `json:"id"`
 
 	// Identity What an upstream sees when this sandbox calls it.
@@ -2216,9 +1958,6 @@ type Sandbox struct {
 
 	// Labels The live set, which is what `?label=` matches. `spec.labels` is what it was created with; the two start equal and diverge only when somebody calls `PUT .../labels`. The spec is intent and this is what is true now.
 	Labels *map[string]string `json:"labels,omitempty"`
-
-	// Namespace The namespace it is in, as its path says: written in the body too, so that a sandbox copied out of its URL still says where it is.
-	Namespace *NamespaceName `json:"namespace,omitempty"`
 
 	// Network The network namespace this sandbox was given, and the interface in it. Reported rather than requested: nothing in a spec names a namespace, a device, an address or a subnet, because a caller that could choose one could choose another sandbox's.
 	Network *Interface `json:"network,omitempty"`
@@ -2255,7 +1994,7 @@ type Sandbox struct {
 type SandboxBroker struct {
 	Description *string `json:"description,omitempty"`
 
-	// Kind `shared` is the namespace's shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+	// Kind `shared` is the shared broker of that name. `one_off` is an upstream declared for this sandbox alone. `client` is one a caller of this API is serving right now, with `GET /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
 	Kind BrokerKind `json:"kind"`
 	Name string     `json:"name"`
 
@@ -2271,7 +2010,7 @@ type SandboxBroker struct {
 
 // SandboxBrokerAttach What `PUT .../brokers/{name}` gives a sandbox. An empty object is the shared broker of that name, recorded. Replacing one changes whether it is recorded for the connections made after it, not those open.
 type SandboxBrokerAttach struct {
-	// Record Whether what the sandbox does through it is recorded (`GET /v1/namespaces/{namespace}/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
+	// Record Whether what the sandbox does through it is recorded (`GET /v1/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
 	Record *bool `json:"record,omitempty"`
 
 	// Upstream Where a broker's connections are carried, and how to trust it.
@@ -2288,7 +2027,7 @@ type SandboxBrokerSpec struct {
 	// Name Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
 	Name BrokerName `json:"name"`
 
-	// Record Whether what the sandbox does through it is recorded (`GET /v1/namespaces/{namespace}/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
+	// Record Whether what the sandbox does through it is recorded (`GET /v1/activity`). `false` carries its connections exactly as `true` does and records none of them, nor any refused: for a broker whose caller keeps its own record of every exchange, which a second one would only duplicate.
 	Record *bool `json:"record,omitempty"`
 
 	// Upstream Where a broker's connections are carried, and how to trust it.
@@ -2561,12 +2300,12 @@ type SandboxSocketTable struct {
 //
 // Nothing here names a host path, a device or a credential, except
 // `secrets`, which is write-only and never read back. The rest are this
-// daemon's configuration; the test for whether a field belongs is
+// server's configuration; the test for whether a field belongs is
 // whether it is a property of the MACHINE rather than of the host it
 // happens to be on.
 type SandboxSpec struct {
-	// Brokers What this sandbox may reach: its namespace's shared brokers by
-	// name, and one-off
+	// Brokers What this sandbox may reach: the shared brokers by name, and
+	// one-off
 	// brokers with their upstream written out. See the Brokers section
 	// for the difference.
 	//
@@ -2633,8 +2372,8 @@ type SandboxSpec struct {
 	// Image An OCI reference. Required, and the only required field: everything else has a default this host advertises.
 	Image string `json:"image"`
 
-	// Labels The caller's own, stored and echoed and never interpreted. What this daemon routes on is elsewhere; this is what the caller uses to find a machine again.
-	// `name` is the one with a convention: it is what the console shows in place of the id, and `GET /v1/namespaces/{namespace}/sandboxes?label=name=…` finds it. It is still only a label — not unique, not checked, and not the sandbox's identity, which is the id.
+	// Labels The caller's own, stored and echoed and never interpreted. What this server routes on is elsewhere; this is what the caller uses to find a machine again.
+	// `name` is the one with a convention: it is what the console shows in place of the id, and `GET /v1/sandboxes?label=name=…` finds it. It is still only a label — not unique, not checked, and not the sandbox's identity, which is the id.
 	Labels *map[string]string `json:"labels,omitempty"`
 
 	// Memory With a unit, e.g. `8Gi`.
@@ -2653,7 +2392,7 @@ type SandboxSpec struct {
 	// accident. Nothing is published unless it is written here.
 	Ports *[]PublishedPort `json:"ports,omitempty"`
 
-	// Principal The principal of this namespace the sandbox is, fixed for its
+	// Principal The principal the sandbox is, fixed for its
 	// life: its certificate carries the principal after its own URI, so
 	// a broker sees the same principal whichever sandbox calls. Absent
 	// is none, as a sandbox always was.
@@ -2699,7 +2438,7 @@ type SandboxSpec struct {
 	// the sandbox's disk.
 	//
 	// The values are kept on this host, beside the machine and readable
-	// by this daemon alone, only to boot it again; they go when the
+	// by this server alone, only to boot it again; they go when the
 	// sandbox is deleted. They are handed to the guest over the host's
 	// own channel to its agent, never on its spec disk, its network or
 	// its command line.
@@ -2747,18 +2486,15 @@ type SandboxUsagePoint struct {
 // | `images.read` | see the image cache |
 // | `images.write` | pull and delete images, and build them |
 // | `network.write` | change a running sandbox's egress policy and its brokers |
-// | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
+// | `brokers.admin` | declare, replace and withdraw the shared brokers |
 // | `principals.read` | see principals, and read brokers' trusted documents for them |
 // | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
-// | `activity.read` | read what a namespace's sandboxes did through their brokers, bodies included |
+// | `activity.read` | read what the sandboxes did through their brokers, bodies included |
 // | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
 // | `files.read` | read bytes out of a sandbox, including its process and socket tables |
 // | `files.write` | write bytes into a sandbox |
 // | `exec` | run commands and processes inside a sandbox |
 // | `keys.admin` | mint and revoke its owner's keys, within its own scopes — an administrator's, anybody's |
-// | `namespaces.read` | list namespaces and read one, with its members: global keys and people only |
-// | `namespaces.write` | create namespaces, and manage any namespace's members: global keys and people only |
-// | `members.admin` | manage the members of one namespace: held through a membership, or by a key bound to it, and never by a global key |
 //
 // `exec` is separate from everything because it is arbitrary code in the
 // sandbox, which a caller that only starts and stops machines has no need
@@ -2782,12 +2518,6 @@ type SandboxUsagePoint struct {
 // carries what a sandbox sent and was answered — an API's JSON, a
 // tool's arguments — which a caller that only watches machines has no
 // need of.
-//
-// `namespaces.read` and `namespaces.write` are about every namespace,
-// and a key bound to one can never hold them. `members.admin` is
-// about one, and only a person in it, or a key bound to it, holds it;
-// it never lets its holder give anybody more than the holder has, or
-// than this daemon's configuration lets that person do.
 type Scope string
 
 // SignInError Why a sign-in came back without a session, in `signInError` on the
@@ -2795,7 +2525,7 @@ type Scope string
 //
 // | value | what happened |
 // |---|---|
-// | `not_allowed` | Google vouched for the address, and this daemon does not let it in |
+// | `not_allowed` | Google vouched for the address, and this server does not let it in |
 // | `unverified` | the account's address is not one Google has verified, so it is nobody's |
 // | `expired` | the sign-in was not started here, was used already, or took longer than ten minutes |
 // | `cancelled` | the person did not finish signing in with Google |
@@ -2821,9 +2551,6 @@ type StreamGap struct {
 		// that name something about this HOST rather than about the request, and
 		// each has its own next move: pull something else, go to a different host,
 		// come back later. A shared `bad_request` cannot tell them apart.
-		// `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-		// which is the same on every host: its next move is to free something,
-		// or to have the quota raised.
 		Code    ErrorCode `json:"code"`
 		Message string    `json:"message"`
 	} `json:"error"`
@@ -2872,7 +2599,7 @@ type Tunnel struct {
 	Paused  bool          `json:"paused"`
 	Port    int           `json:"port"`
 
-	// SandboxId The sandbox it publishes a port of. Set in `GET /v1/namespaces/{namespace}/tunnels`.
+	// SandboxId The sandbox it publishes a port of. Set in `GET /v1/tunnels`.
 	SandboxId *openapi_types.UUID `json:"sandboxId,omitempty"`
 
 	// Slug Its part of the address, minted with it and never reused: the name and six random characters. The gateway serves it at `<slug>--<namespace>.<domain>`.
@@ -2956,7 +2683,7 @@ type TunnelOverlay struct {
 type TunnelOverlayCorner string
 
 // TunnelRelay This host's relay: the separate service that carries visitors from the
-// gateway into sandboxes, and keeps doing so while this daemon restarts.
+// gateway into sandboxes, and keeps doing so while this server restarts.
 type TunnelRelay struct {
 	// Agent What the gateway's key calls this relay.
 	Agent *string `json:"agent,omitempty"`
@@ -3102,14 +2829,20 @@ type Volume struct {
 	// Name Lower case letters, digits, `.`, `_` and `-`, starting with a letter or a digit. It is a file name on the host, which is why it is this narrow.
 	Name VolumeName `json:"name"`
 
-	// Namespace The namespace it is in, as its path says: written in the body too, so that a volume copied out of its URL still says where it is.
-	Namespace *NamespaceName `json:"namespace,omitempty"`
-
 	// Principal The principal it is bound to: that of the first sandbox bound to one that attached it, or the one it was moved to. Only sandboxes bound to it attach it. Absent while it is bound to none.
 	Principal *PrincipalId `json:"principal,omitempty"`
 
 	// SandboxId The sandbox holding it. Absent when none does.
 	SandboxId *openapi_types.UUID `json:"sandboxId,omitempty"`
+}
+
+// VolumeClone What `POST .../volumes/{volumeName}/clone` makes.
+type VolumeClone struct {
+	// Name The new volume's name, which no volume has.
+	Name VolumeName `json:"name"`
+
+	// Principal The principal the clone is bound to. Absent, the one the source is bound to, or none.
+	Principal *PrincipalId `json:"principal,omitempty"`
 }
 
 // VolumeList defines model for VolumeList.
@@ -3122,7 +2855,7 @@ type VolumeName = string
 
 // VolumePrincipal What `PUT .../volumes/{volumeName}/principal` binds the volume to.
 type VolumePrincipal struct {
-	// Principal Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+	// Principal Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique on this server.
 	Principal PrincipalId `json:"principal"`
 }
 
@@ -3153,13 +2886,10 @@ type ImageID = string
 // Limit defines model for Limit.
 type Limit = int
 
-// NamespaceInPath A namespace's name, which is also its id: 2 to 40 lowercase letters, digits and hyphens, starting with a letter and ending with a letter or a digit, so that it is safe in a hostname. Unique per control plane, and never reused: a deleted namespace's name stays its own.
-type NamespaceInPath = NamespaceName
-
 // PathQuery defines model for PathQuery.
 type PathQuery = string
 
-// PrincipalID Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique in its namespace.
+// PrincipalID Letters, digits, `_`, `.` and `-`, starting with a letter or a digit: it goes into a certificate's URI as it is, so nothing in it is ever escaped. Unique on this server.
 type PrincipalID = PrincipalId
 
 // ProcessID defines model for ProcessID.
@@ -3227,66 +2957,6 @@ type GetConsoleParams struct {
 	SignInError *SignInError `form:"signInError,omitempty" json:"signInError,omitempty"`
 }
 
-// BeginGoogleSignInParams defines parameters for BeginGoogleSignIn.
-type BeginGoogleSignInParams struct {
-	// ReturnTo The console page to come back to, as a path: `/console` or under it, with its query when it has one, which comes back as it was sent. Anything else — another host, another path on this one — is refused, since a sign-in that redirects wherever its link says is how a phishing page ends up behind a real login.
-	ReturnTo *string `form:"returnTo,omitempty" json:"returnTo,omitempty"`
-}
-
-// CompleteGoogleSignInParams defines parameters for CompleteGoogleSignIn.
-type CompleteGoogleSignInParams struct {
-	State *string `form:"state,omitempty" json:"state,omitempty"`
-	Code  *string `form:"code,omitempty" json:"code,omitempty"`
-
-	// Error Google's, when the person did not sign in.
-	Error *string `form:"error,omitempty" json:"error,omitempty"`
-}
-
-// GetCostsParams defines parameters for GetCosts.
-type GetCostsParams struct {
-	// Window How far back to go. `7d` when it is not said.
-	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
-}
-
-// GetHostMetricsHistoryParams defines parameters for GetHostMetricsHistory.
-type GetHostMetricsHistoryParams struct {
-	// Window How far back to go.
-	Window *MetricsWindow `form:"window,omitempty" json:"window,omitempty"`
-}
-
-// ListKeysParams defines parameters for ListKeys.
-type ListKeysParams struct {
-	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
-	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Cursor From a previous page's `nextCursor`. Opaque: it encodes a position and a snapshot, and a caller that constructs one gets a `400`.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
-
-	// Owner Only this person's keys. A caller who is not an administrator may name only themselves.
-	Owner *openapi_types.Email `form:"owner,omitempty" json:"owner,omitempty"`
-}
-
-// GetMyPictureParams defines parameters for GetMyPicture.
-type GetMyPictureParams struct {
-	// V The picture's version, from `Me.picture`; for caches only.
-	V *string `form:"v,omitempty" json:"v,omitempty"`
-}
-
-// ListNamespacesParams defines parameters for ListNamespaces.
-type ListNamespacesParams struct {
-	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
-	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Cursor From a previous page's `nextCursor`. Opaque: it encodes a position and a snapshot, and a caller that constructs one gets a `400`.
-	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// DeleteNamespaceParams defines parameters for DeleteNamespace.
-type DeleteNamespaceParams struct {
-	// Force Delete everything it holds, rather than refuse to.
-	Force *bool `form:"force,omitempty" json:"force,omitempty"`
-}
-
 // ListBrokerActivityParams defines parameters for ListBrokerActivity.
 type ListBrokerActivityParams struct {
 	// After The cursor a previous answer gave as `next`. Absent starts at the oldest record kept.
@@ -3303,6 +2973,21 @@ type ListBrokerActivityParams struct {
 
 	// Wait Hold the request this many seconds at most until there is a record. Zero, or absent, answers at once.
 	Wait *int `form:"wait,omitempty" json:"wait,omitempty"`
+}
+
+// BeginGoogleSignInParams defines parameters for BeginGoogleSignIn.
+type BeginGoogleSignInParams struct {
+	// ReturnTo The console page to come back to, as a path: `/console` or under it, with its query when it has one, which comes back as it was sent. Anything else — another host, another path on this one — is refused, since a sign-in that redirects wherever its link says is how a phishing page ends up behind a real login.
+	ReturnTo *string `form:"returnTo,omitempty" json:"returnTo,omitempty"`
+}
+
+// CompleteGoogleSignInParams defines parameters for CompleteGoogleSignIn.
+type CompleteGoogleSignInParams struct {
+	State *string `form:"state,omitempty" json:"state,omitempty"`
+	Code  *string `form:"code,omitempty" json:"code,omitempty"`
+
+	// Error Google's, when the person did not sign in.
+	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
 // ListBuildsParams defines parameters for ListBuilds.
@@ -3323,8 +3008,8 @@ type ReadBuildLogParams struct {
 	Follow *FollowQuery `form:"follow,omitempty" json:"follow,omitempty"`
 }
 
-// GetNamespaceCostsParams defines parameters for GetNamespaceCosts.
-type GetNamespaceCostsParams struct {
+// GetCostsParams defines parameters for GetCosts.
+type GetCostsParams struct {
 	// Window How far back to go. `7d` when it is not said.
 	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
 
@@ -3333,6 +3018,12 @@ type GetNamespaceCostsParams struct {
 
 	// Volume Only this volume, by name. Repeat for several. With `label`, what either names.
 	Volume *[]VolumeName `form:"volume,omitempty" json:"volume,omitempty"`
+}
+
+// GetHostMetricsHistoryParams defines parameters for GetHostMetricsHistory.
+type GetHostMetricsHistoryParams struct {
+	// Window How far back to go.
+	Window *MetricsWindow `form:"window,omitempty" json:"window,omitempty"`
 }
 
 // ListImagesParams defines parameters for ListImages.
@@ -3344,8 +3035,8 @@ type ListImagesParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
-// ListNamespaceKeysParams defines parameters for ListNamespaceKeys.
-type ListNamespaceKeysParams struct {
+// ListKeysParams defines parameters for ListKeys.
+type ListKeysParams struct {
 	// Limit How many to return. The host's default and ceiling are in `GET /v1/info`.
 	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
@@ -3356,10 +3047,10 @@ type ListNamespaceKeysParams struct {
 	Owner *openapi_types.Email `form:"owner,omitempty" json:"owner,omitempty"`
 }
 
-// PutNamespaceMemberJSONBody defines parameters for PutNamespaceMember.
-type PutNamespaceMemberJSONBody struct {
-	// Scopes A scope named twice is held once.
-	Scopes []Scope `json:"scopes"`
+// GetMyPictureParams defines parameters for GetMyPicture.
+type GetMyPictureParams struct {
+	// V The picture's version, from `Me.picture`; for caches only.
+	V *string `form:"v,omitempty" json:"v,omitempty"`
 }
 
 // ListSandboxesParams defines parameters for ListSandboxes.
@@ -3402,7 +3093,7 @@ type DeleteSandboxParamsDisk string
 
 // ServeSandboxBrokerParams defines parameters for ServeSandboxBroker.
 type ServeSandboxBrokerParams struct {
-	// Record Whether what the sandbox does through this broker is recorded (`GET /v1/namespaces/{namespace}/activity`), for as long as the caller serves it. `false` for a caller that keeps its own record of every exchange.
+	// Record Whether what the sandbox does through this broker is recorded (`GET /v1/activity`), for as long as the caller serves it. `false` for a caller that keeps its own record of every exchange.
 	Record *bool `form:"record,omitempty" json:"record,omitempty"`
 }
 
@@ -3553,12 +3244,6 @@ type ListHostTunnelsParams struct {
 // SignInWithPasswordJSONRequestBody defines body for SignInWithPassword for application/json ContentType.
 type SignInWithPasswordJSONRequestBody = PasswordSignIn
 
-// CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
-type CreateKeyJSONRequestBody = KeyRequest
-
-// CreateNamespaceJSONRequestBody defines body for CreateNamespace for application/json ContentType.
-type CreateNamespaceJSONRequestBody = NamespaceRequest
-
 // PutBrokerJSONRequestBody defines body for PutBroker for application/json ContentType.
 type PutBrokerJSONRequestBody = BrokerUpstream
 
@@ -3568,17 +3253,11 @@ type CreateBuildJSONRequestBody = BuildRequest
 // PullImageJSONRequestBody defines body for PullImage for application/json ContentType.
 type PullImageJSONRequestBody = ImageRequest
 
-// CreateNamespaceKeyJSONRequestBody defines body for CreateNamespaceKey for application/json ContentType.
-type CreateNamespaceKeyJSONRequestBody = KeyRequest
-
-// PutNamespaceMemberJSONRequestBody defines body for PutNamespaceMember for application/json ContentType.
-type PutNamespaceMemberJSONRequestBody PutNamespaceMemberJSONBody
+// CreateKeyJSONRequestBody defines body for CreateKey for application/json ContentType.
+type CreateKeyJSONRequestBody = KeyRequest
 
 // PutPrincipalJSONRequestBody defines body for PutPrincipal for application/json ContentType.
 type PutPrincipalJSONRequestBody = PrincipalSpec
-
-// SetNamespaceQuotaJSONRequestBody defines body for SetNamespaceQuota for application/json ContentType.
-type SetNamespaceQuotaJSONRequestBody = NamespaceQuota
 
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
@@ -3612,6 +3291,9 @@ type PutTunnelJSONRequestBody = TunnelSpec
 
 // CreateTunnelTokenJSONRequestBody defines body for CreateTunnelToken for application/json ContentType.
 type CreateTunnelTokenJSONRequestBody = TunnelTokenRequest
+
+// CloneVolumeJSONRequestBody defines body for CloneVolume for application/json ContentType.
+type CloneVolumeJSONRequestBody = VolumeClone
 
 // MoveVolumeJSONRequestBody defines body for MoveVolume for application/json ContentType.
 type MoveVolumeJSONRequestBody = VolumePrincipal
@@ -3757,32 +3439,32 @@ type ClientInterface interface {
 	// GetConsole request
 	GetConsole(ctx context.Context, params *GetConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetConsoleNamespace request
-	GetConsoleNamespace(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetConsoleBuild request
-	GetConsoleBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConsoleBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConsoleImage request
-	GetConsoleImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConsoleImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConsoleSandbox request
-	GetConsoleSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConsoleSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConsoleSandboxTab request
-	GetConsoleSandboxTab(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConsoleSandboxTab(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConsoleVolume request
-	GetConsoleVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetConsoleNamespacePage request
-	GetConsoleNamespacePage(ctx context.Context, namespace NamespaceInPath, page string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetConsoleVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetConsolePage request
 	GetConsolePage(ctx context.Context, page string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Health request
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBrokerActivity request
+	ListBrokerActivity(ctx context.Context, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBrokerActivity request
+	GetBrokerActivity(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAuth request
 	GetAuth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3801,8 +3483,45 @@ type ClientInterface interface {
 	// SignOut request
 	SignOut(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListBrokers request
+	ListBrokers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteBroker request
+	DeleteBroker(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBroker request
+	GetBroker(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutBrokerWithBody request with any body
+	PutBrokerWithBody(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutBroker(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBuilds request
+	ListBuilds(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateBuildWithBody request with any body
+	CreateBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateBuild(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteBuild request
+	DeleteBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBuild request
+	GetBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadBuildLog request
+	ReadBuildLog(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCA request
+	GetCA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCosts request
 	GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCounts request
+	GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDocs request
 	GetDocs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3812,6 +3531,20 @@ type ClientInterface interface {
 
 	// GetHostMetricsHistory request
 	GetHostMetricsHistory(ctx context.Context, params *GetHostMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListImages request
+	ListImages(ctx context.Context, params *ListImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PullImageWithBody request with any body
+	PullImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PullImage(ctx context.Context, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteImage request
+	DeleteImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImage request
+	GetImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetInfo request
 	GetInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3833,330 +3566,234 @@ type ClientInterface interface {
 	// GetMyPicture request
 	GetMyPicture(ctx context.Context, params *GetMyPictureParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListNamespaces request
-	ListNamespaces(ctx context.Context, params *ListNamespacesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateNamespaceWithBody request with any body
-	CreateNamespaceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateNamespace(ctx context.Context, body CreateNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteNamespace request
-	DeleteNamespace(ctx context.Context, namespace NamespaceInPath, params *DeleteNamespaceParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetNamespace request
-	GetNamespace(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListBrokerActivity request
-	ListBrokerActivity(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetBrokerActivity request
-	GetBrokerActivity(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListBrokers request
-	ListBrokers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteBroker request
-	DeleteBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetBroker request
-	GetBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutBrokerWithBody request with any body
-	PutBrokerWithBody(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListBuilds request
-	ListBuilds(ctx context.Context, namespace NamespaceInPath, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateBuildWithBody request with any body
-	CreateBuildWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateBuild(ctx context.Context, namespace NamespaceInPath, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteBuild request
-	DeleteBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetBuild request
-	GetBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReadBuildLog request
-	ReadBuildLog(ctx context.Context, namespace NamespaceInPath, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCA request
-	GetCA(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetNamespaceCosts request
-	GetNamespaceCosts(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetCounts request
-	GetCounts(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListImages request
-	ListImages(ctx context.Context, namespace NamespaceInPath, params *ListImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PullImageWithBody request with any body
-	PullImageWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PullImage(ctx context.Context, namespace NamespaceInPath, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteImage request
-	DeleteImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetImage request
-	GetImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListNamespaceKeys request
-	ListNamespaceKeys(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateNamespaceKeyWithBody request with any body
-	CreateNamespaceKeyWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateNamespaceKey(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeNamespaceKey request
-	RevokeNamespaceKey(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListNamespaceMembers request
-	ListNamespaceMembers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteNamespaceMember request
-	DeleteNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutNamespaceMemberWithBody request with any body
-	PutNamespaceMemberWithBody(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPrincipals request
-	ListPrincipals(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeletePrincipal request
-	DeletePrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPrincipal request
-	GetPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutPrincipalWithBody request with any body
-	PutPrincipalWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetBrokerTrusted request
-	GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetNamespaceQuotaWithBody request with any body
-	SetNamespaceQuotaWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SetNamespaceQuota(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSandboxes request
-	ListSandboxes(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateSandboxWithBody request with any body
-	CreateSandboxWithBody(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateSandbox(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteSandbox request
-	DeleteSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandbox request
-	GetSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSandboxBrokers request
-	ListSandboxBrokers(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DetachSandboxBroker request
-	DetachSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AttachSandboxBrokerWithBody request with any body
-	AttachSandboxBrokerWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	AttachSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ServeSandboxBroker request
-	ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RunCommandWithBody request with any body
-	RunCommandWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	RunCommand(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandboxConsole request
-	GetSandboxConsole(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandboxEgress request
-	GetSandboxEgress(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSandboxEgressWithBody request with any body
-	SetSandboxEgressWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SetSandboxEgress(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// KillConnectionsWithBody request with any body
-	KillConnectionsWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	KillConnections(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListEgressRules request
-	ListEgressRules(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteEgressRule request
-	DeleteEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetEgressRule request
-	GetEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutEgressRuleWithBody request with any body
-	PutEgressRuleWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PauseEgressRule request
-	PauseEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResumeEgressRule request
-	ResumeEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StreamSandboxEvents request
-	StreamSandboxEvents(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteFile request
-	DeleteFile(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReadFile request
-	ReadFile(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// WriteFileWithBody request with any body
-	WriteFileWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListDir request
-	ListDir(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandboxIdentity request
-	GetSandboxIdentity(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetSandboxLabelsWithBody request with any body
-	SetSandboxLabelsWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SetSandboxLabels(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandboxMetrics request
-	GetSandboxMetrics(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSandboxMetricsHistory request
-	GetSandboxMetricsHistory(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PauseSandbox request
-	PauseSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListProcesses request
-	ListProcesses(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StartProcessWithBody request with any body
-	StartProcessWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	StartProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReapProcess request
-	ReapProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetProcess request
-	GetProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SignalProcessWithBody request with any body
-	SignalProcessWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SignalProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReadProcessStderr request
-	ReadProcessStderr(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// WriteProcessStdinWithBody request with any body
-	WriteProcessStdinWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReadProcessStdout request
-	ReadProcessStdout(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResumeSandbox request
-	ResumeSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SealSandbox request
-	SealSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StartSandbox request
-	StartSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StopSandbox request
-	StopSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSystemProcesses request
-	ListSystemProcesses(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListSystemSockets request
-	ListSystemSockets(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// OpenTerminal request
-	OpenTerminal(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListTunnels request
-	ListTunnels(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteTunnel request
-	DeleteTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetTunnel request
-	GetTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutTunnelWithBody request with any body
-	PutTunnelWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetTunnelActivity request
-	GetTunnelActivity(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListTunnelGuests request
-	ListTunnelGuests(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeTunnelGuest request
-	RevokeTunnelGuest(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PauseTunnel request
-	PauseTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResumeTunnel request
-	ResumeTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateTunnelTokenWithBody request with any body
-	CreateTunnelTokenWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	CreateTunnelToken(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RevokeTunnelToken request
-	RevokeTunnelToken(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UnsealSandbox request
-	UnsealSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListHostTunnels request
-	ListHostTunnels(ctx context.Context, namespace NamespaceInPath, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListVolumes request
-	ListVolumes(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteVolume request
-	DeleteVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// MoveVolumeWithBody request with any body
-	MoveVolumeWithBody(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	MoveVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetOpenapiYaml request
 	GetOpenapiYaml(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPrincipals request
+	ListPrincipals(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeletePrincipal request
+	DeletePrincipal(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPrincipal request
+	GetPrincipal(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutPrincipalWithBody request with any body
+	PutPrincipalWithBody(ctx context.Context, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutPrincipal(ctx context.Context, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetBrokerTrusted request
+	GetBrokerTrusted(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSandboxes request
+	ListSandboxes(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSandboxWithBody request with any body
+	CreateSandboxWithBody(ctx context.Context, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateSandbox(ctx context.Context, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSandbox request
+	DeleteSandbox(ctx context.Context, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandbox request
+	GetSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSandboxBrokers request
+	ListSandboxBrokers(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DetachSandboxBroker request
+	DetachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachSandboxBrokerWithBody request with any body
+	AttachSandboxBrokerWithBody(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ServeSandboxBroker request
+	ServeSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunCommandWithBody request with any body
+	RunCommandWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RunCommand(ctx context.Context, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandboxConsole request
+	GetSandboxConsole(ctx context.Context, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandboxEgress request
+	GetSandboxEgress(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSandboxEgressWithBody request with any body
+	SetSandboxEgressWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetSandboxEgress(ctx context.Context, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// KillConnectionsWithBody request with any body
+	KillConnectionsWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	KillConnections(ctx context.Context, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListEgressRules request
+	ListEgressRules(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteEgressRule request
+	DeleteEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEgressRule request
+	GetEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutEgressRuleWithBody request with any body
+	PutEgressRuleWithBody(ctx context.Context, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PauseEgressRule request
+	PauseEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeEgressRule request
+	ResumeEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamSandboxEvents request
+	StreamSandboxEvents(ctx context.Context, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteFile request
+	DeleteFile(ctx context.Context, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadFile request
+	ReadFile(ctx context.Context, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WriteFileWithBody request with any body
+	WriteFileWithBody(ctx context.Context, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDir request
+	ListDir(ctx context.Context, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandboxIdentity request
+	GetSandboxIdentity(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSandboxLabelsWithBody request with any body
+	SetSandboxLabelsWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetSandboxLabels(ctx context.Context, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandboxMetrics request
+	GetSandboxMetrics(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSandboxMetricsHistory request
+	GetSandboxMetricsHistory(ctx context.Context, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PauseSandbox request
+	PauseSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListProcesses request
+	ListProcesses(ctx context.Context, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartProcessWithBody request with any body
+	StartProcessWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	StartProcess(ctx context.Context, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReapProcess request
+	ReapProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetProcess request
+	GetProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SignalProcessWithBody request with any body
+	SignalProcessWithBody(ctx context.Context, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SignalProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadProcessStderr request
+	ReadProcessStderr(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// WriteProcessStdinWithBody request with any body
+	WriteProcessStdinWithBody(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadProcessStdout request
+	ReadProcessStdout(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeSandbox request
+	ResumeSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SealSandbox request
+	SealSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartSandbox request
+	StartSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopSandbox request
+	StopSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSystemProcesses request
+	ListSystemProcesses(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSystemSockets request
+	ListSystemSockets(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// OpenTerminal request
+	OpenTerminal(ctx context.Context, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTunnels request
+	ListTunnels(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteTunnel request
+	DeleteTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTunnel request
+	GetTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutTunnelWithBody request with any body
+	PutTunnelWithBody(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTunnelActivity request
+	GetTunnelActivity(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTunnelGuests request
+	ListTunnelGuests(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeTunnelGuest request
+	RevokeTunnelGuest(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PauseTunnel request
+	PauseTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeTunnel request
+	ResumeTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateTunnelTokenWithBody request with any body
+	CreateTunnelTokenWithBody(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateTunnelToken(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeTunnelToken request
+	RevokeTunnelToken(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnsealSandbox request
+	UnsealSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListHostTunnels request
+	ListHostTunnels(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListVolumes request
+	ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteVolume request
+	DeleteVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloneVolumeWithBody request with any body
+	CloneVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CloneVolume(ctx context.Context, volumeName VolumeName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MoveVolumeWithBody request with any body
+	MoveVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MoveVolume(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetRoot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4183,8 +3820,8 @@ func (c *Client) GetConsole(ctx context.Context, params *GetConsoleParams, reqEd
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetConsoleNamespace(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleNamespaceRequest(c.Server, namespace)
+func (c *Client) GetConsoleBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleBuildRequest(c.Server, buildId)
 	if err != nil {
 		return nil, err
 	}
@@ -4195,8 +3832,8 @@ func (c *Client) GetConsoleNamespace(ctx context.Context, namespace NamespaceInP
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetConsoleBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleBuildRequest(c.Server, namespace, buildId)
+func (c *Client) GetConsoleImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleImageRequest(c.Server, imageId)
 	if err != nil {
 		return nil, err
 	}
@@ -4207,8 +3844,8 @@ func (c *Client) GetConsoleBuild(ctx context.Context, namespace NamespaceInPath,
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetConsoleImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleImageRequest(c.Server, namespace, imageId)
+func (c *Client) GetConsoleSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleSandboxRequest(c.Server, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -4219,8 +3856,8 @@ func (c *Client) GetConsoleImage(ctx context.Context, namespace NamespaceInPath,
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetConsoleSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleSandboxRequest(c.Server, namespace, sandboxId)
+func (c *Client) GetConsoleSandboxTab(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleSandboxTabRequest(c.Server, sandboxId, tab)
 	if err != nil {
 		return nil, err
 	}
@@ -4231,32 +3868,8 @@ func (c *Client) GetConsoleSandbox(ctx context.Context, namespace NamespaceInPat
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetConsoleSandboxTab(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleSandboxTabRequest(c.Server, namespace, sandboxId, tab)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetConsoleVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleVolumeRequest(c.Server, namespace, volumeName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetConsoleNamespacePage(ctx context.Context, namespace NamespaceInPath, page string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetConsoleNamespacePageRequest(c.Server, namespace, page)
+func (c *Client) GetConsoleVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsoleVolumeRequest(c.Server, volumeName)
 	if err != nil {
 		return nil, err
 	}
@@ -4281,6 +3894,30 @@ func (c *Client) GetConsolePage(ctx context.Context, page string, reqEditors ...
 
 func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListBrokerActivity(ctx context.Context, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBrokerActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBrokerActivity(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerActivityRequest(c.Server, activityId)
 	if err != nil {
 		return nil, err
 	}
@@ -4363,8 +4000,164 @@ func (c *Client) SignOut(ctx context.Context, reqEditors ...RequestEditorFn) (*h
 	return c.Client.Do(req)
 }
 
+func (c *Client) ListBrokers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBrokersRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteBroker(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteBrokerRequest(c.Server, brokerName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBroker(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerRequest(c.Server, brokerName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutBrokerWithBody(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutBrokerRequestWithBody(c.Server, brokerName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutBroker(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutBrokerRequest(c.Server, brokerName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListBuilds(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBuildsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBuildWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBuildRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateBuild(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateBuildRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteBuildRequest(c.Server, buildId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBuild(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBuildRequest(c.Server, buildId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadBuildLog(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadBuildLogRequest(c.Server, buildId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCARequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCostsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCountsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4401,6 +4194,66 @@ func (c *Client) GetHostCommitments(ctx context.Context, reqEditors ...RequestEd
 
 func (c *Client) GetHostMetricsHistory(ctx context.Context, params *GetHostMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHostMetricsHistoryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListImages(ctx context.Context, params *ListImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListImagesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PullImageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPullImageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PullImage(ctx context.Context, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPullImageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteImageRequest(c.Server, imageId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetImage(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImageRequest(c.Server, imageId)
 	if err != nil {
 		return nil, err
 	}
@@ -4495,1376 +4348,968 @@ func (c *Client) GetMyPicture(ctx context.Context, params *GetMyPictureParams, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListNamespaces(ctx context.Context, params *ListNamespacesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListNamespacesRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateNamespaceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNamespaceRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateNamespace(ctx context.Context, body CreateNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNamespaceRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteNamespace(ctx context.Context, namespace NamespaceInPath, params *DeleteNamespaceParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteNamespaceRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetNamespace(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetNamespaceRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListBrokerActivity(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListBrokerActivityRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetBrokerActivity(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetBrokerActivityRequest(c.Server, namespace, activityId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListBrokers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListBrokersRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteBrokerRequest(c.Server, namespace, brokerName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetBrokerRequest(c.Server, namespace, brokerName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutBrokerWithBody(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutBrokerRequestWithBody(c.Server, namespace, brokerName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutBroker(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutBrokerRequest(c.Server, namespace, brokerName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListBuilds(ctx context.Context, namespace NamespaceInPath, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListBuildsRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateBuildWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateBuildRequestWithBody(c.Server, namespace, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateBuild(ctx context.Context, namespace NamespaceInPath, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateBuildRequest(c.Server, namespace, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteBuildRequest(c.Server, namespace, buildId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetBuild(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetBuildRequest(c.Server, namespace, buildId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ReadBuildLog(ctx context.Context, namespace NamespaceInPath, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadBuildLogRequest(c.Server, namespace, buildId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCA(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCARequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetNamespaceCosts(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetNamespaceCostsRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetCounts(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCountsRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListImages(ctx context.Context, namespace NamespaceInPath, params *ListImagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListImagesRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PullImageWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPullImageRequestWithBody(c.Server, namespace, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PullImage(ctx context.Context, namespace NamespaceInPath, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPullImageRequest(c.Server, namespace, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteImageRequest(c.Server, namespace, imageId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetImage(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetImageRequest(c.Server, namespace, imageId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListNamespaceKeys(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListNamespaceKeysRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateNamespaceKeyWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNamespaceKeyRequestWithBody(c.Server, namespace, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateNamespaceKey(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateNamespaceKeyRequest(c.Server, namespace, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RevokeNamespaceKey(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeNamespaceKeyRequest(c.Server, namespace, keyId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListNamespaceMembers(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListNamespaceMembersRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteNamespaceMemberRequest(c.Server, namespace, email)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutNamespaceMemberWithBody(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutNamespaceMemberRequestWithBody(c.Server, namespace, email, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutNamespaceMember(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutNamespaceMemberRequest(c.Server, namespace, email, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListPrincipals(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPrincipalsRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeletePrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeletePrincipalRequest(c.Server, namespace, principalId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPrincipalRequest(c.Server, namespace, principalId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutPrincipalWithBody(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutPrincipalRequestWithBody(c.Server, namespace, principalId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutPrincipal(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutPrincipalRequest(c.Server, namespace, principalId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetBrokerTrusted(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetBrokerTrustedRequest(c.Server, namespace, principalId, brokerName, path)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetNamespaceQuotaWithBody(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetNamespaceQuotaRequestWithBody(c.Server, namespace, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetNamespaceQuota(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetNamespaceQuotaRequest(c.Server, namespace, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSandboxes(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSandboxesRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateSandboxWithBody(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSandboxRequestWithBody(c.Server, namespace, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateSandbox(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateSandboxRequest(c.Server, namespace, params, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteSandboxRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSandboxBrokers(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSandboxBrokersRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DetachSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDetachSandboxBrokerRequest(c.Server, namespace, sandboxId, brokerName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) AttachSandboxBrokerWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachSandboxBrokerRequestWithBody(c.Server, namespace, sandboxId, brokerName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) AttachSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAttachSandboxBrokerRequest(c.Server, namespace, sandboxId, brokerName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ServeSandboxBroker(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewServeSandboxBrokerRequest(c.Server, namespace, sandboxId, brokerName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RunCommandWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunCommandRequestWithBody(c.Server, namespace, sandboxId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RunCommand(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRunCommandRequest(c.Server, namespace, sandboxId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandboxConsole(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxConsoleRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandboxEgress(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxEgressRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetSandboxEgressWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSandboxEgressRequestWithBody(c.Server, namespace, sandboxId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetSandboxEgress(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSandboxEgressRequest(c.Server, namespace, sandboxId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) KillConnectionsWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewKillConnectionsRequestWithBody(c.Server, namespace, sandboxId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) KillConnections(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewKillConnectionsRequest(c.Server, namespace, sandboxId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListEgressRules(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListEgressRulesRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteEgressRuleRequest(c.Server, namespace, sandboxId, ruleName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetEgressRuleRequest(c.Server, namespace, sandboxId, ruleName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutEgressRuleWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutEgressRuleRequestWithBody(c.Server, namespace, sandboxId, ruleName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutEgressRuleRequest(c.Server, namespace, sandboxId, ruleName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PauseEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPauseEgressRuleRequest(c.Server, namespace, sandboxId, ruleName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ResumeEgressRule(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResumeEgressRuleRequest(c.Server, namespace, sandboxId, ruleName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StreamSandboxEvents(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStreamSandboxEventsRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteFile(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteFileRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ReadFile(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadFileRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) WriteFileWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWriteFileRequestWithBody(c.Server, namespace, sandboxId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListDir(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListDirRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandboxIdentity(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxIdentityRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetSandboxLabelsWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSandboxLabelsRequestWithBody(c.Server, namespace, sandboxId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetSandboxLabels(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetSandboxLabelsRequest(c.Server, namespace, sandboxId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandboxMetrics(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxMetricsRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSandboxMetricsHistory(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSandboxMetricsHistoryRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PauseSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPauseSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListProcesses(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListProcessesRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StartProcessWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartProcessRequestWithBody(c.Server, namespace, sandboxId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StartProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartProcessRequest(c.Server, namespace, sandboxId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ReapProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReapProcessRequest(c.Server, namespace, sandboxId, processId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetProcessRequest(c.Server, namespace, sandboxId, processId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SignalProcessWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSignalProcessRequestWithBody(c.Server, namespace, sandboxId, processId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SignalProcess(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSignalProcessRequest(c.Server, namespace, sandboxId, processId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ReadProcessStderr(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadProcessStderrRequest(c.Server, namespace, sandboxId, processId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) WriteProcessStdinWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewWriteProcessStdinRequestWithBody(c.Server, namespace, sandboxId, processId, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ReadProcessStdout(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReadProcessStdoutRequest(c.Server, namespace, sandboxId, processId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ResumeSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResumeSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SealSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSealSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StartSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StopSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStopSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSystemProcesses(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSystemProcessesRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListSystemSockets(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSystemSocketsRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) OpenTerminal(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewOpenTerminalRequest(c.Server, namespace, sandboxId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListTunnels(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListTunnelsRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteTunnelRequest(c.Server, namespace, sandboxId, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTunnelRequest(c.Server, namespace, sandboxId, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutTunnelWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutTunnelRequestWithBody(c.Server, namespace, sandboxId, tunnelName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutTunnelRequest(c.Server, namespace, sandboxId, tunnelName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetTunnelActivity(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTunnelActivityRequest(c.Server, namespace, sandboxId, tunnelName, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListTunnelGuests(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListTunnelGuestsRequest(c.Server, namespace, sandboxId, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RevokeTunnelGuest(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeTunnelGuestRequest(c.Server, namespace, sandboxId, tunnelName, email)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PauseTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPauseTunnelRequest(c.Server, namespace, sandboxId, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ResumeTunnel(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResumeTunnelRequest(c.Server, namespace, sandboxId, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateTunnelTokenWithBody(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTunnelTokenRequestWithBody(c.Server, namespace, sandboxId, tunnelName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) CreateTunnelToken(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateTunnelTokenRequest(c.Server, namespace, sandboxId, tunnelName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RevokeTunnelToken(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRevokeTunnelTokenRequest(c.Server, namespace, sandboxId, tunnelName, tokenId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) UnsealSandbox(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUnsealSandboxRequest(c.Server, namespace, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListHostTunnels(ctx context.Context, namespace NamespaceInPath, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListHostTunnelsRequest(c.Server, namespace, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListVolumes(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListVolumesRequest(c.Server, namespace)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteVolumeRequest(c.Server, namespace, volumeName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) MoveVolumeWithBody(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMoveVolumeRequestWithBody(c.Server, namespace, volumeName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) MoveVolume(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewMoveVolumeRequest(c.Server, namespace, volumeName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) GetOpenapiYaml(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOpenapiYamlRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListPrincipals(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPrincipalsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeletePrincipal(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeletePrincipalRequest(c.Server, principalId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetPrincipal(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPrincipalRequest(c.Server, principalId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutPrincipalWithBody(ctx context.Context, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrincipalRequestWithBody(c.Server, principalId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutPrincipal(ctx context.Context, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutPrincipalRequest(c.Server, principalId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBrokerTrusted(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerTrustedRequest(c.Server, principalId, brokerName, path)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSandboxes(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSandboxesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateSandboxWithBody(ctx context.Context, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSandboxRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateSandbox(ctx context.Context, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSandboxRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteSandbox(ctx context.Context, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSandboxRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSandboxBrokers(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSandboxBrokersRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DetachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDetachSandboxBrokerRequest(c.Server, sandboxId, brokerName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AttachSandboxBrokerWithBody(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachSandboxBrokerRequestWithBody(c.Server, sandboxId, brokerName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachSandboxBrokerRequest(c.Server, sandboxId, brokerName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ServeSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewServeSandboxBrokerRequest(c.Server, sandboxId, brokerName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunCommandWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunCommandRequestWithBody(c.Server, sandboxId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RunCommand(ctx context.Context, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunCommandRequest(c.Server, sandboxId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandboxConsole(ctx context.Context, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxConsoleRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandboxEgress(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxEgressRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetSandboxEgressWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxEgressRequestWithBody(c.Server, sandboxId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetSandboxEgress(ctx context.Context, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxEgressRequest(c.Server, sandboxId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) KillConnectionsWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewKillConnectionsRequestWithBody(c.Server, sandboxId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) KillConnections(ctx context.Context, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewKillConnectionsRequest(c.Server, sandboxId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListEgressRules(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListEgressRulesRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEgressRuleRequest(c.Server, sandboxId, ruleName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEgressRuleRequest(c.Server, sandboxId, ruleName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutEgressRuleWithBody(ctx context.Context, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutEgressRuleRequestWithBody(c.Server, sandboxId, ruleName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutEgressRuleRequest(c.Server, sandboxId, ruleName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PauseEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPauseEgressRuleRequest(c.Server, sandboxId, ruleName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResumeEgressRule(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeEgressRuleRequest(c.Server, sandboxId, ruleName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StreamSandboxEvents(ctx context.Context, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamSandboxEventsRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteFile(ctx context.Context, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteFileRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadFile(ctx context.Context, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadFileRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WriteFileWithBody(ctx context.Context, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteFileRequestWithBody(c.Server, sandboxId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListDir(ctx context.Context, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDirRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandboxIdentity(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxIdentityRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetSandboxLabelsWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxLabelsRequestWithBody(c.Server, sandboxId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetSandboxLabels(ctx context.Context, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSandboxLabelsRequest(c.Server, sandboxId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandboxMetrics(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxMetricsRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSandboxMetricsHistory(ctx context.Context, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSandboxMetricsHistoryRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PauseSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPauseSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListProcesses(ctx context.Context, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListProcessesRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StartProcessWithBody(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartProcessRequestWithBody(c.Server, sandboxId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StartProcess(ctx context.Context, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartProcessRequest(c.Server, sandboxId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReapProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReapProcessRequest(c.Server, sandboxId, processId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetProcessRequest(c.Server, sandboxId, processId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SignalProcessWithBody(ctx context.Context, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignalProcessRequestWithBody(c.Server, sandboxId, processId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SignalProcess(ctx context.Context, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSignalProcessRequest(c.Server, sandboxId, processId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadProcessStderr(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadProcessStderrRequest(c.Server, sandboxId, processId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) WriteProcessStdinWithBody(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewWriteProcessStdinRequestWithBody(c.Server, sandboxId, processId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadProcessStdout(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadProcessStdoutRequest(c.Server, sandboxId, processId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResumeSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SealSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSealSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StartSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) StopSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSystemProcesses(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSystemProcessesRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListSystemSockets(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSystemSocketsRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) OpenTerminal(ctx context.Context, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewOpenTerminalRequest(c.Server, sandboxId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListTunnels(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTunnelsRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteTunnelRequest(c.Server, sandboxId, tunnelName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTunnelRequest(c.Server, sandboxId, tunnelName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutTunnelWithBody(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutTunnelRequestWithBody(c.Server, sandboxId, tunnelName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutTunnelRequest(c.Server, sandboxId, tunnelName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetTunnelActivity(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTunnelActivityRequest(c.Server, sandboxId, tunnelName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListTunnelGuests(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTunnelGuestsRequest(c.Server, sandboxId, tunnelName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeTunnelGuest(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeTunnelGuestRequest(c.Server, sandboxId, tunnelName, email)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PauseTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPauseTunnelRequest(c.Server, sandboxId, tunnelName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ResumeTunnel(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeTunnelRequest(c.Server, sandboxId, tunnelName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTunnelTokenWithBody(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTunnelTokenRequestWithBody(c.Server, sandboxId, tunnelName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTunnelToken(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTunnelTokenRequest(c.Server, sandboxId, tunnelName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeTunnelToken(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeTunnelTokenRequest(c.Server, sandboxId, tunnelName, tokenId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UnsealSandbox(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnsealSandboxRequest(c.Server, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListHostTunnels(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListHostTunnelsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVolumesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteVolume(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteVolumeRequest(c.Server, volumeName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloneVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloneVolumeRequestWithBody(c.Server, volumeName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloneVolume(ctx context.Context, volumeName VolumeName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloneVolumeRequest(c.Server, volumeName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MoveVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMoveVolumeRequestWithBody(c.Server, volumeName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MoveVolume(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMoveVolumeRequest(c.Server, volumeName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5951,54 +5396,13 @@ func NewGetConsoleRequest(server string, params *GetConsoleParams) (*http.Reques
 	return req, nil
 }
 
-// NewGetConsoleNamespaceRequest generates requests for GetConsoleNamespace
-func NewGetConsoleNamespaceRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/console/namespaces/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewGetConsoleBuildRequest generates requests for GetConsoleBuild
-func NewGetConsoleBuildRequest(server string, namespace NamespaceInPath, buildId BuildID) (*http.Request, error) {
+func NewGetConsoleBuildRequest(server string, buildId BuildID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
 	if err != nil {
 		return nil, err
 	}
@@ -6008,7 +5412,7 @@ func NewGetConsoleBuildRequest(server string, namespace NamespaceInPath, buildId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/console/namespaces/%s/builds/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/console/builds/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6027,19 +5431,12 @@ func NewGetConsoleBuildRequest(server string, namespace NamespaceInPath, buildId
 }
 
 // NewGetConsoleImageRequest generates requests for GetConsoleImage
-func NewGetConsoleImageRequest(server string, namespace NamespaceInPath, imageId ImageID) (*http.Request, error) {
+func NewGetConsoleImageRequest(server string, imageId ImageID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
 	if err != nil {
 		return nil, err
 	}
@@ -6049,7 +5446,7 @@ func NewGetConsoleImageRequest(server string, namespace NamespaceInPath, imageId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/console/namespaces/%s/images/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/console/images/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6068,19 +5465,12 @@ func NewGetConsoleImageRequest(server string, namespace NamespaceInPath, imageId
 }
 
 // NewGetConsoleSandboxRequest generates requests for GetConsoleSandbox
-func NewGetConsoleSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewGetConsoleSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -6090,7 +5480,7 @@ func NewGetConsoleSandboxRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/console/namespaces/%s/sandboxes/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/console/sandboxes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6109,26 +5499,19 @@ func NewGetConsoleSandboxRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewGetConsoleSandboxTabRequest generates requests for GetConsoleSandboxTab
-func NewGetConsoleSandboxTabRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tab string) (*http.Request, error) {
+func NewGetConsoleSandboxTabRequest(server string, sandboxId SandboxID, tab string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tab", runtime.ParamLocationPath, tab)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tab", runtime.ParamLocationPath, tab)
 	if err != nil {
 		return nil, err
 	}
@@ -6138,7 +5521,7 @@ func NewGetConsoleSandboxTabRequest(server string, namespace NamespaceInPath, sa
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/console/namespaces/%s/sandboxes/%s/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/console/sandboxes/%s/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6157,19 +5540,12 @@ func NewGetConsoleSandboxTabRequest(server string, namespace NamespaceInPath, sa
 }
 
 // NewGetConsoleVolumeRequest generates requests for GetConsoleVolume
-func NewGetConsoleVolumeRequest(server string, namespace NamespaceInPath, volumeName VolumeName) (*http.Request, error) {
+func NewGetConsoleVolumeRequest(server string, volumeName VolumeName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
 	if err != nil {
 		return nil, err
 	}
@@ -6179,48 +5555,7 @@ func NewGetConsoleVolumeRequest(server string, namespace NamespaceInPath, volume
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/console/namespaces/%s/volumes/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetConsoleNamespacePageRequest generates requests for GetConsoleNamespacePage
-func NewGetConsoleNamespacePageRequest(server string, namespace NamespaceInPath, page string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "page", runtime.ParamLocationPath, page)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/console/namespaces/%s/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/console/volumes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6282,6 +5617,153 @@ func NewHealthRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/healthz")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListBrokerActivityRequest generates requests for ListBrokerActivity
+func NewListBrokerActivityRequest(server string, params *ListBrokerActivityParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/activity")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "after", runtime.ParamLocationQuery, *params.After); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Sandbox != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sandbox", runtime.ParamLocationQuery, *params.Sandbox); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Broker != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "broker", runtime.ParamLocationQuery, *params.Broker); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Wait != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "wait", runtime.ParamLocationQuery, *params.Wait); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBrokerActivityRequest generates requests for GetBrokerActivity
+func NewGetBrokerActivityRequest(server string, activityId BrokerActivityID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "activityId", runtime.ParamLocationPath, activityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/activity/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6523,6 +6005,420 @@ func NewSignOutRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListBrokersRequest generates requests for ListBrokers
+func NewListBrokersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/brokers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteBrokerRequest generates requests for DeleteBroker
+func NewDeleteBrokerRequest(server string, brokerName BrokerName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/brokers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBrokerRequest generates requests for GetBroker
+func NewGetBrokerRequest(server string, brokerName BrokerName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/brokers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutBrokerRequest calls the generic PutBroker builder with application/json body
+func NewPutBrokerRequest(server string, brokerName BrokerName, body PutBrokerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutBrokerRequestWithBody(server, brokerName, "application/json", bodyReader)
+}
+
+// NewPutBrokerRequestWithBody generates requests for PutBroker with any type of body
+func NewPutBrokerRequestWithBody(server string, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/brokers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListBuildsRequest generates requests for ListBuilds
+func NewListBuildsRequest(server string, params *ListBuildsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateBuildRequest calls the generic CreateBuild builder with application/json body
+func NewCreateBuildRequest(server string, body CreateBuildJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateBuildRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateBuildRequestWithBody generates requests for CreateBuild with any type of body
+func NewCreateBuildRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteBuildRequest generates requests for DeleteBuild
+func NewDeleteBuildRequest(server string, buildId BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetBuildRequest generates requests for GetBuild
+func NewGetBuildRequest(server string, buildId BuildID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReadBuildLogRequest generates requests for ReadBuildLog
+func NewReadBuildLogRequest(server string, buildId BuildID, params *ReadBuildLogParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/builds/%s/log", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, *params.From); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Follow != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "follow", runtime.ParamLocationQuery, *params.Follow); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCARequest generates requests for GetCA
+func NewGetCARequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ca")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCostsRequest generates requests for GetCosts
 func NewGetCostsRequest(server string, params *GetCostsParams) (*http.Request, error) {
 	var err error
@@ -6561,7 +6457,66 @@ func NewGetCostsRequest(server string, params *GetCostsParams) (*http.Request, e
 
 		}
 
+		if params.Label != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "label", runtime.ParamLocationQuery, *params.Label); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Volume != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "volume", runtime.ParamLocationQuery, *params.Volume); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCountsRequest generates requests for GetCounts
+func NewGetCountsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/counts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -6665,6 +6620,179 @@ func NewGetHostMetricsHistoryRequest(server string, params *GetHostMetricsHistor
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListImagesRequest generates requests for ListImages
+func NewListImagesRequest(server string, params *ListImagesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/images")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPullImageRequest calls the generic PullImage builder with application/json body
+func NewPullImageRequest(server string, body PullImageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPullImageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPullImageRequestWithBody generates requests for PullImage with any type of body
+func NewPullImageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/images")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteImageRequest generates requests for DeleteImage
+func NewDeleteImageRequest(server string, imageId ImageID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/images/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetImageRequest generates requests for GetImage
+func NewGetImageRequest(server string, imageId ImageID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/images/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -6933,8 +7061,8 @@ func NewGetMyPictureRequest(server string, params *GetMyPictureParams) (*http.Re
 	return req, nil
 }
 
-// NewListNamespacesRequest generates requests for ListNamespaces
-func NewListNamespacesRequest(server string, params *ListNamespacesParams) (*http.Request, error) {
+// NewGetOpenapiYamlRequest generates requests for GetOpenapiYaml
+func NewGetOpenapiYamlRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6942,175 +7070,7 @@ func NewListNamespacesRequest(server string, params *ListNamespacesParams) (*htt
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateNamespaceRequest calls the generic CreateNamespace builder with application/json body
-func NewCreateNamespaceRequest(server string, body CreateNamespaceJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateNamespaceRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewCreateNamespaceRequestWithBody generates requests for CreateNamespace with any type of body
-func NewCreateNamespaceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteNamespaceRequest generates requests for DeleteNamespace
-func NewDeleteNamespaceRequest(server string, namespace NamespaceInPath, params *DeleteNamespaceParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Force != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "force", runtime.ParamLocationQuery, *params.Force); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetNamespaceRequest generates requests for GetNamespace
-func NewGetNamespaceRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/openapi.yaml")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7124,1300 +7084,20 @@ func NewGetNamespaceRequest(server string, namespace NamespaceInPath) (*http.Req
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewListBrokerActivityRequest generates requests for ListBrokerActivity
-func NewListBrokerActivityRequest(server string, namespace NamespaceInPath, params *ListBrokerActivityParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/activity", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.After != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "after", runtime.ParamLocationQuery, *params.After); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Sandbox != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sandbox", runtime.ParamLocationQuery, *params.Sandbox); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Broker != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "broker", runtime.ParamLocationQuery, *params.Broker); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Wait != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "wait", runtime.ParamLocationQuery, *params.Wait); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetBrokerActivityRequest generates requests for GetBrokerActivity
-func NewGetBrokerActivityRequest(server string, namespace NamespaceInPath, activityId BrokerActivityID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "activityId", runtime.ParamLocationPath, activityId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/activity/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListBrokersRequest generates requests for ListBrokers
-func NewListBrokersRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/brokers", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewDeleteBrokerRequest generates requests for DeleteBroker
-func NewDeleteBrokerRequest(server string, namespace NamespaceInPath, brokerName BrokerName) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/brokers/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetBrokerRequest generates requests for GetBroker
-func NewGetBrokerRequest(server string, namespace NamespaceInPath, brokerName BrokerName) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/brokers/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPutBrokerRequest calls the generic PutBroker builder with application/json body
-func NewPutBrokerRequest(server string, namespace NamespaceInPath, brokerName BrokerName, body PutBrokerJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPutBrokerRequestWithBody(server, namespace, brokerName, "application/json", bodyReader)
-}
-
-// NewPutBrokerRequestWithBody generates requests for PutBroker with any type of body
-func NewPutBrokerRequestWithBody(server string, namespace NamespaceInPath, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/brokers/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PUT", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListBuildsRequest generates requests for ListBuilds
-func NewListBuildsRequest(server string, namespace NamespaceInPath, params *ListBuildsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/builds", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateBuildRequest calls the generic CreateBuild builder with application/json body
-func NewCreateBuildRequest(server string, namespace NamespaceInPath, body CreateBuildJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateBuildRequestWithBody(server, namespace, "application/json", bodyReader)
-}
-
-// NewCreateBuildRequestWithBody generates requests for CreateBuild with any type of body
-func NewCreateBuildRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/builds", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteBuildRequest generates requests for DeleteBuild
-func NewDeleteBuildRequest(server string, namespace NamespaceInPath, buildId BuildID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/builds/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetBuildRequest generates requests for GetBuild
-func NewGetBuildRequest(server string, namespace NamespaceInPath, buildId BuildID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/builds/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewReadBuildLogRequest generates requests for ReadBuildLog
-func NewReadBuildLogRequest(server string, namespace NamespaceInPath, buildId BuildID, params *ReadBuildLogParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "buildId", runtime.ParamLocationPath, buildId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/builds/%s/log", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.From != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "from", runtime.ParamLocationQuery, *params.From); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Follow != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "follow", runtime.ParamLocationQuery, *params.Follow); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCARequest generates requests for GetCA
-func NewGetCARequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/ca", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetNamespaceCostsRequest generates requests for GetNamespaceCosts
-func NewGetNamespaceCostsRequest(server string, namespace NamespaceInPath, params *GetNamespaceCostsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/costs", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Window != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "window", runtime.ParamLocationQuery, *params.Window); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Label != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "label", runtime.ParamLocationQuery, *params.Label); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Volume != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "volume", runtime.ParamLocationQuery, *params.Volume); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetCountsRequest generates requests for GetCounts
-func NewGetCountsRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/counts", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListImagesRequest generates requests for ListImages
-func NewListImagesRequest(server string, namespace NamespaceInPath, params *ListImagesParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/images", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPullImageRequest calls the generic PullImage builder with application/json body
-func NewPullImageRequest(server string, namespace NamespaceInPath, body PullImageJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPullImageRequestWithBody(server, namespace, "application/json", bodyReader)
-}
-
-// NewPullImageRequestWithBody generates requests for PullImage with any type of body
-func NewPullImageRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/images", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeleteImageRequest generates requests for DeleteImage
-func NewDeleteImageRequest(server string, namespace NamespaceInPath, imageId ImageID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/images/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetImageRequest generates requests for GetImage
-func NewGetImageRequest(server string, namespace NamespaceInPath, imageId ImageID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "imageId", runtime.ParamLocationPath, imageId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/images/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListNamespaceKeysRequest generates requests for ListNamespaceKeys
-func NewListNamespaceKeysRequest(server string, namespace NamespaceInPath, params *ListNamespaceKeysParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Cursor != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "cursor", runtime.ParamLocationQuery, *params.Cursor); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Owner != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "owner", runtime.ParamLocationQuery, *params.Owner); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCreateNamespaceKeyRequest calls the generic CreateNamespaceKey builder with application/json body
-func NewCreateNamespaceKeyRequest(server string, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateNamespaceKeyRequestWithBody(server, namespace, "application/json", bodyReader)
-}
-
-// NewCreateNamespaceKeyRequestWithBody generates requests for CreateNamespaceKey with any type of body
-func NewCreateNamespaceKeyRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRevokeNamespaceKeyRequest generates requests for RevokeNamespaceKey
-func NewRevokeNamespaceKeyRequest(server string, namespace NamespaceInPath, keyId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "keyId", runtime.ParamLocationPath, keyId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/keys/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewListNamespaceMembersRequest generates requests for ListNamespaceMembers
-func NewListNamespaceMembersRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/members", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewDeleteNamespaceMemberRequest generates requests for DeleteNamespaceMember
-func NewDeleteNamespaceMemberRequest(server string, namespace NamespaceInPath, email openapi_types.Email) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "email", runtime.ParamLocationPath, email)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/members/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPutNamespaceMemberRequest calls the generic PutNamespaceMember builder with application/json body
-func NewPutNamespaceMemberRequest(server string, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPutNamespaceMemberRequestWithBody(server, namespace, email, "application/json", bodyReader)
-}
-
-// NewPutNamespaceMemberRequestWithBody generates requests for PutNamespaceMember with any type of body
-func NewPutNamespaceMemberRequestWithBody(server string, namespace NamespaceInPath, email openapi_types.Email, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "email", runtime.ParamLocationPath, email)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/members/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PUT", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
 
 // NewListPrincipalsRequest generates requests for ListPrincipals
-func NewListPrincipalsRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
+func NewListPrincipalsRequest(server string) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals", pathParam0)
+	operationPath := fmt.Sprintf("/v1/principals")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8436,19 +7116,12 @@ func NewListPrincipalsRequest(server string, namespace NamespaceInPath) (*http.R
 }
 
 // NewDeletePrincipalRequest generates requests for DeletePrincipal
-func NewDeletePrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID) (*http.Request, error) {
+func NewDeletePrincipalRequest(server string, principalId PrincipalID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
 	if err != nil {
 		return nil, err
 	}
@@ -8458,7 +7131,7 @@ func NewDeletePrincipalRequest(server string, namespace NamespaceInPath, princip
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/principals/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8477,19 +7150,12 @@ func NewDeletePrincipalRequest(server string, namespace NamespaceInPath, princip
 }
 
 // NewGetPrincipalRequest generates requests for GetPrincipal
-func NewGetPrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID) (*http.Request, error) {
+func NewGetPrincipalRequest(server string, principalId PrincipalID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
 	if err != nil {
 		return nil, err
 	}
@@ -8499,7 +7165,7 @@ func NewGetPrincipalRequest(server string, namespace NamespaceInPath, principalI
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/principals/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8518,30 +7184,23 @@ func NewGetPrincipalRequest(server string, namespace NamespaceInPath, principalI
 }
 
 // NewPutPrincipalRequest calls the generic PutPrincipal builder with application/json body
-func NewPutPrincipalRequest(server string, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody) (*http.Request, error) {
+func NewPutPrincipalRequest(server string, principalId PrincipalID, body PutPrincipalJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPutPrincipalRequestWithBody(server, namespace, principalId, "application/json", bodyReader)
+	return NewPutPrincipalRequestWithBody(server, principalId, "application/json", bodyReader)
 }
 
 // NewPutPrincipalRequestWithBody generates requests for PutPrincipal with any type of body
-func NewPutPrincipalRequestWithBody(server string, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader) (*http.Request, error) {
+func NewPutPrincipalRequestWithBody(server string, principalId PrincipalID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
 	if err != nil {
 		return nil, err
 	}
@@ -8551,7 +7210,7 @@ func NewPutPrincipalRequestWithBody(server string, namespace NamespaceInPath, pr
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/principals/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8572,33 +7231,26 @@ func NewPutPrincipalRequestWithBody(server string, namespace NamespaceInPath, pr
 }
 
 // NewGetBrokerTrustedRequest generates requests for GetBrokerTrusted
-func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath) (*http.Request, error) {
+func NewGetBrokerTrustedRequest(server string, principalId PrincipalID, brokerName BrokerName, path TrustedPath) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "principalId", runtime.ParamLocationPath, principalId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam2 string
 
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam3 string
-
-	pathParam3, err = runtime.StyleParamWithLocation("simple", false, "path", runtime.ParamLocationPath, path)
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "path", runtime.ParamLocationPath, path)
 	if err != nil {
 		return nil, err
 	}
@@ -8608,7 +7260,7 @@ func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, princi
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/principals/%s/brokers/%s/trusted/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	operationPath := fmt.Sprintf("/v1/principals/%s/brokers/%s/trusted/%s", pathParam0, pathParam1, pathParam2)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8626,70 +7278,16 @@ func NewGetBrokerTrustedRequest(server string, namespace NamespaceInPath, princi
 	return req, nil
 }
 
-// NewSetNamespaceQuotaRequest calls the generic SetNamespaceQuota builder with application/json body
-func NewSetNamespaceQuotaRequest(server string, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetNamespaceQuotaRequestWithBody(server, namespace, "application/json", bodyReader)
-}
-
-// NewSetNamespaceQuotaRequestWithBody generates requests for SetNamespaceQuota with any type of body
-func NewSetNamespaceQuotaRequestWithBody(server string, namespace NamespaceInPath, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/quota", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PUT", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewListSandboxesRequest generates requests for ListSandboxes
-func NewListSandboxesRequest(server string, namespace NamespaceInPath, params *ListSandboxesParams) (*http.Request, error) {
+func NewListSandboxesRequest(server string, params *ListSandboxesParams) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes", pathParam0)
+	operationPath := fmt.Sprintf("/v1/sandboxes")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8794,33 +7392,26 @@ func NewListSandboxesRequest(server string, namespace NamespaceInPath, params *L
 }
 
 // NewCreateSandboxRequest calls the generic CreateSandbox builder with application/json body
-func NewCreateSandboxRequest(server string, namespace NamespaceInPath, params *CreateSandboxParams, body CreateSandboxJSONRequestBody) (*http.Request, error) {
+func NewCreateSandboxRequest(server string, params *CreateSandboxParams, body CreateSandboxJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateSandboxRequestWithBody(server, namespace, params, "application/json", bodyReader)
+	return NewCreateSandboxRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateSandboxRequestWithBody generates requests for CreateSandbox with any type of body
-func NewCreateSandboxRequestWithBody(server string, namespace NamespaceInPath, params *CreateSandboxParams, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateSandboxRequestWithBody(server string, params *CreateSandboxParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes", pathParam0)
+	operationPath := fmt.Sprintf("/v1/sandboxes")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8854,19 +7445,12 @@ func NewCreateSandboxRequestWithBody(server string, namespace NamespaceInPath, p
 }
 
 // NewDeleteSandboxRequest generates requests for DeleteSandbox
-func NewDeleteSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteSandboxParams) (*http.Request, error) {
+func NewDeleteSandboxRequest(server string, sandboxId SandboxID, params *DeleteSandboxParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -8876,7 +7460,7 @@ func NewDeleteSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8917,19 +7501,12 @@ func NewDeleteSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 }
 
 // NewGetSandboxRequest generates requests for GetSandbox
-func NewGetSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewGetSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -8939,7 +7516,7 @@ func NewGetSandboxRequest(server string, namespace NamespaceInPath, sandboxId Sa
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8958,19 +7535,12 @@ func NewGetSandboxRequest(server string, namespace NamespaceInPath, sandboxId Sa
 }
 
 // NewListSandboxBrokersRequest generates requests for ListSandboxBrokers
-func NewListSandboxBrokersRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewListSandboxBrokersRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -8980,7 +7550,7 @@ func NewListSandboxBrokersRequest(server string, namespace NamespaceInPath, sand
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/brokers", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -8999,26 +7569,19 @@ func NewListSandboxBrokersRequest(server string, namespace NamespaceInPath, sand
 }
 
 // NewDetachSandboxBrokerRequest generates requests for DetachSandboxBroker
-func NewDetachSandboxBrokerRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName) (*http.Request, error) {
+func NewDetachSandboxBrokerRequest(server string, sandboxId SandboxID, brokerName BrokerName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
 	if err != nil {
 		return nil, err
 	}
@@ -9028,7 +7591,7 @@ func NewDetachSandboxBrokerRequest(server string, namespace NamespaceInPath, san
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/brokers/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9047,37 +7610,30 @@ func NewDetachSandboxBrokerRequest(server string, namespace NamespaceInPath, san
 }
 
 // NewAttachSandboxBrokerRequest calls the generic AttachSandboxBroker builder with application/json body
-func NewAttachSandboxBrokerRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody) (*http.Request, error) {
+func NewAttachSandboxBrokerRequest(server string, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewAttachSandboxBrokerRequestWithBody(server, namespace, sandboxId, brokerName, "application/json", bodyReader)
+	return NewAttachSandboxBrokerRequestWithBody(server, sandboxId, brokerName, "application/json", bodyReader)
 }
 
 // NewAttachSandboxBrokerRequestWithBody generates requests for AttachSandboxBroker with any type of body
-func NewAttachSandboxBrokerRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
+func NewAttachSandboxBrokerRequestWithBody(server string, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
 	if err != nil {
 		return nil, err
 	}
@@ -9087,7 +7643,7 @@ func NewAttachSandboxBrokerRequestWithBody(server string, namespace NamespaceInP
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/brokers/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9108,26 +7664,19 @@ func NewAttachSandboxBrokerRequestWithBody(server string, namespace NamespaceInP
 }
 
 // NewServeSandboxBrokerRequest generates requests for ServeSandboxBroker
-func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams) (*http.Request, error) {
+func NewServeSandboxBrokerRequest(server string, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
 	if err != nil {
 		return nil, err
 	}
@@ -9137,7 +7686,7 @@ func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sand
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/brokers/%s/serve", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s/serve", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9178,30 +7727,23 @@ func NewServeSandboxBrokerRequest(server string, namespace NamespaceInPath, sand
 }
 
 // NewRunCommandRequest calls the generic RunCommand builder with application/json body
-func NewRunCommandRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, body RunCommandJSONRequestBody) (*http.Request, error) {
+func NewRunCommandRequest(server string, sandboxId SandboxID, body RunCommandJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewRunCommandRequestWithBody(server, namespace, sandboxId, "application/json", bodyReader)
+	return NewRunCommandRequestWithBody(server, sandboxId, "application/json", bodyReader)
 }
 
 // NewRunCommandRequestWithBody generates requests for RunCommand with any type of body
-func NewRunCommandRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewRunCommandRequestWithBody(server string, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9211,7 +7753,7 @@ func NewRunCommandRequestWithBody(server string, namespace NamespaceInPath, sand
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/commands", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/commands", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9232,19 +7774,12 @@ func NewRunCommandRequestWithBody(server string, namespace NamespaceInPath, sand
 }
 
 // NewGetSandboxConsoleRequest generates requests for GetSandboxConsole
-func NewGetSandboxConsoleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxConsoleParams) (*http.Request, error) {
+func NewGetSandboxConsoleRequest(server string, sandboxId SandboxID, params *GetSandboxConsoleParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9254,7 +7789,7 @@ func NewGetSandboxConsoleRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/console", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/console", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9295,19 +7830,12 @@ func NewGetSandboxConsoleRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewGetSandboxEgressRequest generates requests for GetSandboxEgress
-func NewGetSandboxEgressRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewGetSandboxEgressRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9317,7 +7845,7 @@ func NewGetSandboxEgressRequest(server string, namespace NamespaceInPath, sandbo
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9336,30 +7864,23 @@ func NewGetSandboxEgressRequest(server string, namespace NamespaceInPath, sandbo
 }
 
 // NewSetSandboxEgressRequest calls the generic SetSandboxEgress builder with application/json body
-func NewSetSandboxEgressRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody) (*http.Request, error) {
+func NewSetSandboxEgressRequest(server string, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSetSandboxEgressRequestWithBody(server, namespace, sandboxId, "application/json", bodyReader)
+	return NewSetSandboxEgressRequestWithBody(server, sandboxId, "application/json", bodyReader)
 }
 
 // NewSetSandboxEgressRequestWithBody generates requests for SetSandboxEgress with any type of body
-func NewSetSandboxEgressRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSetSandboxEgressRequestWithBody(server string, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9369,7 +7890,7 @@ func NewSetSandboxEgressRequestWithBody(server string, namespace NamespaceInPath
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9390,30 +7911,23 @@ func NewSetSandboxEgressRequestWithBody(server string, namespace NamespaceInPath
 }
 
 // NewKillConnectionsRequest calls the generic KillConnections builder with application/json body
-func NewKillConnectionsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, body KillConnectionsJSONRequestBody) (*http.Request, error) {
+func NewKillConnectionsRequest(server string, sandboxId SandboxID, body KillConnectionsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewKillConnectionsRequestWithBody(server, namespace, sandboxId, "application/json", bodyReader)
+	return NewKillConnectionsRequestWithBody(server, sandboxId, "application/json", bodyReader)
 }
 
 // NewKillConnectionsRequestWithBody generates requests for KillConnections with any type of body
-func NewKillConnectionsRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewKillConnectionsRequestWithBody(server string, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9423,7 +7937,7 @@ func NewKillConnectionsRequestWithBody(server string, namespace NamespaceInPath,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/connections/kill", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/connections/kill", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9444,19 +7958,12 @@ func NewKillConnectionsRequestWithBody(server string, namespace NamespaceInPath,
 }
 
 // NewListEgressRulesRequest generates requests for ListEgressRules
-func NewListEgressRulesRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewListEgressRulesRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9466,7 +7973,7 @@ func NewListEgressRulesRequest(server string, namespace NamespaceInPath, sandbox
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9485,26 +7992,19 @@ func NewListEgressRulesRequest(server string, namespace NamespaceInPath, sandbox
 }
 
 // NewDeleteEgressRuleRequest generates requests for DeleteEgressRule
-func NewDeleteEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
+func NewDeleteEgressRuleRequest(server string, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
 	if err != nil {
 		return nil, err
 	}
@@ -9514,7 +8014,7 @@ func NewDeleteEgressRuleRequest(server string, namespace NamespaceInPath, sandbo
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9533,26 +8033,19 @@ func NewDeleteEgressRuleRequest(server string, namespace NamespaceInPath, sandbo
 }
 
 // NewGetEgressRuleRequest generates requests for GetEgressRule
-func NewGetEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
+func NewGetEgressRuleRequest(server string, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
 	if err != nil {
 		return nil, err
 	}
@@ -9562,7 +8055,7 @@ func NewGetEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9581,37 +8074,30 @@ func NewGetEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId
 }
 
 // NewPutEgressRuleRequest calls the generic PutEgressRule builder with application/json body
-func NewPutEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody) (*http.Request, error) {
+func NewPutEgressRuleRequest(server string, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPutEgressRuleRequestWithBody(server, namespace, sandboxId, ruleName, "application/json", bodyReader)
+	return NewPutEgressRuleRequestWithBody(server, sandboxId, ruleName, "application/json", bodyReader)
 }
 
 // NewPutEgressRuleRequestWithBody generates requests for PutEgressRule with any type of body
-func NewPutEgressRuleRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader) (*http.Request, error) {
+func NewPutEgressRuleRequestWithBody(server string, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
 	if err != nil {
 		return nil, err
 	}
@@ -9621,7 +8107,7 @@ func NewPutEgressRuleRequestWithBody(server string, namespace NamespaceInPath, s
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9642,26 +8128,19 @@ func NewPutEgressRuleRequestWithBody(server string, namespace NamespaceInPath, s
 }
 
 // NewPauseEgressRuleRequest generates requests for PauseEgressRule
-func NewPauseEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
+func NewPauseEgressRuleRequest(server string, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
 	if err != nil {
 		return nil, err
 	}
@@ -9671,7 +8150,7 @@ func NewPauseEgressRuleRequest(server string, namespace NamespaceInPath, sandbox
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules/%s/pause", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules/%s/pause", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9690,26 +8169,19 @@ func NewPauseEgressRuleRequest(server string, namespace NamespaceInPath, sandbox
 }
 
 // NewResumeEgressRuleRequest generates requests for ResumeEgressRule
-func NewResumeEgressRuleRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
+func NewResumeEgressRuleRequest(server string, sandboxId SandboxID, ruleName RuleName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "ruleName", runtime.ParamLocationPath, ruleName)
 	if err != nil {
 		return nil, err
 	}
@@ -9719,7 +8191,7 @@ func NewResumeEgressRuleRequest(server string, namespace NamespaceInPath, sandbo
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/egress/rules/%s/resume", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/egress/rules/%s/resume", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9738,19 +8210,12 @@ func NewResumeEgressRuleRequest(server string, namespace NamespaceInPath, sandbo
 }
 
 // NewStreamSandboxEventsRequest generates requests for StreamSandboxEvents
-func NewStreamSandboxEventsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *StreamSandboxEventsParams) (*http.Request, error) {
+func NewStreamSandboxEventsRequest(server string, sandboxId SandboxID, params *StreamSandboxEventsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9760,7 +8225,7 @@ func NewStreamSandboxEventsRequest(server string, namespace NamespaceInPath, san
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/events", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/events", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9817,19 +8282,12 @@ func NewStreamSandboxEventsRequest(server string, namespace NamespaceInPath, san
 }
 
 // NewDeleteFileRequest generates requests for DeleteFile
-func NewDeleteFileRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteFileParams) (*http.Request, error) {
+func NewDeleteFileRequest(server string, sandboxId SandboxID, params *DeleteFileParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9839,7 +8297,7 @@ func NewDeleteFileRequest(server string, namespace NamespaceInPath, sandboxId Sa
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/files", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/files", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9876,19 +8334,12 @@ func NewDeleteFileRequest(server string, namespace NamespaceInPath, sandboxId Sa
 }
 
 // NewReadFileRequest generates requests for ReadFile
-func NewReadFileRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *ReadFileParams) (*http.Request, error) {
+func NewReadFileRequest(server string, sandboxId SandboxID, params *ReadFileParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9898,7 +8349,7 @@ func NewReadFileRequest(server string, namespace NamespaceInPath, sandboxId Sand
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/files", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/files", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -9967,19 +8418,12 @@ func NewReadFileRequest(server string, namespace NamespaceInPath, sandboxId Sand
 }
 
 // NewWriteFileRequestWithBody generates requests for WriteFile with any type of body
-func NewWriteFileRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader) (*http.Request, error) {
+func NewWriteFileRequestWithBody(server string, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -9989,7 +8433,7 @@ func NewWriteFileRequestWithBody(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/files", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/files", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10076,19 +8520,12 @@ func NewWriteFileRequestWithBody(server string, namespace NamespaceInPath, sandb
 }
 
 // NewListDirRequest generates requests for ListDir
-func NewListDirRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *ListDirParams) (*http.Request, error) {
+func NewListDirRequest(server string, sandboxId SandboxID, params *ListDirParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10098,7 +8535,7 @@ func NewListDirRequest(server string, namespace NamespaceInPath, sandboxId Sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/files/list", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/files/list", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10167,19 +8604,12 @@ func NewListDirRequest(server string, namespace NamespaceInPath, sandboxId Sandb
 }
 
 // NewGetSandboxIdentityRequest generates requests for GetSandboxIdentity
-func NewGetSandboxIdentityRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewGetSandboxIdentityRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10189,7 +8619,7 @@ func NewGetSandboxIdentityRequest(server string, namespace NamespaceInPath, sand
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/identity", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/identity", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10208,30 +8638,23 @@ func NewGetSandboxIdentityRequest(server string, namespace NamespaceInPath, sand
 }
 
 // NewSetSandboxLabelsRequest calls the generic SetSandboxLabels builder with application/json body
-func NewSetSandboxLabelsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody) (*http.Request, error) {
+func NewSetSandboxLabelsRequest(server string, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSetSandboxLabelsRequestWithBody(server, namespace, sandboxId, "application/json", bodyReader)
+	return NewSetSandboxLabelsRequestWithBody(server, sandboxId, "application/json", bodyReader)
 }
 
 // NewSetSandboxLabelsRequestWithBody generates requests for SetSandboxLabels with any type of body
-func NewSetSandboxLabelsRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSetSandboxLabelsRequestWithBody(server string, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10241,7 +8664,7 @@ func NewSetSandboxLabelsRequestWithBody(server string, namespace NamespaceInPath
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/labels", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/labels", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10262,19 +8685,12 @@ func NewSetSandboxLabelsRequestWithBody(server string, namespace NamespaceInPath
 }
 
 // NewGetSandboxMetricsRequest generates requests for GetSandboxMetrics
-func NewGetSandboxMetricsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewGetSandboxMetricsRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10284,7 +8700,7 @@ func NewGetSandboxMetricsRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/metrics", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/metrics", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10303,19 +8719,12 @@ func NewGetSandboxMetricsRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewGetSandboxMetricsHistoryRequest generates requests for GetSandboxMetricsHistory
-func NewGetSandboxMetricsHistoryRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams) (*http.Request, error) {
+func NewGetSandboxMetricsHistoryRequest(server string, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10325,7 +8734,7 @@ func NewGetSandboxMetricsHistoryRequest(server string, namespace NamespaceInPath
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/metrics/history", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/metrics/history", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10366,19 +8775,12 @@ func NewGetSandboxMetricsHistoryRequest(server string, namespace NamespaceInPath
 }
 
 // NewPauseSandboxRequest generates requests for PauseSandbox
-func NewPauseSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewPauseSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10388,7 +8790,7 @@ func NewPauseSandboxRequest(server string, namespace NamespaceInPath, sandboxId 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/pause", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/pause", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10407,19 +8809,12 @@ func NewPauseSandboxRequest(server string, namespace NamespaceInPath, sandboxId 
 }
 
 // NewListProcessesRequest generates requests for ListProcesses
-func NewListProcessesRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *ListProcessesParams) (*http.Request, error) {
+func NewListProcessesRequest(server string, sandboxId SandboxID, params *ListProcessesParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10429,7 +8824,7 @@ func NewListProcessesRequest(server string, namespace NamespaceInPath, sandboxId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10486,30 +8881,23 @@ func NewListProcessesRequest(server string, namespace NamespaceInPath, sandboxId
 }
 
 // NewStartProcessRequest calls the generic StartProcess builder with application/json body
-func NewStartProcessRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, body StartProcessJSONRequestBody) (*http.Request, error) {
+func NewStartProcessRequest(server string, sandboxId SandboxID, body StartProcessJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewStartProcessRequestWithBody(server, namespace, sandboxId, "application/json", bodyReader)
+	return NewStartProcessRequestWithBody(server, sandboxId, "application/json", bodyReader)
 }
 
 // NewStartProcessRequestWithBody generates requests for StartProcess with any type of body
-func NewStartProcessRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
+func NewStartProcessRequestWithBody(server string, sandboxId SandboxID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10519,7 +8907,7 @@ func NewStartProcessRequestWithBody(server string, namespace NamespaceInPath, sa
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10540,26 +8928,19 @@ func NewStartProcessRequestWithBody(server string, namespace NamespaceInPath, sa
 }
 
 // NewReapProcessRequest generates requests for ReapProcess
-func NewReapProcessRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID) (*http.Request, error) {
+func NewReapProcessRequest(server string, sandboxId SandboxID, processId ProcessID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10569,7 +8950,7 @@ func NewReapProcessRequest(server string, namespace NamespaceInPath, sandboxId S
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10588,26 +8969,19 @@ func NewReapProcessRequest(server string, namespace NamespaceInPath, sandboxId S
 }
 
 // NewGetProcessRequest generates requests for GetProcess
-func NewGetProcessRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID) (*http.Request, error) {
+func NewGetProcessRequest(server string, sandboxId SandboxID, processId ProcessID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10617,7 +8991,7 @@ func NewGetProcessRequest(server string, namespace NamespaceInPath, sandboxId Sa
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10636,37 +9010,30 @@ func NewGetProcessRequest(server string, namespace NamespaceInPath, sandboxId Sa
 }
 
 // NewSignalProcessRequest calls the generic SignalProcess builder with application/json body
-func NewSignalProcessRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody) (*http.Request, error) {
+func NewSignalProcessRequest(server string, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewSignalProcessRequestWithBody(server, namespace, sandboxId, processId, "application/json", bodyReader)
+	return NewSignalProcessRequestWithBody(server, sandboxId, processId, "application/json", bodyReader)
 }
 
 // NewSignalProcessRequestWithBody generates requests for SignalProcess with any type of body
-func NewSignalProcessRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader) (*http.Request, error) {
+func NewSignalProcessRequestWithBody(server string, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10676,7 +9043,7 @@ func NewSignalProcessRequestWithBody(server string, namespace NamespaceInPath, s
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s/signal", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s/signal", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10697,26 +9064,19 @@ func NewSignalProcessRequestWithBody(server string, namespace NamespaceInPath, s
 }
 
 // NewReadProcessStderrRequest generates requests for ReadProcessStderr
-func NewReadProcessStderrRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams) (*http.Request, error) {
+func NewReadProcessStderrRequest(server string, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10726,7 +9086,7 @@ func NewReadProcessStderrRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s/stderr", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s/stderr", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10783,26 +9143,19 @@ func NewReadProcessStderrRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewWriteProcessStdinRequestWithBody generates requests for WriteProcessStdin with any type of body
-func NewWriteProcessStdinRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader) (*http.Request, error) {
+func NewWriteProcessStdinRequestWithBody(server string, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10812,7 +9165,7 @@ func NewWriteProcessStdinRequestWithBody(server string, namespace NamespaceInPat
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s/stdin", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s/stdin", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10855,26 +9208,19 @@ func NewWriteProcessStdinRequestWithBody(server string, namespace NamespaceInPat
 }
 
 // NewReadProcessStdoutRequest generates requests for ReadProcessStdout
-func NewReadProcessStdoutRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams) (*http.Request, error) {
+func NewReadProcessStdoutRequest(server string, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "processId", runtime.ParamLocationPath, processId)
 	if err != nil {
 		return nil, err
 	}
@@ -10884,7 +9230,7 @@ func NewReadProcessStdoutRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/processes/%s/stdout", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/processes/%s/stdout", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10941,19 +9287,12 @@ func NewReadProcessStdoutRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewResumeSandboxRequest generates requests for ResumeSandbox
-func NewResumeSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewResumeSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -10963,7 +9302,7 @@ func NewResumeSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/resume", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/resume", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10982,19 +9321,12 @@ func NewResumeSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 }
 
 // NewSealSandboxRequest generates requests for SealSandbox
-func NewSealSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewSealSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11004,7 +9336,7 @@ func NewSealSandboxRequest(server string, namespace NamespaceInPath, sandboxId S
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/seal", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/seal", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11023,19 +9355,12 @@ func NewSealSandboxRequest(server string, namespace NamespaceInPath, sandboxId S
 }
 
 // NewStartSandboxRequest generates requests for StartSandbox
-func NewStartSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewStartSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11045,7 +9370,7 @@ func NewStartSandboxRequest(server string, namespace NamespaceInPath, sandboxId 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/start", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/start", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11064,19 +9389,12 @@ func NewStartSandboxRequest(server string, namespace NamespaceInPath, sandboxId 
 }
 
 // NewStopSandboxRequest generates requests for StopSandbox
-func NewStopSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewStopSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11086,7 +9404,7 @@ func NewStopSandboxRequest(server string, namespace NamespaceInPath, sandboxId S
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/stop", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/stop", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11105,19 +9423,12 @@ func NewStopSandboxRequest(server string, namespace NamespaceInPath, sandboxId S
 }
 
 // NewListSystemProcessesRequest generates requests for ListSystemProcesses
-func NewListSystemProcessesRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewListSystemProcessesRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11127,7 +9438,7 @@ func NewListSystemProcessesRequest(server string, namespace NamespaceInPath, san
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/system/processes", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/system/processes", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11146,19 +9457,12 @@ func NewListSystemProcessesRequest(server string, namespace NamespaceInPath, san
 }
 
 // NewListSystemSocketsRequest generates requests for ListSystemSockets
-func NewListSystemSocketsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewListSystemSocketsRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11168,7 +9472,7 @@ func NewListSystemSocketsRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/system/sockets", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/system/sockets", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11187,19 +9491,12 @@ func NewListSystemSocketsRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewOpenTerminalRequest generates requests for OpenTerminal
-func NewOpenTerminalRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, params *OpenTerminalParams) (*http.Request, error) {
+func NewOpenTerminalRequest(server string, sandboxId SandboxID, params *OpenTerminalParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11209,7 +9506,7 @@ func NewOpenTerminalRequest(server string, namespace NamespaceInPath, sandboxId 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/terminal", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/terminal", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11298,19 +9595,12 @@ func NewOpenTerminalRequest(server string, namespace NamespaceInPath, sandboxId 
 }
 
 // NewListTunnelsRequest generates requests for ListTunnels
-func NewListTunnelsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewListTunnelsRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11320,7 +9610,7 @@ func NewListTunnelsRequest(server string, namespace NamespaceInPath, sandboxId S
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11339,26 +9629,19 @@ func NewListTunnelsRequest(server string, namespace NamespaceInPath, sandboxId S
 }
 
 // NewDeleteTunnelRequest generates requests for DeleteTunnel
-func NewDeleteTunnelRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
+func NewDeleteTunnelRequest(server string, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11368,7 +9651,7 @@ func NewDeleteTunnelRequest(server string, namespace NamespaceInPath, sandboxId 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11387,26 +9670,19 @@ func NewDeleteTunnelRequest(server string, namespace NamespaceInPath, sandboxId 
 }
 
 // NewGetTunnelRequest generates requests for GetTunnel
-func NewGetTunnelRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
+func NewGetTunnelRequest(server string, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11416,7 +9692,7 @@ func NewGetTunnelRequest(server string, namespace NamespaceInPath, sandboxId San
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11435,37 +9711,30 @@ func NewGetTunnelRequest(server string, namespace NamespaceInPath, sandboxId San
 }
 
 // NewPutTunnelRequest calls the generic PutTunnel builder with application/json body
-func NewPutTunnelRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody) (*http.Request, error) {
+func NewPutTunnelRequest(server string, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewPutTunnelRequestWithBody(server, namespace, sandboxId, tunnelName, "application/json", bodyReader)
+	return NewPutTunnelRequestWithBody(server, sandboxId, tunnelName, "application/json", bodyReader)
 }
 
 // NewPutTunnelRequestWithBody generates requests for PutTunnel with any type of body
-func NewPutTunnelRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader) (*http.Request, error) {
+func NewPutTunnelRequestWithBody(server string, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11475,7 +9744,7 @@ func NewPutTunnelRequestWithBody(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11496,26 +9765,19 @@ func NewPutTunnelRequestWithBody(server string, namespace NamespaceInPath, sandb
 }
 
 // NewGetTunnelActivityRequest generates requests for GetTunnelActivity
-func NewGetTunnelActivityRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams) (*http.Request, error) {
+func NewGetTunnelActivityRequest(server string, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11525,7 +9787,7 @@ func NewGetTunnelActivityRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/activity", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/activity", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11582,26 +9844,19 @@ func NewGetTunnelActivityRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewListTunnelGuestsRequest generates requests for ListTunnelGuests
-func NewListTunnelGuestsRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
+func NewListTunnelGuestsRequest(server string, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11611,7 +9866,7 @@ func NewListTunnelGuestsRequest(server string, namespace NamespaceInPath, sandbo
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/guests", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/guests", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11630,33 +9885,26 @@ func NewListTunnelGuestsRequest(server string, namespace NamespaceInPath, sandbo
 }
 
 // NewRevokeTunnelGuestRequest generates requests for RevokeTunnelGuest
-func NewRevokeTunnelGuestRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string) (*http.Request, error) {
+func NewRevokeTunnelGuestRequest(server string, sandboxId SandboxID, tunnelName TunnelName, email string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam2 string
 
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam3 string
-
-	pathParam3, err = runtime.StyleParamWithLocation("simple", false, "email", runtime.ParamLocationPath, email)
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "email", runtime.ParamLocationPath, email)
 	if err != nil {
 		return nil, err
 	}
@@ -11666,7 +9914,7 @@ func NewRevokeTunnelGuestRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/guests/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/guests/%s", pathParam0, pathParam1, pathParam2)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11685,26 +9933,19 @@ func NewRevokeTunnelGuestRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewPauseTunnelRequest generates requests for PauseTunnel
-func NewPauseTunnelRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
+func NewPauseTunnelRequest(server string, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11714,7 +9955,7 @@ func NewPauseTunnelRequest(server string, namespace NamespaceInPath, sandboxId S
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/pause", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/pause", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11733,26 +9974,19 @@ func NewPauseTunnelRequest(server string, namespace NamespaceInPath, sandboxId S
 }
 
 // NewResumeTunnelRequest generates requests for ResumeTunnel
-func NewResumeTunnelRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
+func NewResumeTunnelRequest(server string, sandboxId SandboxID, tunnelName TunnelName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11762,7 +9996,7 @@ func NewResumeTunnelRequest(server string, namespace NamespaceInPath, sandboxId 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/resume", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/resume", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11781,37 +10015,30 @@ func NewResumeTunnelRequest(server string, namespace NamespaceInPath, sandboxId 
 }
 
 // NewCreateTunnelTokenRequest calls the generic CreateTunnelToken builder with application/json body
-func NewCreateTunnelTokenRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody) (*http.Request, error) {
+func NewCreateTunnelTokenRequest(server string, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateTunnelTokenRequestWithBody(server, namespace, sandboxId, tunnelName, "application/json", bodyReader)
+	return NewCreateTunnelTokenRequestWithBody(server, sandboxId, tunnelName, "application/json", bodyReader)
 }
 
 // NewCreateTunnelTokenRequestWithBody generates requests for CreateTunnelToken with any type of body
-func NewCreateTunnelTokenRequestWithBody(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateTunnelTokenRequestWithBody(server string, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
@@ -11821,7 +10048,7 @@ func NewCreateTunnelTokenRequestWithBody(server string, namespace NamespaceInPat
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/tokens", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/tokens", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11842,33 +10069,26 @@ func NewCreateTunnelTokenRequestWithBody(server string, namespace NamespaceInPat
 }
 
 // NewRevokeTunnelTokenRequest generates requests for RevokeTunnelToken
-func NewRevokeTunnelTokenRequest(server string, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams) (*http.Request, error) {
+func NewRevokeTunnelTokenRequest(server string, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam1 string
 
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
 	if err != nil {
 		return nil, err
 	}
 
 	var pathParam2 string
 
-	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tunnelName", runtime.ParamLocationPath, tunnelName)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam3 string
-
-	pathParam3, err = runtime.StyleParamWithLocation("simple", false, "tokenId", runtime.ParamLocationPath, tokenId)
+	pathParam2, err = runtime.StyleParamWithLocation("simple", false, "tokenId", runtime.ParamLocationPath, tokenId)
 	if err != nil {
 		return nil, err
 	}
@@ -11878,7 +10098,7 @@ func NewRevokeTunnelTokenRequest(server string, namespace NamespaceInPath, sandb
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/tunnels/%s/tokens/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/tunnels/%s/tokens/%s", pathParam0, pathParam1, pathParam2)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11919,19 +10139,12 @@ func NewRevokeTunnelTokenRequest(server string, namespace NamespaceInPath, sandb
 }
 
 // NewUnsealSandboxRequest generates requests for UnsealSandbox
-func NewUnsealSandboxRequest(server string, namespace NamespaceInPath, sandboxId SandboxID) (*http.Request, error) {
+func NewUnsealSandboxRequest(server string, sandboxId SandboxID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
 	if err != nil {
 		return nil, err
 	}
@@ -11941,7 +10154,7 @@ func NewUnsealSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/sandboxes/%s/unseal", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/unseal", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11960,22 +10173,15 @@ func NewUnsealSandboxRequest(server string, namespace NamespaceInPath, sandboxId
 }
 
 // NewListHostTunnelsRequest generates requests for ListHostTunnels
-func NewListHostTunnelsRequest(server string, namespace NamespaceInPath, params *ListHostTunnelsParams) (*http.Request, error) {
+func NewListHostTunnelsRequest(server string, params *ListHostTunnelsParams) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/tunnels", pathParam0)
+	operationPath := fmt.Sprintf("/v1/tunnels")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -12032,22 +10238,15 @@ func NewListHostTunnelsRequest(server string, namespace NamespaceInPath, params 
 }
 
 // NewListVolumesRequest generates requests for ListVolumes
-func NewListVolumesRequest(server string, namespace NamespaceInPath) (*http.Request, error) {
+func NewListVolumesRequest(server string) (*http.Request, error) {
 	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
 
 	serverURL, err := url.Parse(server)
 	if err != nil {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/volumes", pathParam0)
+	operationPath := fmt.Sprintf("/v1/volumes")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -12066,19 +10265,12 @@ func NewListVolumesRequest(server string, namespace NamespaceInPath) (*http.Requ
 }
 
 // NewDeleteVolumeRequest generates requests for DeleteVolume
-func NewDeleteVolumeRequest(server string, namespace NamespaceInPath, volumeName VolumeName) (*http.Request, error) {
+func NewDeleteVolumeRequest(server string, volumeName VolumeName) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
 	if err != nil {
 		return nil, err
 	}
@@ -12088,7 +10280,7 @@ func NewDeleteVolumeRequest(server string, namespace NamespaceInPath, volumeName
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/volumes/%s", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/volumes/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -12106,31 +10298,24 @@ func NewDeleteVolumeRequest(server string, namespace NamespaceInPath, volumeName
 	return req, nil
 }
 
-// NewMoveVolumeRequest calls the generic MoveVolume builder with application/json body
-func NewMoveVolumeRequest(server string, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody) (*http.Request, error) {
+// NewCloneVolumeRequest calls the generic CloneVolume builder with application/json body
+func NewCloneVolumeRequest(server string, volumeName VolumeName, body CloneVolumeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewMoveVolumeRequestWithBody(server, namespace, volumeName, "application/json", bodyReader)
+	return NewCloneVolumeRequestWithBody(server, volumeName, "application/json", bodyReader)
 }
 
-// NewMoveVolumeRequestWithBody generates requests for MoveVolume with any type of body
-func NewMoveVolumeRequestWithBody(server string, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
+// NewCloneVolumeRequestWithBody generates requests for CloneVolume with any type of body
+func NewCloneVolumeRequestWithBody(server string, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "namespace", runtime.ParamLocationPath, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
 	if err != nil {
 		return nil, err
 	}
@@ -12140,7 +10325,54 @@ func NewMoveVolumeRequestWithBody(server string, namespace NamespaceInPath, volu
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/namespaces/%s/volumes/%s/principal", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/volumes/%s/clone", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMoveVolumeRequest calls the generic MoveVolume builder with application/json body
+func NewMoveVolumeRequest(server string, volumeName VolumeName, body MoveVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMoveVolumeRequestWithBody(server, volumeName, "application/json", bodyReader)
+}
+
+// NewMoveVolumeRequestWithBody generates requests for MoveVolume with any type of body
+func NewMoveVolumeRequestWithBody(server string, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/volumes/%s/principal", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -12156,33 +10388,6 @@ func NewMoveVolumeRequestWithBody(server string, namespace NamespaceInPath, volu
 	}
 
 	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetOpenapiYamlRequest generates requests for GetOpenapiYaml
-func NewGetOpenapiYamlRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/openapi.yaml")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
 
 	return req, nil
 }
@@ -12236,32 +10441,32 @@ type ClientWithResponsesInterface interface {
 	// GetConsoleWithResponse request
 	GetConsoleWithResponse(ctx context.Context, params *GetConsoleParams, reqEditors ...RequestEditorFn) (*GetConsoleResponse, error)
 
-	// GetConsoleNamespaceWithResponse request
-	GetConsoleNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetConsoleNamespaceResponse, error)
-
 	// GetConsoleBuildWithResponse request
-	GetConsoleBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error)
+	GetConsoleBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error)
 
 	// GetConsoleImageWithResponse request
-	GetConsoleImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error)
+	GetConsoleImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error)
 
 	// GetConsoleSandboxWithResponse request
-	GetConsoleSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error)
+	GetConsoleSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error)
 
 	// GetConsoleSandboxTabWithResponse request
-	GetConsoleSandboxTabWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*GetConsoleSandboxTabResponse, error)
+	GetConsoleSandboxTabWithResponse(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*GetConsoleSandboxTabResponse, error)
 
 	// GetConsoleVolumeWithResponse request
-	GetConsoleVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error)
-
-	// GetConsoleNamespacePageWithResponse request
-	GetConsoleNamespacePageWithResponse(ctx context.Context, namespace NamespaceInPath, page string, reqEditors ...RequestEditorFn) (*GetConsoleNamespacePageResponse, error)
+	GetConsoleVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error)
 
 	// GetConsolePageWithResponse request
 	GetConsolePageWithResponse(ctx context.Context, page string, reqEditors ...RequestEditorFn) (*GetConsolePageResponse, error)
 
 	// HealthWithResponse request
 	HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthResponse, error)
+
+	// ListBrokerActivityWithResponse request
+	ListBrokerActivityWithResponse(ctx context.Context, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error)
+
+	// GetBrokerActivityWithResponse request
+	GetBrokerActivityWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error)
 
 	// GetAuthWithResponse request
 	GetAuthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthResponse, error)
@@ -12280,8 +10485,45 @@ type ClientWithResponsesInterface interface {
 	// SignOutWithResponse request
 	SignOutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*SignOutResponse, error)
 
+	// ListBrokersWithResponse request
+	ListBrokersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error)
+
+	// DeleteBrokerWithResponse request
+	DeleteBrokerWithResponse(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteBrokerResponse, error)
+
+	// GetBrokerWithResponse request
+	GetBrokerWithResponse(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*GetBrokerResponse, error)
+
+	// PutBrokerWithBodyWithResponse request with any body
+	PutBrokerWithBodyWithResponse(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
+
+	PutBrokerWithResponse(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
+
+	// ListBuildsWithResponse request
+	ListBuildsWithResponse(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error)
+
+	// CreateBuildWithBodyWithResponse request with any body
+	CreateBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
+
+	CreateBuildWithResponse(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
+
+	// DeleteBuildWithResponse request
+	DeleteBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error)
+
+	// GetBuildWithResponse request
+	GetBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error)
+
+	// ReadBuildLogWithResponse request
+	ReadBuildLogWithResponse(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error)
+
+	// GetCAWithResponse request
+	GetCAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
+
 	// GetCostsWithResponse request
 	GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error)
+
+	// GetCountsWithResponse request
+	GetCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountsResponse, error)
 
 	// GetDocsWithResponse request
 	GetDocsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDocsResponse, error)
@@ -12291,6 +10533,20 @@ type ClientWithResponsesInterface interface {
 
 	// GetHostMetricsHistoryWithResponse request
 	GetHostMetricsHistoryWithResponse(ctx context.Context, params *GetHostMetricsHistoryParams, reqEditors ...RequestEditorFn) (*GetHostMetricsHistoryResponse, error)
+
+	// ListImagesWithResponse request
+	ListImagesWithResponse(ctx context.Context, params *ListImagesParams, reqEditors ...RequestEditorFn) (*ListImagesResponse, error)
+
+	// PullImageWithBodyWithResponse request with any body
+	PullImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PullImageResponse, error)
+
+	PullImageWithResponse(ctx context.Context, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*PullImageResponse, error)
+
+	// DeleteImageWithResponse request
+	DeleteImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error)
+
+	// GetImageWithResponse request
+	GetImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
 
 	// GetInfoWithResponse request
 	GetInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetInfoResponse, error)
@@ -12312,330 +10568,234 @@ type ClientWithResponsesInterface interface {
 	// GetMyPictureWithResponse request
 	GetMyPictureWithResponse(ctx context.Context, params *GetMyPictureParams, reqEditors ...RequestEditorFn) (*GetMyPictureResponse, error)
 
-	// ListNamespacesWithResponse request
-	ListNamespacesWithResponse(ctx context.Context, params *ListNamespacesParams, reqEditors ...RequestEditorFn) (*ListNamespacesResponse, error)
-
-	// CreateNamespaceWithBodyWithResponse request with any body
-	CreateNamespaceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceResponse, error)
-
-	CreateNamespaceWithResponse(ctx context.Context, body CreateNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceResponse, error)
-
-	// DeleteNamespaceWithResponse request
-	DeleteNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, params *DeleteNamespaceParams, reqEditors ...RequestEditorFn) (*DeleteNamespaceResponse, error)
-
-	// GetNamespaceWithResponse request
-	GetNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetNamespaceResponse, error)
-
-	// ListBrokerActivityWithResponse request
-	ListBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error)
-
-	// GetBrokerActivityWithResponse request
-	GetBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error)
-
-	// ListBrokersWithResponse request
-	ListBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error)
-
-	// DeleteBrokerWithResponse request
-	DeleteBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteBrokerResponse, error)
-
-	// GetBrokerWithResponse request
-	GetBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*GetBrokerResponse, error)
-
-	// PutBrokerWithBodyWithResponse request with any body
-	PutBrokerWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
-
-	PutBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error)
-
-	// ListBuildsWithResponse request
-	ListBuildsWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error)
-
-	// CreateBuildWithBodyWithResponse request with any body
-	CreateBuildWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
-
-	CreateBuildWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error)
-
-	// DeleteBuildWithResponse request
-	DeleteBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error)
-
-	// GetBuildWithResponse request
-	GetBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error)
-
-	// ReadBuildLogWithResponse request
-	ReadBuildLogWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error)
-
-	// GetCAWithResponse request
-	GetCAWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
-
-	// GetNamespaceCostsWithResponse request
-	GetNamespaceCostsWithResponse(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*GetNamespaceCostsResponse, error)
-
-	// GetCountsWithResponse request
-	GetCountsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCountsResponse, error)
-
-	// ListImagesWithResponse request
-	ListImagesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListImagesParams, reqEditors ...RequestEditorFn) (*ListImagesResponse, error)
-
-	// PullImageWithBodyWithResponse request with any body
-	PullImageWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PullImageResponse, error)
-
-	PullImageWithResponse(ctx context.Context, namespace NamespaceInPath, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*PullImageResponse, error)
-
-	// DeleteImageWithResponse request
-	DeleteImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error)
-
-	// GetImageWithResponse request
-	GetImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetImageResponse, error)
-
-	// ListNamespaceKeysWithResponse request
-	ListNamespaceKeysWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*ListNamespaceKeysResponse, error)
-
-	// CreateNamespaceKeyWithBodyWithResponse request with any body
-	CreateNamespaceKeyWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error)
-
-	CreateNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error)
-
-	// RevokeNamespaceKeyWithResponse request
-	RevokeNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*RevokeNamespaceKeyResponse, error)
-
-	// ListNamespaceMembersWithResponse request
-	ListNamespaceMembersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListNamespaceMembersResponse, error)
-
-	// DeleteNamespaceMemberWithResponse request
-	DeleteNamespaceMemberWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteNamespaceMemberResponse, error)
-
-	// PutNamespaceMemberWithBodyWithResponse request with any body
-	PutNamespaceMemberWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNamespaceMemberResponse, error)
-
-	PutNamespaceMemberWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNamespaceMemberResponse, error)
-
-	// ListPrincipalsWithResponse request
-	ListPrincipalsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error)
-
-	// DeletePrincipalWithResponse request
-	DeletePrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error)
-
-	// GetPrincipalWithResponse request
-	GetPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error)
-
-	// PutPrincipalWithBodyWithResponse request with any body
-	PutPrincipalWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
-
-	PutPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
-
-	// GetBrokerTrustedWithResponse request
-	GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
-
-	// SetNamespaceQuotaWithBodyWithResponse request with any body
-	SetNamespaceQuotaWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error)
-
-	SetNamespaceQuotaWithResponse(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error)
-
-	// ListSandboxesWithResponse request
-	ListSandboxesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
-
-	// CreateSandboxWithBodyWithResponse request with any body
-	CreateSandboxWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error)
-
-	CreateSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error)
-
-	// DeleteSandboxWithResponse request
-	DeleteSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*DeleteSandboxResponse, error)
-
-	// GetSandboxWithResponse request
-	GetSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxResponse, error)
-
-	// ListSandboxBrokersWithResponse request
-	ListSandboxBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSandboxBrokersResponse, error)
-
-	// DetachSandboxBrokerWithResponse request
-	DetachSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DetachSandboxBrokerResponse, error)
-
-	// AttachSandboxBrokerWithBodyWithResponse request with any body
-	AttachSandboxBrokerWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
-
-	AttachSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
-
-	// ServeSandboxBrokerWithResponse request
-	ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
-
-	// RunCommandWithBodyWithResponse request with any body
-	RunCommandWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
-
-	RunCommandWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
-
-	// GetSandboxConsoleWithResponse request
-	GetSandboxConsoleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*GetSandboxConsoleResponse, error)
-
-	// GetSandboxEgressWithResponse request
-	GetSandboxEgressWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxEgressResponse, error)
-
-	// SetSandboxEgressWithBodyWithResponse request with any body
-	SetSandboxEgressWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error)
-
-	SetSandboxEgressWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error)
-
-	// KillConnectionsWithBodyWithResponse request with any body
-	KillConnectionsWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error)
-
-	KillConnectionsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error)
-
-	// ListEgressRulesWithResponse request
-	ListEgressRulesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListEgressRulesResponse, error)
-
-	// DeleteEgressRuleWithResponse request
-	DeleteEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*DeleteEgressRuleResponse, error)
-
-	// GetEgressRuleWithResponse request
-	GetEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*GetEgressRuleResponse, error)
-
-	// PutEgressRuleWithBodyWithResponse request with any body
-	PutEgressRuleWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error)
-
-	PutEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error)
-
-	// PauseEgressRuleWithResponse request
-	PauseEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*PauseEgressRuleResponse, error)
-
-	// ResumeEgressRuleWithResponse request
-	ResumeEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*ResumeEgressRuleResponse, error)
-
-	// StreamSandboxEventsWithResponse request
-	StreamSandboxEventsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*StreamSandboxEventsResponse, error)
-
-	// DeleteFileWithResponse request
-	DeleteFileWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*DeleteFileResponse, error)
-
-	// ReadFileWithResponse request
-	ReadFileWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error)
-
-	// WriteFileWithBodyWithResponse request with any body
-	WriteFileWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteFileResponse, error)
-
-	// ListDirWithResponse request
-	ListDirWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*ListDirResponse, error)
-
-	// GetSandboxIdentityWithResponse request
-	GetSandboxIdentityWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxIdentityResponse, error)
-
-	// SetSandboxLabelsWithBodyWithResponse request with any body
-	SetSandboxLabelsWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error)
-
-	SetSandboxLabelsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error)
-
-	// GetSandboxMetricsWithResponse request
-	GetSandboxMetricsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxMetricsResponse, error)
-
-	// GetSandboxMetricsHistoryWithResponse request
-	GetSandboxMetricsHistoryWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*GetSandboxMetricsHistoryResponse, error)
-
-	// PauseSandboxWithResponse request
-	PauseSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*PauseSandboxResponse, error)
-
-	// ListProcessesWithResponse request
-	ListProcessesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*ListProcessesResponse, error)
-
-	// StartProcessWithBodyWithResponse request with any body
-	StartProcessWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProcessResponse, error)
-
-	StartProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProcessResponse, error)
-
-	// ReapProcessWithResponse request
-	ReapProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*ReapProcessResponse, error)
-
-	// GetProcessWithResponse request
-	GetProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*GetProcessResponse, error)
-
-	// SignalProcessWithBodyWithResponse request with any body
-	SignalProcessWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error)
-
-	SignalProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error)
-
-	// ReadProcessStderrWithResponse request
-	ReadProcessStderrWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*ReadProcessStderrResponse, error)
-
-	// WriteProcessStdinWithBodyWithResponse request with any body
-	WriteProcessStdinWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteProcessStdinResponse, error)
-
-	// ReadProcessStdoutWithResponse request
-	ReadProcessStdoutWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*ReadProcessStdoutResponse, error)
-
-	// ResumeSandboxWithResponse request
-	ResumeSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ResumeSandboxResponse, error)
-
-	// SealSandboxWithResponse request
-	SealSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*SealSandboxResponse, error)
-
-	// StartSandboxWithResponse request
-	StartSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StartSandboxResponse, error)
-
-	// StopSandboxWithResponse request
-	StopSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StopSandboxResponse, error)
-
-	// ListSystemProcessesWithResponse request
-	ListSystemProcessesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemProcessesResponse, error)
-
-	// ListSystemSocketsWithResponse request
-	ListSystemSocketsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemSocketsResponse, error)
-
-	// OpenTerminalWithResponse request
-	OpenTerminalWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*OpenTerminalResponse, error)
-
-	// ListTunnelsWithResponse request
-	ListTunnelsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListTunnelsResponse, error)
-
-	// DeleteTunnelWithResponse request
-	DeleteTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*DeleteTunnelResponse, error)
-
-	// GetTunnelWithResponse request
-	GetTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*GetTunnelResponse, error)
-
-	// PutTunnelWithBodyWithResponse request with any body
-	PutTunnelWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error)
-
-	PutTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error)
-
-	// GetTunnelActivityWithResponse request
-	GetTunnelActivityWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*GetTunnelActivityResponse, error)
-
-	// ListTunnelGuestsWithResponse request
-	ListTunnelGuestsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ListTunnelGuestsResponse, error)
-
-	// RevokeTunnelGuestWithResponse request
-	RevokeTunnelGuestWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*RevokeTunnelGuestResponse, error)
-
-	// PauseTunnelWithResponse request
-	PauseTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*PauseTunnelResponse, error)
-
-	// ResumeTunnelWithResponse request
-	ResumeTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ResumeTunnelResponse, error)
-
-	// CreateTunnelTokenWithBodyWithResponse request with any body
-	CreateTunnelTokenWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error)
-
-	CreateTunnelTokenWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error)
-
-	// RevokeTunnelTokenWithResponse request
-	RevokeTunnelTokenWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*RevokeTunnelTokenResponse, error)
-
-	// UnsealSandboxWithResponse request
-	UnsealSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*UnsealSandboxResponse, error)
-
-	// ListHostTunnelsWithResponse request
-	ListHostTunnelsWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error)
-
-	// ListVolumesWithResponse request
-	ListVolumesWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error)
-
-	// DeleteVolumeWithResponse request
-	DeleteVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error)
-
-	// MoveVolumeWithBodyWithResponse request with any body
-	MoveVolumeWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
-
-	MoveVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
-
 	// GetOpenapiYamlWithResponse request
 	GetOpenapiYamlWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenapiYamlResponse, error)
+
+	// ListPrincipalsWithResponse request
+	ListPrincipalsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error)
+
+	// DeletePrincipalWithResponse request
+	DeletePrincipalWithResponse(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error)
+
+	// GetPrincipalWithResponse request
+	GetPrincipalWithResponse(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error)
+
+	// PutPrincipalWithBodyWithResponse request with any body
+	PutPrincipalWithBodyWithResponse(ctx context.Context, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
+
+	PutPrincipalWithResponse(ctx context.Context, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error)
+
+	// GetBrokerTrustedWithResponse request
+	GetBrokerTrustedWithResponse(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
+
+	// ListSandboxesWithResponse request
+	ListSandboxesWithResponse(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
+
+	// CreateSandboxWithBodyWithResponse request with any body
+	CreateSandboxWithBodyWithResponse(ctx context.Context, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error)
+
+	CreateSandboxWithResponse(ctx context.Context, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error)
+
+	// DeleteSandboxWithResponse request
+	DeleteSandboxWithResponse(ctx context.Context, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*DeleteSandboxResponse, error)
+
+	// GetSandboxWithResponse request
+	GetSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxResponse, error)
+
+	// ListSandboxBrokersWithResponse request
+	ListSandboxBrokersWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSandboxBrokersResponse, error)
+
+	// DetachSandboxBrokerWithResponse request
+	DetachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DetachSandboxBrokerResponse, error)
+
+	// AttachSandboxBrokerWithBodyWithResponse request with any body
+	AttachSandboxBrokerWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
+
+	AttachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
+
+	// ServeSandboxBrokerWithResponse request
+	ServeSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
+
+	// RunCommandWithBodyWithResponse request with any body
+	RunCommandWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
+
+	RunCommandWithResponse(ctx context.Context, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunCommandResponse, error)
+
+	// GetSandboxConsoleWithResponse request
+	GetSandboxConsoleWithResponse(ctx context.Context, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*GetSandboxConsoleResponse, error)
+
+	// GetSandboxEgressWithResponse request
+	GetSandboxEgressWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxEgressResponse, error)
+
+	// SetSandboxEgressWithBodyWithResponse request with any body
+	SetSandboxEgressWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error)
+
+	SetSandboxEgressWithResponse(ctx context.Context, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error)
+
+	// KillConnectionsWithBodyWithResponse request with any body
+	KillConnectionsWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error)
+
+	KillConnectionsWithResponse(ctx context.Context, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error)
+
+	// ListEgressRulesWithResponse request
+	ListEgressRulesWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListEgressRulesResponse, error)
+
+	// DeleteEgressRuleWithResponse request
+	DeleteEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*DeleteEgressRuleResponse, error)
+
+	// GetEgressRuleWithResponse request
+	GetEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*GetEgressRuleResponse, error)
+
+	// PutEgressRuleWithBodyWithResponse request with any body
+	PutEgressRuleWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error)
+
+	PutEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error)
+
+	// PauseEgressRuleWithResponse request
+	PauseEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*PauseEgressRuleResponse, error)
+
+	// ResumeEgressRuleWithResponse request
+	ResumeEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*ResumeEgressRuleResponse, error)
+
+	// StreamSandboxEventsWithResponse request
+	StreamSandboxEventsWithResponse(ctx context.Context, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*StreamSandboxEventsResponse, error)
+
+	// DeleteFileWithResponse request
+	DeleteFileWithResponse(ctx context.Context, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*DeleteFileResponse, error)
+
+	// ReadFileWithResponse request
+	ReadFileWithResponse(ctx context.Context, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error)
+
+	// WriteFileWithBodyWithResponse request with any body
+	WriteFileWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteFileResponse, error)
+
+	// ListDirWithResponse request
+	ListDirWithResponse(ctx context.Context, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*ListDirResponse, error)
+
+	// GetSandboxIdentityWithResponse request
+	GetSandboxIdentityWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxIdentityResponse, error)
+
+	// SetSandboxLabelsWithBodyWithResponse request with any body
+	SetSandboxLabelsWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error)
+
+	SetSandboxLabelsWithResponse(ctx context.Context, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error)
+
+	// GetSandboxMetricsWithResponse request
+	GetSandboxMetricsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxMetricsResponse, error)
+
+	// GetSandboxMetricsHistoryWithResponse request
+	GetSandboxMetricsHistoryWithResponse(ctx context.Context, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*GetSandboxMetricsHistoryResponse, error)
+
+	// PauseSandboxWithResponse request
+	PauseSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*PauseSandboxResponse, error)
+
+	// ListProcessesWithResponse request
+	ListProcessesWithResponse(ctx context.Context, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*ListProcessesResponse, error)
+
+	// StartProcessWithBodyWithResponse request with any body
+	StartProcessWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProcessResponse, error)
+
+	StartProcessWithResponse(ctx context.Context, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProcessResponse, error)
+
+	// ReapProcessWithResponse request
+	ReapProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*ReapProcessResponse, error)
+
+	// GetProcessWithResponse request
+	GetProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*GetProcessResponse, error)
+
+	// SignalProcessWithBodyWithResponse request with any body
+	SignalProcessWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error)
+
+	SignalProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error)
+
+	// ReadProcessStderrWithResponse request
+	ReadProcessStderrWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*ReadProcessStderrResponse, error)
+
+	// WriteProcessStdinWithBodyWithResponse request with any body
+	WriteProcessStdinWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteProcessStdinResponse, error)
+
+	// ReadProcessStdoutWithResponse request
+	ReadProcessStdoutWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*ReadProcessStdoutResponse, error)
+
+	// ResumeSandboxWithResponse request
+	ResumeSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ResumeSandboxResponse, error)
+
+	// SealSandboxWithResponse request
+	SealSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*SealSandboxResponse, error)
+
+	// StartSandboxWithResponse request
+	StartSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StartSandboxResponse, error)
+
+	// StopSandboxWithResponse request
+	StopSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StopSandboxResponse, error)
+
+	// ListSystemProcessesWithResponse request
+	ListSystemProcessesWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemProcessesResponse, error)
+
+	// ListSystemSocketsWithResponse request
+	ListSystemSocketsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemSocketsResponse, error)
+
+	// OpenTerminalWithResponse request
+	OpenTerminalWithResponse(ctx context.Context, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*OpenTerminalResponse, error)
+
+	// ListTunnelsWithResponse request
+	ListTunnelsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListTunnelsResponse, error)
+
+	// DeleteTunnelWithResponse request
+	DeleteTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*DeleteTunnelResponse, error)
+
+	// GetTunnelWithResponse request
+	GetTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*GetTunnelResponse, error)
+
+	// PutTunnelWithBodyWithResponse request with any body
+	PutTunnelWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error)
+
+	PutTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error)
+
+	// GetTunnelActivityWithResponse request
+	GetTunnelActivityWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*GetTunnelActivityResponse, error)
+
+	// ListTunnelGuestsWithResponse request
+	ListTunnelGuestsWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ListTunnelGuestsResponse, error)
+
+	// RevokeTunnelGuestWithResponse request
+	RevokeTunnelGuestWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*RevokeTunnelGuestResponse, error)
+
+	// PauseTunnelWithResponse request
+	PauseTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*PauseTunnelResponse, error)
+
+	// ResumeTunnelWithResponse request
+	ResumeTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ResumeTunnelResponse, error)
+
+	// CreateTunnelTokenWithBodyWithResponse request with any body
+	CreateTunnelTokenWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error)
+
+	CreateTunnelTokenWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error)
+
+	// RevokeTunnelTokenWithResponse request
+	RevokeTunnelTokenWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*RevokeTunnelTokenResponse, error)
+
+	// UnsealSandboxWithResponse request
+	UnsealSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*UnsealSandboxResponse, error)
+
+	// ListHostTunnelsWithResponse request
+	ListHostTunnelsWithResponse(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error)
+
+	// ListVolumesWithResponse request
+	ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error)
+
+	// DeleteVolumeWithResponse request
+	DeleteVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error)
+
+	// CloneVolumeWithBodyWithResponse request with any body
+	CloneVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error)
+
+	CloneVolumeWithResponse(ctx context.Context, volumeName VolumeName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error)
+
+	// MoveVolumeWithBodyWithResponse request with any body
+	MoveVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
+
+	MoveVolumeWithResponse(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
 }
 
 type GetRootResponse struct {
@@ -12675,27 +10835,6 @@ func (r GetConsoleResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetConsoleResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetConsoleNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetConsoleNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetConsoleNamespaceResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12811,28 +10950,6 @@ func (r GetConsoleVolumeResponse) StatusCode() int {
 	return 0
 }
 
-type GetConsoleNamespacePageResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetConsoleNamespacePageResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetConsoleNamespacePageResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type GetConsolePageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -12871,6 +10988,57 @@ func (r HealthResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r HealthResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListBrokerActivityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerActivityPage
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBrokerActivityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBrokerActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBrokerActivityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerActivity
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrokerActivityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrokerActivityResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -12992,6 +11160,258 @@ func (r SignOutResponse) StatusCode() int {
 	return 0
 }
 
+type ListBrokersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBrokersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBrokersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteBrokerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteBrokerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBrokerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Broker
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrokerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutBrokerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Broker
+	JSON201      *Broker
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r PutBrokerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListBuildsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BuildPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBuildsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBuildsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *Build
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *Error
+	JSON422      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBuildResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Build
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBuildResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBuildResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReadBuildLogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadBuildLogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadBuildLogResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetCostsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13012,6 +11432,31 @@ func (r GetCostsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCostsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCountsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *HostCounts
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON500      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCountsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13083,6 +11528,108 @@ func (r GetHostMetricsHistoryResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetHostMetricsHistoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListImagesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ImagePage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListImagesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListImagesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PullImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Image
+	JSON202      *Image
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON422      *Error
+	JSON507      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r PullImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PullImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteImageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetImageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Image
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImageResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13230,17 +11777,14 @@ func (r GetMyPictureResponse) StatusCode() int {
 	return 0
 }
 
-type ListNamespacesResponse struct {
+type GetOpenapiYamlResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *NamespaceList
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
+	YAML200      *openapi_types.File
 }
 
 // Status returns HTTPResponse.Status
-func (r ListNamespacesResponse) Status() string {
+func (r GetOpenapiYamlResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -13248,703 +11792,7 @@ func (r ListNamespacesResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListNamespacesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type CreateNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *Namespace
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON409      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateNamespaceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON202      *Namespace
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *NamespaceNotEmpty
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteNamespaceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetNamespaceResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Namespace
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON500      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetNamespaceResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetNamespaceResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListBrokerActivityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *BrokerActivityPage
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListBrokerActivityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListBrokerActivityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetBrokerActivityResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *BrokerActivity
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetBrokerActivityResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetBrokerActivityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListBrokersResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *BrokerPage
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListBrokersResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListBrokersResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteBrokerResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteBrokerResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteBrokerResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetBrokerResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Broker
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetBrokerResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetBrokerResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PutBrokerResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Broker
-	JSON201      *Broker
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r PutBrokerResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PutBrokerResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListBuildsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *BuildPage
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListBuildsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListBuildsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type CreateBuildResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON202      *Build
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-	JSON422      *Error
-	JSON503      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateBuildResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateBuildResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteBuildResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteBuildResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteBuildResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetBuildResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Build
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetBuildResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetBuildResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ReadBuildLogResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ReadBuildLogResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReadBuildLogResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCAResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCAResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCAResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetNamespaceCostsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *CostReport
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON503      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetNamespaceCostsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetNamespaceCostsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetCountsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *HostCounts
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON500      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCountsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCountsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListImagesResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ImagePage
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListImagesResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListImagesResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PullImageResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Image
-	JSON202      *Image
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON422      *Error
-	JSON507      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r PullImageResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PullImageResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteImageResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteImageResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteImageResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetImageResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Image
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r GetImageResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetImageResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListNamespaceKeysResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *KeyPage
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListNamespaceKeysResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListNamespaceKeysResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type CreateNamespaceKeyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *KeyCreated
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateNamespaceKeyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateNamespaceKeyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type RevokeNamespaceKeyResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r RevokeNamespaceKeyResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RevokeNamespaceKeyResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListNamespaceMembersResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *MemberList
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-}
-
-// Status returns HTTPResponse.Status
-func (r ListNamespaceMembersResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListNamespaceMembersResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteNamespaceMemberResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteNamespaceMemberResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteNamespaceMemberResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PutNamespaceMemberResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Member
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r PutNamespaceMemberResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PutNamespaceMemberResponse) StatusCode() int {
+func (r GetOpenapiYamlResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -13957,7 +11805,6 @@ type ListPrincipalsResponse struct {
 	JSON200      *PrincipalPage
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
-	JSON404      *NotFound
 	JSON500      *Error
 }
 
@@ -14086,40 +11933,12 @@ func (r GetBrokerTrustedResponse) StatusCode() int {
 	return 0
 }
 
-type SetNamespaceQuotaResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *Namespace
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON500      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r SetNamespaceQuotaResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetNamespaceQuotaResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type ListSandboxesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *SandboxPage
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
-	JSON404      *NotFound
 }
 
 // Status returns HTTPResponse.Status
@@ -14145,8 +11964,8 @@ type CreateSandboxResponse struct {
 	JSON202      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Error
-	JSON404      *NotFound
+	JSON403      *Forbidden
+	JSON404      *Error
 	JSON409      *Error
 	JSON422      *Error
 	JSON507      *Error
@@ -15124,7 +12943,7 @@ type ResumeSandboxResponse struct {
 	JSON200      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Error
+	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON500      *Error
@@ -15180,7 +12999,7 @@ type StartSandboxResponse struct {
 	JSON202      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
-	JSON403      *Error
+	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON507      *Error
@@ -15642,7 +13461,6 @@ type ListHostTunnelsResponse struct {
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
-	JSON404      *NotFound
 }
 
 // Status returns HTTPResponse.Status
@@ -15667,7 +13485,6 @@ type ListVolumesResponse struct {
 	JSON200      *VolumeList
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
-	JSON404      *NotFound
 }
 
 // Status returns HTTPResponse.Status
@@ -15712,6 +13529,35 @@ func (r DeleteVolumeResponse) StatusCode() int {
 	return 0
 }
 
+type CloneVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *Volume
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+	JSON500      *Error
+	JSON507      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CloneVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloneVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type MoveVolumeResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -15740,28 +13586,6 @@ func (r MoveVolumeResponse) StatusCode() int {
 	return 0
 }
 
-type GetOpenapiYamlResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	YAML200      *openapi_types.File
-}
-
-// Status returns HTTPResponse.Status
-func (r GetOpenapiYamlResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetOpenapiYamlResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 // GetRootWithResponse request returning *GetRootResponse
 func (c *ClientWithResponses) GetRootWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRootResponse, error) {
 	rsp, err := c.GetRoot(ctx, reqEditors...)
@@ -15780,18 +13604,9 @@ func (c *ClientWithResponses) GetConsoleWithResponse(ctx context.Context, params
 	return ParseGetConsoleResponse(rsp)
 }
 
-// GetConsoleNamespaceWithResponse request returning *GetConsoleNamespaceResponse
-func (c *ClientWithResponses) GetConsoleNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetConsoleNamespaceResponse, error) {
-	rsp, err := c.GetConsoleNamespace(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetConsoleNamespaceResponse(rsp)
-}
-
 // GetConsoleBuildWithResponse request returning *GetConsoleBuildResponse
-func (c *ClientWithResponses) GetConsoleBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error) {
-	rsp, err := c.GetConsoleBuild(ctx, namespace, buildId, reqEditors...)
+func (c *ClientWithResponses) GetConsoleBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetConsoleBuildResponse, error) {
+	rsp, err := c.GetConsoleBuild(ctx, buildId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -15799,8 +13614,8 @@ func (c *ClientWithResponses) GetConsoleBuildWithResponse(ctx context.Context, n
 }
 
 // GetConsoleImageWithResponse request returning *GetConsoleImageResponse
-func (c *ClientWithResponses) GetConsoleImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error) {
-	rsp, err := c.GetConsoleImage(ctx, namespace, imageId, reqEditors...)
+func (c *ClientWithResponses) GetConsoleImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*GetConsoleImageResponse, error) {
+	rsp, err := c.GetConsoleImage(ctx, imageId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -15808,8 +13623,8 @@ func (c *ClientWithResponses) GetConsoleImageWithResponse(ctx context.Context, n
 }
 
 // GetConsoleSandboxWithResponse request returning *GetConsoleSandboxResponse
-func (c *ClientWithResponses) GetConsoleSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error) {
-	rsp, err := c.GetConsoleSandbox(ctx, namespace, sandboxId, reqEditors...)
+func (c *ClientWithResponses) GetConsoleSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetConsoleSandboxResponse, error) {
+	rsp, err := c.GetConsoleSandbox(ctx, sandboxId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -15817,8 +13632,8 @@ func (c *ClientWithResponses) GetConsoleSandboxWithResponse(ctx context.Context,
 }
 
 // GetConsoleSandboxTabWithResponse request returning *GetConsoleSandboxTabResponse
-func (c *ClientWithResponses) GetConsoleSandboxTabWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*GetConsoleSandboxTabResponse, error) {
-	rsp, err := c.GetConsoleSandboxTab(ctx, namespace, sandboxId, tab, reqEditors...)
+func (c *ClientWithResponses) GetConsoleSandboxTabWithResponse(ctx context.Context, sandboxId SandboxID, tab string, reqEditors ...RequestEditorFn) (*GetConsoleSandboxTabResponse, error) {
+	rsp, err := c.GetConsoleSandboxTab(ctx, sandboxId, tab, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -15826,21 +13641,12 @@ func (c *ClientWithResponses) GetConsoleSandboxTabWithResponse(ctx context.Conte
 }
 
 // GetConsoleVolumeWithResponse request returning *GetConsoleVolumeResponse
-func (c *ClientWithResponses) GetConsoleVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error) {
-	rsp, err := c.GetConsoleVolume(ctx, namespace, volumeName, reqEditors...)
+func (c *ClientWithResponses) GetConsoleVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*GetConsoleVolumeResponse, error) {
+	rsp, err := c.GetConsoleVolume(ctx, volumeName, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseGetConsoleVolumeResponse(rsp)
-}
-
-// GetConsoleNamespacePageWithResponse request returning *GetConsoleNamespacePageResponse
-func (c *ClientWithResponses) GetConsoleNamespacePageWithResponse(ctx context.Context, namespace NamespaceInPath, page string, reqEditors ...RequestEditorFn) (*GetConsoleNamespacePageResponse, error) {
-	rsp, err := c.GetConsoleNamespacePage(ctx, namespace, page, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetConsoleNamespacePageResponse(rsp)
 }
 
 // GetConsolePageWithResponse request returning *GetConsolePageResponse
@@ -15859,6 +13665,24 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 		return nil, err
 	}
 	return ParseHealthResponse(rsp)
+}
+
+// ListBrokerActivityWithResponse request returning *ListBrokerActivityResponse
+func (c *ClientWithResponses) ListBrokerActivityWithResponse(ctx context.Context, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error) {
+	rsp, err := c.ListBrokerActivity(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBrokerActivityResponse(rsp)
+}
+
+// GetBrokerActivityWithResponse request returning *GetBrokerActivityResponse
+func (c *ClientWithResponses) GetBrokerActivityWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error) {
+	rsp, err := c.GetBrokerActivity(ctx, activityId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerActivityResponse(rsp)
 }
 
 // GetAuthWithResponse request returning *GetAuthResponse
@@ -15914,6 +13738,112 @@ func (c *ClientWithResponses) SignOutWithResponse(ctx context.Context, reqEditor
 	return ParseSignOutResponse(rsp)
 }
 
+// ListBrokersWithResponse request returning *ListBrokersResponse
+func (c *ClientWithResponses) ListBrokersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error) {
+	rsp, err := c.ListBrokers(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBrokersResponse(rsp)
+}
+
+// DeleteBrokerWithResponse request returning *DeleteBrokerResponse
+func (c *ClientWithResponses) DeleteBrokerWithResponse(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteBrokerResponse, error) {
+	rsp, err := c.DeleteBroker(ctx, brokerName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteBrokerResponse(rsp)
+}
+
+// GetBrokerWithResponse request returning *GetBrokerResponse
+func (c *ClientWithResponses) GetBrokerWithResponse(ctx context.Context, brokerName BrokerName, reqEditors ...RequestEditorFn) (*GetBrokerResponse, error) {
+	rsp, err := c.GetBroker(ctx, brokerName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerResponse(rsp)
+}
+
+// PutBrokerWithBodyWithResponse request with arbitrary body returning *PutBrokerResponse
+func (c *ClientWithResponses) PutBrokerWithBodyWithResponse(ctx context.Context, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error) {
+	rsp, err := c.PutBrokerWithBody(ctx, brokerName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutBrokerResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutBrokerWithResponse(ctx context.Context, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error) {
+	rsp, err := c.PutBroker(ctx, brokerName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutBrokerResponse(rsp)
+}
+
+// ListBuildsWithResponse request returning *ListBuildsResponse
+func (c *ClientWithResponses) ListBuildsWithResponse(ctx context.Context, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error) {
+	rsp, err := c.ListBuilds(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBuildsResponse(rsp)
+}
+
+// CreateBuildWithBodyWithResponse request with arbitrary body returning *CreateBuildResponse
+func (c *ClientWithResponses) CreateBuildWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
+	rsp, err := c.CreateBuildWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBuildResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateBuildWithResponse(ctx context.Context, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
+	rsp, err := c.CreateBuild(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateBuildResponse(rsp)
+}
+
+// DeleteBuildWithResponse request returning *DeleteBuildResponse
+func (c *ClientWithResponses) DeleteBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error) {
+	rsp, err := c.DeleteBuild(ctx, buildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteBuildResponse(rsp)
+}
+
+// GetBuildWithResponse request returning *GetBuildResponse
+func (c *ClientWithResponses) GetBuildWithResponse(ctx context.Context, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error) {
+	rsp, err := c.GetBuild(ctx, buildId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBuildResponse(rsp)
+}
+
+// ReadBuildLogWithResponse request returning *ReadBuildLogResponse
+func (c *ClientWithResponses) ReadBuildLogWithResponse(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error) {
+	rsp, err := c.ReadBuildLog(ctx, buildId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadBuildLogResponse(rsp)
+}
+
+// GetCAWithResponse request returning *GetCAResponse
+func (c *ClientWithResponses) GetCAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCAResponse, error) {
+	rsp, err := c.GetCA(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCAResponse(rsp)
+}
+
 // GetCostsWithResponse request returning *GetCostsResponse
 func (c *ClientWithResponses) GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error) {
 	rsp, err := c.GetCosts(ctx, params, reqEditors...)
@@ -15921,6 +13851,15 @@ func (c *ClientWithResponses) GetCostsWithResponse(ctx context.Context, params *
 		return nil, err
 	}
 	return ParseGetCostsResponse(rsp)
+}
+
+// GetCountsWithResponse request returning *GetCountsResponse
+func (c *ClientWithResponses) GetCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountsResponse, error) {
+	rsp, err := c.GetCounts(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCountsResponse(rsp)
 }
 
 // GetDocsWithResponse request returning *GetDocsResponse
@@ -15948,6 +13887,50 @@ func (c *ClientWithResponses) GetHostMetricsHistoryWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseGetHostMetricsHistoryResponse(rsp)
+}
+
+// ListImagesWithResponse request returning *ListImagesResponse
+func (c *ClientWithResponses) ListImagesWithResponse(ctx context.Context, params *ListImagesParams, reqEditors ...RequestEditorFn) (*ListImagesResponse, error) {
+	rsp, err := c.ListImages(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListImagesResponse(rsp)
+}
+
+// PullImageWithBodyWithResponse request with arbitrary body returning *PullImageResponse
+func (c *ClientWithResponses) PullImageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PullImageResponse, error) {
+	rsp, err := c.PullImageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePullImageResponse(rsp)
+}
+
+func (c *ClientWithResponses) PullImageWithResponse(ctx context.Context, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*PullImageResponse, error) {
+	rsp, err := c.PullImage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePullImageResponse(rsp)
+}
+
+// DeleteImageWithResponse request returning *DeleteImageResponse
+func (c *ClientWithResponses) DeleteImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error) {
+	rsp, err := c.DeleteImage(ctx, imageId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteImageResponse(rsp)
+}
+
+// GetImageWithResponse request returning *GetImageResponse
+func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, imageId ImageID, reqEditors ...RequestEditorFn) (*GetImageResponse, error) {
+	rsp, err := c.GetImage(ctx, imageId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImageResponse(rsp)
 }
 
 // GetInfoWithResponse request returning *GetInfoResponse
@@ -16012,1012 +13995,6 @@ func (c *ClientWithResponses) GetMyPictureWithResponse(ctx context.Context, para
 	return ParseGetMyPictureResponse(rsp)
 }
 
-// ListNamespacesWithResponse request returning *ListNamespacesResponse
-func (c *ClientWithResponses) ListNamespacesWithResponse(ctx context.Context, params *ListNamespacesParams, reqEditors ...RequestEditorFn) (*ListNamespacesResponse, error) {
-	rsp, err := c.ListNamespaces(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListNamespacesResponse(rsp)
-}
-
-// CreateNamespaceWithBodyWithResponse request with arbitrary body returning *CreateNamespaceResponse
-func (c *ClientWithResponses) CreateNamespaceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceResponse, error) {
-	rsp, err := c.CreateNamespaceWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateNamespaceResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateNamespaceWithResponse(ctx context.Context, body CreateNamespaceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceResponse, error) {
-	rsp, err := c.CreateNamespace(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateNamespaceResponse(rsp)
-}
-
-// DeleteNamespaceWithResponse request returning *DeleteNamespaceResponse
-func (c *ClientWithResponses) DeleteNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, params *DeleteNamespaceParams, reqEditors ...RequestEditorFn) (*DeleteNamespaceResponse, error) {
-	rsp, err := c.DeleteNamespace(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteNamespaceResponse(rsp)
-}
-
-// GetNamespaceWithResponse request returning *GetNamespaceResponse
-func (c *ClientWithResponses) GetNamespaceWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetNamespaceResponse, error) {
-	rsp, err := c.GetNamespace(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetNamespaceResponse(rsp)
-}
-
-// ListBrokerActivityWithResponse request returning *ListBrokerActivityResponse
-func (c *ClientWithResponses) ListBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBrokerActivityParams, reqEditors ...RequestEditorFn) (*ListBrokerActivityResponse, error) {
-	rsp, err := c.ListBrokerActivity(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListBrokerActivityResponse(rsp)
-}
-
-// GetBrokerActivityWithResponse request returning *GetBrokerActivityResponse
-func (c *ClientWithResponses) GetBrokerActivityWithResponse(ctx context.Context, namespace NamespaceInPath, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error) {
-	rsp, err := c.GetBrokerActivity(ctx, namespace, activityId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetBrokerActivityResponse(rsp)
-}
-
-// ListBrokersWithResponse request returning *ListBrokersResponse
-func (c *ClientWithResponses) ListBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListBrokersResponse, error) {
-	rsp, err := c.ListBrokers(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListBrokersResponse(rsp)
-}
-
-// DeleteBrokerWithResponse request returning *DeleteBrokerResponse
-func (c *ClientWithResponses) DeleteBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteBrokerResponse, error) {
-	rsp, err := c.DeleteBroker(ctx, namespace, brokerName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteBrokerResponse(rsp)
-}
-
-// GetBrokerWithResponse request returning *GetBrokerResponse
-func (c *ClientWithResponses) GetBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, reqEditors ...RequestEditorFn) (*GetBrokerResponse, error) {
-	rsp, err := c.GetBroker(ctx, namespace, brokerName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetBrokerResponse(rsp)
-}
-
-// PutBrokerWithBodyWithResponse request with arbitrary body returning *PutBrokerResponse
-func (c *ClientWithResponses) PutBrokerWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error) {
-	rsp, err := c.PutBrokerWithBody(ctx, namespace, brokerName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutBrokerResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, brokerName BrokerName, body PutBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutBrokerResponse, error) {
-	rsp, err := c.PutBroker(ctx, namespace, brokerName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutBrokerResponse(rsp)
-}
-
-// ListBuildsWithResponse request returning *ListBuildsResponse
-func (c *ClientWithResponses) ListBuildsWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListBuildsParams, reqEditors ...RequestEditorFn) (*ListBuildsResponse, error) {
-	rsp, err := c.ListBuilds(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListBuildsResponse(rsp)
-}
-
-// CreateBuildWithBodyWithResponse request with arbitrary body returning *CreateBuildResponse
-func (c *ClientWithResponses) CreateBuildWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
-	rsp, err := c.CreateBuildWithBody(ctx, namespace, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateBuildResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateBuildWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateBuildJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBuildResponse, error) {
-	rsp, err := c.CreateBuild(ctx, namespace, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateBuildResponse(rsp)
-}
-
-// DeleteBuildWithResponse request returning *DeleteBuildResponse
-func (c *ClientWithResponses) DeleteBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*DeleteBuildResponse, error) {
-	rsp, err := c.DeleteBuild(ctx, namespace, buildId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteBuildResponse(rsp)
-}
-
-// GetBuildWithResponse request returning *GetBuildResponse
-func (c *ClientWithResponses) GetBuildWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, reqEditors ...RequestEditorFn) (*GetBuildResponse, error) {
-	rsp, err := c.GetBuild(ctx, namespace, buildId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetBuildResponse(rsp)
-}
-
-// ReadBuildLogWithResponse request returning *ReadBuildLogResponse
-func (c *ClientWithResponses) ReadBuildLogWithResponse(ctx context.Context, namespace NamespaceInPath, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error) {
-	rsp, err := c.ReadBuildLog(ctx, namespace, buildId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReadBuildLogResponse(rsp)
-}
-
-// GetCAWithResponse request returning *GetCAResponse
-func (c *ClientWithResponses) GetCAWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCAResponse, error) {
-	rsp, err := c.GetCA(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCAResponse(rsp)
-}
-
-// GetNamespaceCostsWithResponse request returning *GetNamespaceCostsResponse
-func (c *ClientWithResponses) GetNamespaceCostsWithResponse(ctx context.Context, namespace NamespaceInPath, params *GetNamespaceCostsParams, reqEditors ...RequestEditorFn) (*GetNamespaceCostsResponse, error) {
-	rsp, err := c.GetNamespaceCosts(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetNamespaceCostsResponse(rsp)
-}
-
-// GetCountsWithResponse request returning *GetCountsResponse
-func (c *ClientWithResponses) GetCountsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*GetCountsResponse, error) {
-	rsp, err := c.GetCounts(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCountsResponse(rsp)
-}
-
-// ListImagesWithResponse request returning *ListImagesResponse
-func (c *ClientWithResponses) ListImagesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListImagesParams, reqEditors ...RequestEditorFn) (*ListImagesResponse, error) {
-	rsp, err := c.ListImages(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListImagesResponse(rsp)
-}
-
-// PullImageWithBodyWithResponse request with arbitrary body returning *PullImageResponse
-func (c *ClientWithResponses) PullImageWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PullImageResponse, error) {
-	rsp, err := c.PullImageWithBody(ctx, namespace, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePullImageResponse(rsp)
-}
-
-func (c *ClientWithResponses) PullImageWithResponse(ctx context.Context, namespace NamespaceInPath, body PullImageJSONRequestBody, reqEditors ...RequestEditorFn) (*PullImageResponse, error) {
-	rsp, err := c.PullImage(ctx, namespace, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePullImageResponse(rsp)
-}
-
-// DeleteImageWithResponse request returning *DeleteImageResponse
-func (c *ClientWithResponses) DeleteImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*DeleteImageResponse, error) {
-	rsp, err := c.DeleteImage(ctx, namespace, imageId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteImageResponse(rsp)
-}
-
-// GetImageWithResponse request returning *GetImageResponse
-func (c *ClientWithResponses) GetImageWithResponse(ctx context.Context, namespace NamespaceInPath, imageId ImageID, reqEditors ...RequestEditorFn) (*GetImageResponse, error) {
-	rsp, err := c.GetImage(ctx, namespace, imageId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetImageResponse(rsp)
-}
-
-// ListNamespaceKeysWithResponse request returning *ListNamespaceKeysResponse
-func (c *ClientWithResponses) ListNamespaceKeysWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListNamespaceKeysParams, reqEditors ...RequestEditorFn) (*ListNamespaceKeysResponse, error) {
-	rsp, err := c.ListNamespaceKeys(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListNamespaceKeysResponse(rsp)
-}
-
-// CreateNamespaceKeyWithBodyWithResponse request with arbitrary body returning *CreateNamespaceKeyResponse
-func (c *ClientWithResponses) CreateNamespaceKeyWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error) {
-	rsp, err := c.CreateNamespaceKeyWithBody(ctx, namespace, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateNamespaceKeyResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, body CreateNamespaceKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateNamespaceKeyResponse, error) {
-	rsp, err := c.CreateNamespaceKey(ctx, namespace, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateNamespaceKeyResponse(rsp)
-}
-
-// RevokeNamespaceKeyWithResponse request returning *RevokeNamespaceKeyResponse
-func (c *ClientWithResponses) RevokeNamespaceKeyWithResponse(ctx context.Context, namespace NamespaceInPath, keyId string, reqEditors ...RequestEditorFn) (*RevokeNamespaceKeyResponse, error) {
-	rsp, err := c.RevokeNamespaceKey(ctx, namespace, keyId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeNamespaceKeyResponse(rsp)
-}
-
-// ListNamespaceMembersWithResponse request returning *ListNamespaceMembersResponse
-func (c *ClientWithResponses) ListNamespaceMembersWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListNamespaceMembersResponse, error) {
-	rsp, err := c.ListNamespaceMembers(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListNamespaceMembersResponse(rsp)
-}
-
-// DeleteNamespaceMemberWithResponse request returning *DeleteNamespaceMemberResponse
-func (c *ClientWithResponses) DeleteNamespaceMemberWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteNamespaceMemberResponse, error) {
-	rsp, err := c.DeleteNamespaceMember(ctx, namespace, email, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteNamespaceMemberResponse(rsp)
-}
-
-// PutNamespaceMemberWithBodyWithResponse request with arbitrary body returning *PutNamespaceMemberResponse
-func (c *ClientWithResponses) PutNamespaceMemberWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutNamespaceMemberResponse, error) {
-	rsp, err := c.PutNamespaceMemberWithBody(ctx, namespace, email, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutNamespaceMemberResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutNamespaceMemberWithResponse(ctx context.Context, namespace NamespaceInPath, email openapi_types.Email, body PutNamespaceMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*PutNamespaceMemberResponse, error) {
-	rsp, err := c.PutNamespaceMember(ctx, namespace, email, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutNamespaceMemberResponse(rsp)
-}
-
-// ListPrincipalsWithResponse request returning *ListPrincipalsResponse
-func (c *ClientWithResponses) ListPrincipalsWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error) {
-	rsp, err := c.ListPrincipals(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPrincipalsResponse(rsp)
-}
-
-// DeletePrincipalWithResponse request returning *DeletePrincipalResponse
-func (c *ClientWithResponses) DeletePrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error) {
-	rsp, err := c.DeletePrincipal(ctx, namespace, principalId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeletePrincipalResponse(rsp)
-}
-
-// GetPrincipalWithResponse request returning *GetPrincipalResponse
-func (c *ClientWithResponses) GetPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error) {
-	rsp, err := c.GetPrincipal(ctx, namespace, principalId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPrincipalResponse(rsp)
-}
-
-// PutPrincipalWithBodyWithResponse request with arbitrary body returning *PutPrincipalResponse
-func (c *ClientWithResponses) PutPrincipalWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
-	rsp, err := c.PutPrincipalWithBody(ctx, namespace, principalId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutPrincipalResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutPrincipalWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
-	rsp, err := c.PutPrincipal(ctx, namespace, principalId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutPrincipalResponse(rsp)
-}
-
-// GetBrokerTrustedWithResponse request returning *GetBrokerTrustedResponse
-func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error) {
-	rsp, err := c.GetBrokerTrusted(ctx, namespace, principalId, brokerName, path, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetBrokerTrustedResponse(rsp)
-}
-
-// SetNamespaceQuotaWithBodyWithResponse request with arbitrary body returning *SetNamespaceQuotaResponse
-func (c *ClientWithResponses) SetNamespaceQuotaWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error) {
-	rsp, err := c.SetNamespaceQuotaWithBody(ctx, namespace, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetNamespaceQuotaResponse(rsp)
-}
-
-func (c *ClientWithResponses) SetNamespaceQuotaWithResponse(ctx context.Context, namespace NamespaceInPath, body SetNamespaceQuotaJSONRequestBody, reqEditors ...RequestEditorFn) (*SetNamespaceQuotaResponse, error) {
-	rsp, err := c.SetNamespaceQuota(ctx, namespace, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetNamespaceQuotaResponse(rsp)
-}
-
-// ListSandboxesWithResponse request returning *ListSandboxesResponse
-func (c *ClientWithResponses) ListSandboxesWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error) {
-	rsp, err := c.ListSandboxes(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSandboxesResponse(rsp)
-}
-
-// CreateSandboxWithBodyWithResponse request with arbitrary body returning *CreateSandboxResponse
-func (c *ClientWithResponses) CreateSandboxWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error) {
-	rsp, err := c.CreateSandboxWithBody(ctx, namespace, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSandboxResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error) {
-	rsp, err := c.CreateSandbox(ctx, namespace, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateSandboxResponse(rsp)
-}
-
-// DeleteSandboxWithResponse request returning *DeleteSandboxResponse
-func (c *ClientWithResponses) DeleteSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*DeleteSandboxResponse, error) {
-	rsp, err := c.DeleteSandbox(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteSandboxResponse(rsp)
-}
-
-// GetSandboxWithResponse request returning *GetSandboxResponse
-func (c *ClientWithResponses) GetSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxResponse, error) {
-	rsp, err := c.GetSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxResponse(rsp)
-}
-
-// ListSandboxBrokersWithResponse request returning *ListSandboxBrokersResponse
-func (c *ClientWithResponses) ListSandboxBrokersWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSandboxBrokersResponse, error) {
-	rsp, err := c.ListSandboxBrokers(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSandboxBrokersResponse(rsp)
-}
-
-// DetachSandboxBrokerWithResponse request returning *DetachSandboxBrokerResponse
-func (c *ClientWithResponses) DetachSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DetachSandboxBrokerResponse, error) {
-	rsp, err := c.DetachSandboxBroker(ctx, namespace, sandboxId, brokerName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDetachSandboxBrokerResponse(rsp)
-}
-
-// AttachSandboxBrokerWithBodyWithResponse request with arbitrary body returning *AttachSandboxBrokerResponse
-func (c *ClientWithResponses) AttachSandboxBrokerWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error) {
-	rsp, err := c.AttachSandboxBrokerWithBody(ctx, namespace, sandboxId, brokerName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAttachSandboxBrokerResponse(rsp)
-}
-
-func (c *ClientWithResponses) AttachSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error) {
-	rsp, err := c.AttachSandboxBroker(ctx, namespace, sandboxId, brokerName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAttachSandboxBrokerResponse(rsp)
-}
-
-// ServeSandboxBrokerWithResponse request returning *ServeSandboxBrokerResponse
-func (c *ClientWithResponses) ServeSandboxBrokerWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error) {
-	rsp, err := c.ServeSandboxBroker(ctx, namespace, sandboxId, brokerName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseServeSandboxBrokerResponse(rsp)
-}
-
-// RunCommandWithBodyWithResponse request with arbitrary body returning *RunCommandResponse
-func (c *ClientWithResponses) RunCommandWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error) {
-	rsp, err := c.RunCommandWithBody(ctx, namespace, sandboxId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunCommandResponse(rsp)
-}
-
-func (c *ClientWithResponses) RunCommandWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunCommandResponse, error) {
-	rsp, err := c.RunCommand(ctx, namespace, sandboxId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRunCommandResponse(rsp)
-}
-
-// GetSandboxConsoleWithResponse request returning *GetSandboxConsoleResponse
-func (c *ClientWithResponses) GetSandboxConsoleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*GetSandboxConsoleResponse, error) {
-	rsp, err := c.GetSandboxConsole(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxConsoleResponse(rsp)
-}
-
-// GetSandboxEgressWithResponse request returning *GetSandboxEgressResponse
-func (c *ClientWithResponses) GetSandboxEgressWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxEgressResponse, error) {
-	rsp, err := c.GetSandboxEgress(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxEgressResponse(rsp)
-}
-
-// SetSandboxEgressWithBodyWithResponse request with arbitrary body returning *SetSandboxEgressResponse
-func (c *ClientWithResponses) SetSandboxEgressWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error) {
-	rsp, err := c.SetSandboxEgressWithBody(ctx, namespace, sandboxId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSandboxEgressResponse(rsp)
-}
-
-func (c *ClientWithResponses) SetSandboxEgressWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error) {
-	rsp, err := c.SetSandboxEgress(ctx, namespace, sandboxId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSandboxEgressResponse(rsp)
-}
-
-// KillConnectionsWithBodyWithResponse request with arbitrary body returning *KillConnectionsResponse
-func (c *ClientWithResponses) KillConnectionsWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error) {
-	rsp, err := c.KillConnectionsWithBody(ctx, namespace, sandboxId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseKillConnectionsResponse(rsp)
-}
-
-func (c *ClientWithResponses) KillConnectionsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error) {
-	rsp, err := c.KillConnections(ctx, namespace, sandboxId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseKillConnectionsResponse(rsp)
-}
-
-// ListEgressRulesWithResponse request returning *ListEgressRulesResponse
-func (c *ClientWithResponses) ListEgressRulesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListEgressRulesResponse, error) {
-	rsp, err := c.ListEgressRules(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListEgressRulesResponse(rsp)
-}
-
-// DeleteEgressRuleWithResponse request returning *DeleteEgressRuleResponse
-func (c *ClientWithResponses) DeleteEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*DeleteEgressRuleResponse, error) {
-	rsp, err := c.DeleteEgressRule(ctx, namespace, sandboxId, ruleName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteEgressRuleResponse(rsp)
-}
-
-// GetEgressRuleWithResponse request returning *GetEgressRuleResponse
-func (c *ClientWithResponses) GetEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*GetEgressRuleResponse, error) {
-	rsp, err := c.GetEgressRule(ctx, namespace, sandboxId, ruleName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetEgressRuleResponse(rsp)
-}
-
-// PutEgressRuleWithBodyWithResponse request with arbitrary body returning *PutEgressRuleResponse
-func (c *ClientWithResponses) PutEgressRuleWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error) {
-	rsp, err := c.PutEgressRuleWithBody(ctx, namespace, sandboxId, ruleName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutEgressRuleResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error) {
-	rsp, err := c.PutEgressRule(ctx, namespace, sandboxId, ruleName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutEgressRuleResponse(rsp)
-}
-
-// PauseEgressRuleWithResponse request returning *PauseEgressRuleResponse
-func (c *ClientWithResponses) PauseEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*PauseEgressRuleResponse, error) {
-	rsp, err := c.PauseEgressRule(ctx, namespace, sandboxId, ruleName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePauseEgressRuleResponse(rsp)
-}
-
-// ResumeEgressRuleWithResponse request returning *ResumeEgressRuleResponse
-func (c *ClientWithResponses) ResumeEgressRuleWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*ResumeEgressRuleResponse, error) {
-	rsp, err := c.ResumeEgressRule(ctx, namespace, sandboxId, ruleName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResumeEgressRuleResponse(rsp)
-}
-
-// StreamSandboxEventsWithResponse request returning *StreamSandboxEventsResponse
-func (c *ClientWithResponses) StreamSandboxEventsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*StreamSandboxEventsResponse, error) {
-	rsp, err := c.StreamSandboxEvents(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStreamSandboxEventsResponse(rsp)
-}
-
-// DeleteFileWithResponse request returning *DeleteFileResponse
-func (c *ClientWithResponses) DeleteFileWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*DeleteFileResponse, error) {
-	rsp, err := c.DeleteFile(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteFileResponse(rsp)
-}
-
-// ReadFileWithResponse request returning *ReadFileResponse
-func (c *ClientWithResponses) ReadFileWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error) {
-	rsp, err := c.ReadFile(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReadFileResponse(rsp)
-}
-
-// WriteFileWithBodyWithResponse request with arbitrary body returning *WriteFileResponse
-func (c *ClientWithResponses) WriteFileWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteFileResponse, error) {
-	rsp, err := c.WriteFileWithBody(ctx, namespace, sandboxId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseWriteFileResponse(rsp)
-}
-
-// ListDirWithResponse request returning *ListDirResponse
-func (c *ClientWithResponses) ListDirWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*ListDirResponse, error) {
-	rsp, err := c.ListDir(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListDirResponse(rsp)
-}
-
-// GetSandboxIdentityWithResponse request returning *GetSandboxIdentityResponse
-func (c *ClientWithResponses) GetSandboxIdentityWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxIdentityResponse, error) {
-	rsp, err := c.GetSandboxIdentity(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxIdentityResponse(rsp)
-}
-
-// SetSandboxLabelsWithBodyWithResponse request with arbitrary body returning *SetSandboxLabelsResponse
-func (c *ClientWithResponses) SetSandboxLabelsWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error) {
-	rsp, err := c.SetSandboxLabelsWithBody(ctx, namespace, sandboxId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSandboxLabelsResponse(rsp)
-}
-
-func (c *ClientWithResponses) SetSandboxLabelsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error) {
-	rsp, err := c.SetSandboxLabels(ctx, namespace, sandboxId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetSandboxLabelsResponse(rsp)
-}
-
-// GetSandboxMetricsWithResponse request returning *GetSandboxMetricsResponse
-func (c *ClientWithResponses) GetSandboxMetricsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxMetricsResponse, error) {
-	rsp, err := c.GetSandboxMetrics(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxMetricsResponse(rsp)
-}
-
-// GetSandboxMetricsHistoryWithResponse request returning *GetSandboxMetricsHistoryResponse
-func (c *ClientWithResponses) GetSandboxMetricsHistoryWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*GetSandboxMetricsHistoryResponse, error) {
-	rsp, err := c.GetSandboxMetricsHistory(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSandboxMetricsHistoryResponse(rsp)
-}
-
-// PauseSandboxWithResponse request returning *PauseSandboxResponse
-func (c *ClientWithResponses) PauseSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*PauseSandboxResponse, error) {
-	rsp, err := c.PauseSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePauseSandboxResponse(rsp)
-}
-
-// ListProcessesWithResponse request returning *ListProcessesResponse
-func (c *ClientWithResponses) ListProcessesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*ListProcessesResponse, error) {
-	rsp, err := c.ListProcesses(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListProcessesResponse(rsp)
-}
-
-// StartProcessWithBodyWithResponse request with arbitrary body returning *StartProcessResponse
-func (c *ClientWithResponses) StartProcessWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProcessResponse, error) {
-	rsp, err := c.StartProcessWithBody(ctx, namespace, sandboxId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStartProcessResponse(rsp)
-}
-
-func (c *ClientWithResponses) StartProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProcessResponse, error) {
-	rsp, err := c.StartProcess(ctx, namespace, sandboxId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStartProcessResponse(rsp)
-}
-
-// ReapProcessWithResponse request returning *ReapProcessResponse
-func (c *ClientWithResponses) ReapProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*ReapProcessResponse, error) {
-	rsp, err := c.ReapProcess(ctx, namespace, sandboxId, processId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReapProcessResponse(rsp)
-}
-
-// GetProcessWithResponse request returning *GetProcessResponse
-func (c *ClientWithResponses) GetProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*GetProcessResponse, error) {
-	rsp, err := c.GetProcess(ctx, namespace, sandboxId, processId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetProcessResponse(rsp)
-}
-
-// SignalProcessWithBodyWithResponse request with arbitrary body returning *SignalProcessResponse
-func (c *ClientWithResponses) SignalProcessWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error) {
-	rsp, err := c.SignalProcessWithBody(ctx, namespace, sandboxId, processId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSignalProcessResponse(rsp)
-}
-
-func (c *ClientWithResponses) SignalProcessWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error) {
-	rsp, err := c.SignalProcess(ctx, namespace, sandboxId, processId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSignalProcessResponse(rsp)
-}
-
-// ReadProcessStderrWithResponse request returning *ReadProcessStderrResponse
-func (c *ClientWithResponses) ReadProcessStderrWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*ReadProcessStderrResponse, error) {
-	rsp, err := c.ReadProcessStderr(ctx, namespace, sandboxId, processId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReadProcessStderrResponse(rsp)
-}
-
-// WriteProcessStdinWithBodyWithResponse request with arbitrary body returning *WriteProcessStdinResponse
-func (c *ClientWithResponses) WriteProcessStdinWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteProcessStdinResponse, error) {
-	rsp, err := c.WriteProcessStdinWithBody(ctx, namespace, sandboxId, processId, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseWriteProcessStdinResponse(rsp)
-}
-
-// ReadProcessStdoutWithResponse request returning *ReadProcessStdoutResponse
-func (c *ClientWithResponses) ReadProcessStdoutWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*ReadProcessStdoutResponse, error) {
-	rsp, err := c.ReadProcessStdout(ctx, namespace, sandboxId, processId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReadProcessStdoutResponse(rsp)
-}
-
-// ResumeSandboxWithResponse request returning *ResumeSandboxResponse
-func (c *ClientWithResponses) ResumeSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ResumeSandboxResponse, error) {
-	rsp, err := c.ResumeSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResumeSandboxResponse(rsp)
-}
-
-// SealSandboxWithResponse request returning *SealSandboxResponse
-func (c *ClientWithResponses) SealSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*SealSandboxResponse, error) {
-	rsp, err := c.SealSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSealSandboxResponse(rsp)
-}
-
-// StartSandboxWithResponse request returning *StartSandboxResponse
-func (c *ClientWithResponses) StartSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StartSandboxResponse, error) {
-	rsp, err := c.StartSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStartSandboxResponse(rsp)
-}
-
-// StopSandboxWithResponse request returning *StopSandboxResponse
-func (c *ClientWithResponses) StopSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StopSandboxResponse, error) {
-	rsp, err := c.StopSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStopSandboxResponse(rsp)
-}
-
-// ListSystemProcessesWithResponse request returning *ListSystemProcessesResponse
-func (c *ClientWithResponses) ListSystemProcessesWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemProcessesResponse, error) {
-	rsp, err := c.ListSystemProcesses(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSystemProcessesResponse(rsp)
-}
-
-// ListSystemSocketsWithResponse request returning *ListSystemSocketsResponse
-func (c *ClientWithResponses) ListSystemSocketsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemSocketsResponse, error) {
-	rsp, err := c.ListSystemSockets(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListSystemSocketsResponse(rsp)
-}
-
-// OpenTerminalWithResponse request returning *OpenTerminalResponse
-func (c *ClientWithResponses) OpenTerminalWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*OpenTerminalResponse, error) {
-	rsp, err := c.OpenTerminal(ctx, namespace, sandboxId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseOpenTerminalResponse(rsp)
-}
-
-// ListTunnelsWithResponse request returning *ListTunnelsResponse
-func (c *ClientWithResponses) ListTunnelsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListTunnelsResponse, error) {
-	rsp, err := c.ListTunnels(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListTunnelsResponse(rsp)
-}
-
-// DeleteTunnelWithResponse request returning *DeleteTunnelResponse
-func (c *ClientWithResponses) DeleteTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*DeleteTunnelResponse, error) {
-	rsp, err := c.DeleteTunnel(ctx, namespace, sandboxId, tunnelName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteTunnelResponse(rsp)
-}
-
-// GetTunnelWithResponse request returning *GetTunnelResponse
-func (c *ClientWithResponses) GetTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*GetTunnelResponse, error) {
-	rsp, err := c.GetTunnel(ctx, namespace, sandboxId, tunnelName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetTunnelResponse(rsp)
-}
-
-// PutTunnelWithBodyWithResponse request with arbitrary body returning *PutTunnelResponse
-func (c *ClientWithResponses) PutTunnelWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error) {
-	rsp, err := c.PutTunnelWithBody(ctx, namespace, sandboxId, tunnelName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutTunnelResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error) {
-	rsp, err := c.PutTunnel(ctx, namespace, sandboxId, tunnelName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutTunnelResponse(rsp)
-}
-
-// GetTunnelActivityWithResponse request returning *GetTunnelActivityResponse
-func (c *ClientWithResponses) GetTunnelActivityWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*GetTunnelActivityResponse, error) {
-	rsp, err := c.GetTunnelActivity(ctx, namespace, sandboxId, tunnelName, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetTunnelActivityResponse(rsp)
-}
-
-// ListTunnelGuestsWithResponse request returning *ListTunnelGuestsResponse
-func (c *ClientWithResponses) ListTunnelGuestsWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ListTunnelGuestsResponse, error) {
-	rsp, err := c.ListTunnelGuests(ctx, namespace, sandboxId, tunnelName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListTunnelGuestsResponse(rsp)
-}
-
-// RevokeTunnelGuestWithResponse request returning *RevokeTunnelGuestResponse
-func (c *ClientWithResponses) RevokeTunnelGuestWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*RevokeTunnelGuestResponse, error) {
-	rsp, err := c.RevokeTunnelGuest(ctx, namespace, sandboxId, tunnelName, email, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeTunnelGuestResponse(rsp)
-}
-
-// PauseTunnelWithResponse request returning *PauseTunnelResponse
-func (c *ClientWithResponses) PauseTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*PauseTunnelResponse, error) {
-	rsp, err := c.PauseTunnel(ctx, namespace, sandboxId, tunnelName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePauseTunnelResponse(rsp)
-}
-
-// ResumeTunnelWithResponse request returning *ResumeTunnelResponse
-func (c *ClientWithResponses) ResumeTunnelWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ResumeTunnelResponse, error) {
-	rsp, err := c.ResumeTunnel(ctx, namespace, sandboxId, tunnelName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResumeTunnelResponse(rsp)
-}
-
-// CreateTunnelTokenWithBodyWithResponse request with arbitrary body returning *CreateTunnelTokenResponse
-func (c *ClientWithResponses) CreateTunnelTokenWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error) {
-	rsp, err := c.CreateTunnelTokenWithBody(ctx, namespace, sandboxId, tunnelName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateTunnelTokenResponse(rsp)
-}
-
-func (c *ClientWithResponses) CreateTunnelTokenWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error) {
-	rsp, err := c.CreateTunnelToken(ctx, namespace, sandboxId, tunnelName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateTunnelTokenResponse(rsp)
-}
-
-// RevokeTunnelTokenWithResponse request returning *RevokeTunnelTokenResponse
-func (c *ClientWithResponses) RevokeTunnelTokenWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*RevokeTunnelTokenResponse, error) {
-	rsp, err := c.RevokeTunnelToken(ctx, namespace, sandboxId, tunnelName, tokenId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRevokeTunnelTokenResponse(rsp)
-}
-
-// UnsealSandboxWithResponse request returning *UnsealSandboxResponse
-func (c *ClientWithResponses) UnsealSandboxWithResponse(ctx context.Context, namespace NamespaceInPath, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*UnsealSandboxResponse, error) {
-	rsp, err := c.UnsealSandbox(ctx, namespace, sandboxId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUnsealSandboxResponse(rsp)
-}
-
-// ListHostTunnelsWithResponse request returning *ListHostTunnelsResponse
-func (c *ClientWithResponses) ListHostTunnelsWithResponse(ctx context.Context, namespace NamespaceInPath, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error) {
-	rsp, err := c.ListHostTunnels(ctx, namespace, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListHostTunnelsResponse(rsp)
-}
-
-// ListVolumesWithResponse request returning *ListVolumesResponse
-func (c *ClientWithResponses) ListVolumesWithResponse(ctx context.Context, namespace NamespaceInPath, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error) {
-	rsp, err := c.ListVolumes(ctx, namespace, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListVolumesResponse(rsp)
-}
-
-// DeleteVolumeWithResponse request returning *DeleteVolumeResponse
-func (c *ClientWithResponses) DeleteVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error) {
-	rsp, err := c.DeleteVolume(ctx, namespace, volumeName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteVolumeResponse(rsp)
-}
-
-// MoveVolumeWithBodyWithResponse request with arbitrary body returning *MoveVolumeResponse
-func (c *ClientWithResponses) MoveVolumeWithBodyWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
-	rsp, err := c.MoveVolumeWithBody(ctx, namespace, volumeName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMoveVolumeResponse(rsp)
-}
-
-func (c *ClientWithResponses) MoveVolumeWithResponse(ctx context.Context, namespace NamespaceInPath, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
-	rsp, err := c.MoveVolume(ctx, namespace, volumeName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseMoveVolumeResponse(rsp)
-}
-
 // GetOpenapiYamlWithResponse request returning *GetOpenapiYamlResponse
 func (c *ClientWithResponses) GetOpenapiYamlWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenapiYamlResponse, error) {
 	rsp, err := c.GetOpenapiYaml(ctx, reqEditors...)
@@ -17025,6 +14002,712 @@ func (c *ClientWithResponses) GetOpenapiYamlWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetOpenapiYamlResponse(rsp)
+}
+
+// ListPrincipalsWithResponse request returning *ListPrincipalsResponse
+func (c *ClientWithResponses) ListPrincipalsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPrincipalsResponse, error) {
+	rsp, err := c.ListPrincipals(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPrincipalsResponse(rsp)
+}
+
+// DeletePrincipalWithResponse request returning *DeletePrincipalResponse
+func (c *ClientWithResponses) DeletePrincipalWithResponse(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*DeletePrincipalResponse, error) {
+	rsp, err := c.DeletePrincipal(ctx, principalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeletePrincipalResponse(rsp)
+}
+
+// GetPrincipalWithResponse request returning *GetPrincipalResponse
+func (c *ClientWithResponses) GetPrincipalWithResponse(ctx context.Context, principalId PrincipalID, reqEditors ...RequestEditorFn) (*GetPrincipalResponse, error) {
+	rsp, err := c.GetPrincipal(ctx, principalId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPrincipalResponse(rsp)
+}
+
+// PutPrincipalWithBodyWithResponse request with arbitrary body returning *PutPrincipalResponse
+func (c *ClientWithResponses) PutPrincipalWithBodyWithResponse(ctx context.Context, principalId PrincipalID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
+	rsp, err := c.PutPrincipalWithBody(ctx, principalId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrincipalResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutPrincipalWithResponse(ctx context.Context, principalId PrincipalID, body PutPrincipalJSONRequestBody, reqEditors ...RequestEditorFn) (*PutPrincipalResponse, error) {
+	rsp, err := c.PutPrincipal(ctx, principalId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutPrincipalResponse(rsp)
+}
+
+// GetBrokerTrustedWithResponse request returning *GetBrokerTrustedResponse
+func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error) {
+	rsp, err := c.GetBrokerTrusted(ctx, principalId, brokerName, path, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerTrustedResponse(rsp)
+}
+
+// ListSandboxesWithResponse request returning *ListSandboxesResponse
+func (c *ClientWithResponses) ListSandboxesWithResponse(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error) {
+	rsp, err := c.ListSandboxes(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSandboxesResponse(rsp)
+}
+
+// CreateSandboxWithBodyWithResponse request with arbitrary body returning *CreateSandboxResponse
+func (c *ClientWithResponses) CreateSandboxWithBodyWithResponse(ctx context.Context, params *CreateSandboxParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error) {
+	rsp, err := c.CreateSandboxWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSandboxResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateSandboxWithResponse(ctx context.Context, params *CreateSandboxParams, body CreateSandboxJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSandboxResponse, error) {
+	rsp, err := c.CreateSandbox(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSandboxResponse(rsp)
+}
+
+// DeleteSandboxWithResponse request returning *DeleteSandboxResponse
+func (c *ClientWithResponses) DeleteSandboxWithResponse(ctx context.Context, sandboxId SandboxID, params *DeleteSandboxParams, reqEditors ...RequestEditorFn) (*DeleteSandboxResponse, error) {
+	rsp, err := c.DeleteSandbox(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSandboxResponse(rsp)
+}
+
+// GetSandboxWithResponse request returning *GetSandboxResponse
+func (c *ClientWithResponses) GetSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxResponse, error) {
+	rsp, err := c.GetSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxResponse(rsp)
+}
+
+// ListSandboxBrokersWithResponse request returning *ListSandboxBrokersResponse
+func (c *ClientWithResponses) ListSandboxBrokersWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSandboxBrokersResponse, error) {
+	rsp, err := c.ListSandboxBrokers(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSandboxBrokersResponse(rsp)
+}
+
+// DetachSandboxBrokerWithResponse request returning *DetachSandboxBrokerResponse
+func (c *ClientWithResponses) DetachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DetachSandboxBrokerResponse, error) {
+	rsp, err := c.DetachSandboxBroker(ctx, sandboxId, brokerName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDetachSandboxBrokerResponse(rsp)
+}
+
+// AttachSandboxBrokerWithBodyWithResponse request with arbitrary body returning *AttachSandboxBrokerResponse
+func (c *ClientWithResponses) AttachSandboxBrokerWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error) {
+	rsp, err := c.AttachSandboxBrokerWithBody(ctx, sandboxId, brokerName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachSandboxBrokerResponse(rsp)
+}
+
+func (c *ClientWithResponses) AttachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error) {
+	rsp, err := c.AttachSandboxBroker(ctx, sandboxId, brokerName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachSandboxBrokerResponse(rsp)
+}
+
+// ServeSandboxBrokerWithResponse request returning *ServeSandboxBrokerResponse
+func (c *ClientWithResponses) ServeSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error) {
+	rsp, err := c.ServeSandboxBroker(ctx, sandboxId, brokerName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseServeSandboxBrokerResponse(rsp)
+}
+
+// RunCommandWithBodyWithResponse request with arbitrary body returning *RunCommandResponse
+func (c *ClientWithResponses) RunCommandWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunCommandResponse, error) {
+	rsp, err := c.RunCommandWithBody(ctx, sandboxId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunCommandResponse(rsp)
+}
+
+func (c *ClientWithResponses) RunCommandWithResponse(ctx context.Context, sandboxId SandboxID, body RunCommandJSONRequestBody, reqEditors ...RequestEditorFn) (*RunCommandResponse, error) {
+	rsp, err := c.RunCommand(ctx, sandboxId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunCommandResponse(rsp)
+}
+
+// GetSandboxConsoleWithResponse request returning *GetSandboxConsoleResponse
+func (c *ClientWithResponses) GetSandboxConsoleWithResponse(ctx context.Context, sandboxId SandboxID, params *GetSandboxConsoleParams, reqEditors ...RequestEditorFn) (*GetSandboxConsoleResponse, error) {
+	rsp, err := c.GetSandboxConsole(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxConsoleResponse(rsp)
+}
+
+// GetSandboxEgressWithResponse request returning *GetSandboxEgressResponse
+func (c *ClientWithResponses) GetSandboxEgressWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxEgressResponse, error) {
+	rsp, err := c.GetSandboxEgress(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxEgressResponse(rsp)
+}
+
+// SetSandboxEgressWithBodyWithResponse request with arbitrary body returning *SetSandboxEgressResponse
+func (c *ClientWithResponses) SetSandboxEgressWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error) {
+	rsp, err := c.SetSandboxEgressWithBody(ctx, sandboxId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxEgressResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetSandboxEgressWithResponse(ctx context.Context, sandboxId SandboxID, body SetSandboxEgressJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxEgressResponse, error) {
+	rsp, err := c.SetSandboxEgress(ctx, sandboxId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxEgressResponse(rsp)
+}
+
+// KillConnectionsWithBodyWithResponse request with arbitrary body returning *KillConnectionsResponse
+func (c *ClientWithResponses) KillConnectionsWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error) {
+	rsp, err := c.KillConnectionsWithBody(ctx, sandboxId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseKillConnectionsResponse(rsp)
+}
+
+func (c *ClientWithResponses) KillConnectionsWithResponse(ctx context.Context, sandboxId SandboxID, body KillConnectionsJSONRequestBody, reqEditors ...RequestEditorFn) (*KillConnectionsResponse, error) {
+	rsp, err := c.KillConnections(ctx, sandboxId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseKillConnectionsResponse(rsp)
+}
+
+// ListEgressRulesWithResponse request returning *ListEgressRulesResponse
+func (c *ClientWithResponses) ListEgressRulesWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListEgressRulesResponse, error) {
+	rsp, err := c.ListEgressRules(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListEgressRulesResponse(rsp)
+}
+
+// DeleteEgressRuleWithResponse request returning *DeleteEgressRuleResponse
+func (c *ClientWithResponses) DeleteEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*DeleteEgressRuleResponse, error) {
+	rsp, err := c.DeleteEgressRule(ctx, sandboxId, ruleName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteEgressRuleResponse(rsp)
+}
+
+// GetEgressRuleWithResponse request returning *GetEgressRuleResponse
+func (c *ClientWithResponses) GetEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*GetEgressRuleResponse, error) {
+	rsp, err := c.GetEgressRule(ctx, sandboxId, ruleName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEgressRuleResponse(rsp)
+}
+
+// PutEgressRuleWithBodyWithResponse request with arbitrary body returning *PutEgressRuleResponse
+func (c *ClientWithResponses) PutEgressRuleWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error) {
+	rsp, err := c.PutEgressRuleWithBody(ctx, sandboxId, ruleName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutEgressRuleResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, body PutEgressRuleJSONRequestBody, reqEditors ...RequestEditorFn) (*PutEgressRuleResponse, error) {
+	rsp, err := c.PutEgressRule(ctx, sandboxId, ruleName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutEgressRuleResponse(rsp)
+}
+
+// PauseEgressRuleWithResponse request returning *PauseEgressRuleResponse
+func (c *ClientWithResponses) PauseEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*PauseEgressRuleResponse, error) {
+	rsp, err := c.PauseEgressRule(ctx, sandboxId, ruleName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePauseEgressRuleResponse(rsp)
+}
+
+// ResumeEgressRuleWithResponse request returning *ResumeEgressRuleResponse
+func (c *ClientWithResponses) ResumeEgressRuleWithResponse(ctx context.Context, sandboxId SandboxID, ruleName RuleName, reqEditors ...RequestEditorFn) (*ResumeEgressRuleResponse, error) {
+	rsp, err := c.ResumeEgressRule(ctx, sandboxId, ruleName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeEgressRuleResponse(rsp)
+}
+
+// StreamSandboxEventsWithResponse request returning *StreamSandboxEventsResponse
+func (c *ClientWithResponses) StreamSandboxEventsWithResponse(ctx context.Context, sandboxId SandboxID, params *StreamSandboxEventsParams, reqEditors ...RequestEditorFn) (*StreamSandboxEventsResponse, error) {
+	rsp, err := c.StreamSandboxEvents(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamSandboxEventsResponse(rsp)
+}
+
+// DeleteFileWithResponse request returning *DeleteFileResponse
+func (c *ClientWithResponses) DeleteFileWithResponse(ctx context.Context, sandboxId SandboxID, params *DeleteFileParams, reqEditors ...RequestEditorFn) (*DeleteFileResponse, error) {
+	rsp, err := c.DeleteFile(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteFileResponse(rsp)
+}
+
+// ReadFileWithResponse request returning *ReadFileResponse
+func (c *ClientWithResponses) ReadFileWithResponse(ctx context.Context, sandboxId SandboxID, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error) {
+	rsp, err := c.ReadFile(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadFileResponse(rsp)
+}
+
+// WriteFileWithBodyWithResponse request with arbitrary body returning *WriteFileResponse
+func (c *ClientWithResponses) WriteFileWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, params *WriteFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteFileResponse, error) {
+	rsp, err := c.WriteFileWithBody(ctx, sandboxId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteFileResponse(rsp)
+}
+
+// ListDirWithResponse request returning *ListDirResponse
+func (c *ClientWithResponses) ListDirWithResponse(ctx context.Context, sandboxId SandboxID, params *ListDirParams, reqEditors ...RequestEditorFn) (*ListDirResponse, error) {
+	rsp, err := c.ListDir(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDirResponse(rsp)
+}
+
+// GetSandboxIdentityWithResponse request returning *GetSandboxIdentityResponse
+func (c *ClientWithResponses) GetSandboxIdentityWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxIdentityResponse, error) {
+	rsp, err := c.GetSandboxIdentity(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxIdentityResponse(rsp)
+}
+
+// SetSandboxLabelsWithBodyWithResponse request with arbitrary body returning *SetSandboxLabelsResponse
+func (c *ClientWithResponses) SetSandboxLabelsWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error) {
+	rsp, err := c.SetSandboxLabelsWithBody(ctx, sandboxId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxLabelsResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetSandboxLabelsWithResponse(ctx context.Context, sandboxId SandboxID, body SetSandboxLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSandboxLabelsResponse, error) {
+	rsp, err := c.SetSandboxLabels(ctx, sandboxId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSandboxLabelsResponse(rsp)
+}
+
+// GetSandboxMetricsWithResponse request returning *GetSandboxMetricsResponse
+func (c *ClientWithResponses) GetSandboxMetricsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*GetSandboxMetricsResponse, error) {
+	rsp, err := c.GetSandboxMetrics(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxMetricsResponse(rsp)
+}
+
+// GetSandboxMetricsHistoryWithResponse request returning *GetSandboxMetricsHistoryResponse
+func (c *ClientWithResponses) GetSandboxMetricsHistoryWithResponse(ctx context.Context, sandboxId SandboxID, params *GetSandboxMetricsHistoryParams, reqEditors ...RequestEditorFn) (*GetSandboxMetricsHistoryResponse, error) {
+	rsp, err := c.GetSandboxMetricsHistory(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSandboxMetricsHistoryResponse(rsp)
+}
+
+// PauseSandboxWithResponse request returning *PauseSandboxResponse
+func (c *ClientWithResponses) PauseSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*PauseSandboxResponse, error) {
+	rsp, err := c.PauseSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePauseSandboxResponse(rsp)
+}
+
+// ListProcessesWithResponse request returning *ListProcessesResponse
+func (c *ClientWithResponses) ListProcessesWithResponse(ctx context.Context, sandboxId SandboxID, params *ListProcessesParams, reqEditors ...RequestEditorFn) (*ListProcessesResponse, error) {
+	rsp, err := c.ListProcesses(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListProcessesResponse(rsp)
+}
+
+// StartProcessWithBodyWithResponse request with arbitrary body returning *StartProcessResponse
+func (c *ClientWithResponses) StartProcessWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProcessResponse, error) {
+	rsp, err := c.StartProcessWithBody(ctx, sandboxId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartProcessResponse(rsp)
+}
+
+func (c *ClientWithResponses) StartProcessWithResponse(ctx context.Context, sandboxId SandboxID, body StartProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProcessResponse, error) {
+	rsp, err := c.StartProcess(ctx, sandboxId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartProcessResponse(rsp)
+}
+
+// ReapProcessWithResponse request returning *ReapProcessResponse
+func (c *ClientWithResponses) ReapProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*ReapProcessResponse, error) {
+	rsp, err := c.ReapProcess(ctx, sandboxId, processId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReapProcessResponse(rsp)
+}
+
+// GetProcessWithResponse request returning *GetProcessResponse
+func (c *ClientWithResponses) GetProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, reqEditors ...RequestEditorFn) (*GetProcessResponse, error) {
+	rsp, err := c.GetProcess(ctx, sandboxId, processId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetProcessResponse(rsp)
+}
+
+// SignalProcessWithBodyWithResponse request with arbitrary body returning *SignalProcessResponse
+func (c *ClientWithResponses) SignalProcessWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error) {
+	rsp, err := c.SignalProcessWithBody(ctx, sandboxId, processId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignalProcessResponse(rsp)
+}
+
+func (c *ClientWithResponses) SignalProcessWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, body SignalProcessJSONRequestBody, reqEditors ...RequestEditorFn) (*SignalProcessResponse, error) {
+	rsp, err := c.SignalProcess(ctx, sandboxId, processId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSignalProcessResponse(rsp)
+}
+
+// ReadProcessStderrWithResponse request returning *ReadProcessStderrResponse
+func (c *ClientWithResponses) ReadProcessStderrWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStderrParams, reqEditors ...RequestEditorFn) (*ReadProcessStderrResponse, error) {
+	rsp, err := c.ReadProcessStderr(ctx, sandboxId, processId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadProcessStderrResponse(rsp)
+}
+
+// WriteProcessStdinWithBodyWithResponse request with arbitrary body returning *WriteProcessStdinResponse
+func (c *ClientWithResponses) WriteProcessStdinWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *WriteProcessStdinParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*WriteProcessStdinResponse, error) {
+	rsp, err := c.WriteProcessStdinWithBody(ctx, sandboxId, processId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseWriteProcessStdinResponse(rsp)
+}
+
+// ReadProcessStdoutWithResponse request returning *ReadProcessStdoutResponse
+func (c *ClientWithResponses) ReadProcessStdoutWithResponse(ctx context.Context, sandboxId SandboxID, processId ProcessID, params *ReadProcessStdoutParams, reqEditors ...RequestEditorFn) (*ReadProcessStdoutResponse, error) {
+	rsp, err := c.ReadProcessStdout(ctx, sandboxId, processId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadProcessStdoutResponse(rsp)
+}
+
+// ResumeSandboxWithResponse request returning *ResumeSandboxResponse
+func (c *ClientWithResponses) ResumeSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ResumeSandboxResponse, error) {
+	rsp, err := c.ResumeSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeSandboxResponse(rsp)
+}
+
+// SealSandboxWithResponse request returning *SealSandboxResponse
+func (c *ClientWithResponses) SealSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*SealSandboxResponse, error) {
+	rsp, err := c.SealSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSealSandboxResponse(rsp)
+}
+
+// StartSandboxWithResponse request returning *StartSandboxResponse
+func (c *ClientWithResponses) StartSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StartSandboxResponse, error) {
+	rsp, err := c.StartSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartSandboxResponse(rsp)
+}
+
+// StopSandboxWithResponse request returning *StopSandboxResponse
+func (c *ClientWithResponses) StopSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*StopSandboxResponse, error) {
+	rsp, err := c.StopSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopSandboxResponse(rsp)
+}
+
+// ListSystemProcessesWithResponse request returning *ListSystemProcessesResponse
+func (c *ClientWithResponses) ListSystemProcessesWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemProcessesResponse, error) {
+	rsp, err := c.ListSystemProcesses(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSystemProcessesResponse(rsp)
+}
+
+// ListSystemSocketsWithResponse request returning *ListSystemSocketsResponse
+func (c *ClientWithResponses) ListSystemSocketsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListSystemSocketsResponse, error) {
+	rsp, err := c.ListSystemSockets(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSystemSocketsResponse(rsp)
+}
+
+// OpenTerminalWithResponse request returning *OpenTerminalResponse
+func (c *ClientWithResponses) OpenTerminalWithResponse(ctx context.Context, sandboxId SandboxID, params *OpenTerminalParams, reqEditors ...RequestEditorFn) (*OpenTerminalResponse, error) {
+	rsp, err := c.OpenTerminal(ctx, sandboxId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOpenTerminalResponse(rsp)
+}
+
+// ListTunnelsWithResponse request returning *ListTunnelsResponse
+func (c *ClientWithResponses) ListTunnelsWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*ListTunnelsResponse, error) {
+	rsp, err := c.ListTunnels(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTunnelsResponse(rsp)
+}
+
+// DeleteTunnelWithResponse request returning *DeleteTunnelResponse
+func (c *ClientWithResponses) DeleteTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*DeleteTunnelResponse, error) {
+	rsp, err := c.DeleteTunnel(ctx, sandboxId, tunnelName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteTunnelResponse(rsp)
+}
+
+// GetTunnelWithResponse request returning *GetTunnelResponse
+func (c *ClientWithResponses) GetTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*GetTunnelResponse, error) {
+	rsp, err := c.GetTunnel(ctx, sandboxId, tunnelName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTunnelResponse(rsp)
+}
+
+// PutTunnelWithBodyWithResponse request with arbitrary body returning *PutTunnelResponse
+func (c *ClientWithResponses) PutTunnelWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error) {
+	rsp, err := c.PutTunnelWithBody(ctx, sandboxId, tunnelName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutTunnelResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body PutTunnelJSONRequestBody, reqEditors ...RequestEditorFn) (*PutTunnelResponse, error) {
+	rsp, err := c.PutTunnel(ctx, sandboxId, tunnelName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutTunnelResponse(rsp)
+}
+
+// GetTunnelActivityWithResponse request returning *GetTunnelActivityResponse
+func (c *ClientWithResponses) GetTunnelActivityWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, params *GetTunnelActivityParams, reqEditors ...RequestEditorFn) (*GetTunnelActivityResponse, error) {
+	rsp, err := c.GetTunnelActivity(ctx, sandboxId, tunnelName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTunnelActivityResponse(rsp)
+}
+
+// ListTunnelGuestsWithResponse request returning *ListTunnelGuestsResponse
+func (c *ClientWithResponses) ListTunnelGuestsWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ListTunnelGuestsResponse, error) {
+	rsp, err := c.ListTunnelGuests(ctx, sandboxId, tunnelName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTunnelGuestsResponse(rsp)
+}
+
+// RevokeTunnelGuestWithResponse request returning *RevokeTunnelGuestResponse
+func (c *ClientWithResponses) RevokeTunnelGuestWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, email string, reqEditors ...RequestEditorFn) (*RevokeTunnelGuestResponse, error) {
+	rsp, err := c.RevokeTunnelGuest(ctx, sandboxId, tunnelName, email, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeTunnelGuestResponse(rsp)
+}
+
+// PauseTunnelWithResponse request returning *PauseTunnelResponse
+func (c *ClientWithResponses) PauseTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*PauseTunnelResponse, error) {
+	rsp, err := c.PauseTunnel(ctx, sandboxId, tunnelName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePauseTunnelResponse(rsp)
+}
+
+// ResumeTunnelWithResponse request returning *ResumeTunnelResponse
+func (c *ClientWithResponses) ResumeTunnelWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, reqEditors ...RequestEditorFn) (*ResumeTunnelResponse, error) {
+	rsp, err := c.ResumeTunnel(ctx, sandboxId, tunnelName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeTunnelResponse(rsp)
+}
+
+// CreateTunnelTokenWithBodyWithResponse request with arbitrary body returning *CreateTunnelTokenResponse
+func (c *ClientWithResponses) CreateTunnelTokenWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error) {
+	rsp, err := c.CreateTunnelTokenWithBody(ctx, sandboxId, tunnelName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTunnelTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateTunnelTokenWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, body CreateTunnelTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTunnelTokenResponse, error) {
+	rsp, err := c.CreateTunnelToken(ctx, sandboxId, tunnelName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTunnelTokenResponse(rsp)
+}
+
+// RevokeTunnelTokenWithResponse request returning *RevokeTunnelTokenResponse
+func (c *ClientWithResponses) RevokeTunnelTokenWithResponse(ctx context.Context, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params *RevokeTunnelTokenParams, reqEditors ...RequestEditorFn) (*RevokeTunnelTokenResponse, error) {
+	rsp, err := c.RevokeTunnelToken(ctx, sandboxId, tunnelName, tokenId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeTunnelTokenResponse(rsp)
+}
+
+// UnsealSandboxWithResponse request returning *UnsealSandboxResponse
+func (c *ClientWithResponses) UnsealSandboxWithResponse(ctx context.Context, sandboxId SandboxID, reqEditors ...RequestEditorFn) (*UnsealSandboxResponse, error) {
+	rsp, err := c.UnsealSandbox(ctx, sandboxId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnsealSandboxResponse(rsp)
+}
+
+// ListHostTunnelsWithResponse request returning *ListHostTunnelsResponse
+func (c *ClientWithResponses) ListHostTunnelsWithResponse(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error) {
+	rsp, err := c.ListHostTunnels(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListHostTunnelsResponse(rsp)
+}
+
+// ListVolumesWithResponse request returning *ListVolumesResponse
+func (c *ClientWithResponses) ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error) {
+	rsp, err := c.ListVolumes(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVolumesResponse(rsp)
+}
+
+// DeleteVolumeWithResponse request returning *DeleteVolumeResponse
+func (c *ClientWithResponses) DeleteVolumeWithResponse(ctx context.Context, volumeName VolumeName, reqEditors ...RequestEditorFn) (*DeleteVolumeResponse, error) {
+	rsp, err := c.DeleteVolume(ctx, volumeName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteVolumeResponse(rsp)
+}
+
+// CloneVolumeWithBodyWithResponse request with arbitrary body returning *CloneVolumeResponse
+func (c *ClientWithResponses) CloneVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error) {
+	rsp, err := c.CloneVolumeWithBody(ctx, volumeName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloneVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) CloneVolumeWithResponse(ctx context.Context, volumeName VolumeName, body CloneVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*CloneVolumeResponse, error) {
+	rsp, err := c.CloneVolume(ctx, volumeName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloneVolumeResponse(rsp)
+}
+
+// MoveVolumeWithBodyWithResponse request with arbitrary body returning *MoveVolumeResponse
+func (c *ClientWithResponses) MoveVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
+	rsp, err := c.MoveVolumeWithBody(ctx, volumeName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMoveVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) MoveVolumeWithResponse(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error) {
+	rsp, err := c.MoveVolume(ctx, volumeName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMoveVolumeResponse(rsp)
 }
 
 // ParseGetRootResponse parses an HTTP response from a GetRootWithResponse call
@@ -17062,22 +14745,6 @@ func ParseGetConsoleResponse(rsp *http.Response) (*GetConsoleResponse, error) {
 	}
 
 	response := &GetConsoleResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParseGetConsoleNamespaceResponse parses an HTTP response from a GetConsoleNamespaceWithResponse call
-func ParseGetConsoleNamespaceResponse(rsp *http.Response) (*GetConsoleNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetConsoleNamespaceResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -17202,32 +14869,6 @@ func ParseGetConsoleVolumeResponse(rsp *http.Response) (*GetConsoleVolumeRespons
 	return response, nil
 }
 
-// ParseGetConsoleNamespacePageResponse parses an HTTP response from a GetConsoleNamespacePageWithResponse call
-func ParseGetConsoleNamespacePageResponse(rsp *http.Response) (*GetConsoleNamespacePageResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetConsoleNamespacePageResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetConsolePageResponse parses an HTTP response from a GetConsolePageWithResponse call
 func ParseGetConsolePageResponse(rsp *http.Response) (*GetConsolePageResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17274,6 +14915,107 @@ func ParseHealthResponse(rsp *http.Response) (*HealthResponse, error) {
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBrokerActivityResponse parses an HTTP response from a ListBrokerActivityWithResponse call
+func ParseListBrokerActivityResponse(rsp *http.Response) (*ListBrokerActivityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBrokerActivityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerActivityPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrokerActivityResponse parses an HTTP response from a GetBrokerActivityWithResponse call
+func ParseGetBrokerActivityResponse(rsp *http.Response) (*GetBrokerActivityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrokerActivityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerActivity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -17442,6 +15184,490 @@ func ParseSignOutResponse(rsp *http.Response) (*SignOutResponse, error) {
 	return response, nil
 }
 
+// ParseListBrokersResponse parses an HTTP response from a ListBrokersWithResponse call
+func ParseListBrokersResponse(rsp *http.Response) (*ListBrokersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBrokersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteBrokerResponse parses an HTTP response from a DeleteBrokerWithResponse call
+func ParseDeleteBrokerResponse(rsp *http.Response) (*DeleteBrokerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteBrokerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrokerResponse parses an HTTP response from a GetBrokerWithResponse call
+func ParseGetBrokerResponse(rsp *http.Response) (*GetBrokerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrokerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Broker
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutBrokerResponse parses an HTTP response from a PutBrokerWithResponse call
+func ParsePutBrokerResponse(rsp *http.Response) (*PutBrokerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutBrokerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Broker
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Broker
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListBuildsResponse parses an HTTP response from a ListBuildsWithResponse call
+func ParseListBuildsResponse(rsp *http.Response) (*ListBuildsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBuildsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BuildPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateBuildResponse parses an HTTP response from a CreateBuildWithResponse call
+func ParseCreateBuildResponse(rsp *http.Response) (*CreateBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Build
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteBuildResponse parses an HTTP response from a DeleteBuildWithResponse call
+func ParseDeleteBuildResponse(rsp *http.Response) (*DeleteBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBuildResponse parses an HTTP response from a GetBuildWithResponse call
+func ParseGetBuildResponse(rsp *http.Response) (*GetBuildResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBuildResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Build
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadBuildLogResponse parses an HTTP response from a ReadBuildLogWithResponse call
+func ParseReadBuildLogResponse(rsp *http.Response) (*ReadBuildLogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadBuildLogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCAResponse parses an HTTP response from a GetCAWithResponse call
+func ParseGetCAResponse(rsp *http.Response) (*GetCAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetCostsResponse parses an HTTP response from a GetCostsWithResponse call
 func ParseGetCostsResponse(rsp *http.Response) (*GetCostsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -17490,6 +15716,53 @@ func ParseGetCostsResponse(rsp *http.Response) (*GetCostsResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCountsResponse parses an HTTP response from a GetCountsWithResponse call
+func ParseGetCountsResponse(rsp *http.Response) (*GetCountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HostCounts
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 
@@ -17600,6 +15873,208 @@ func ParseGetHostMetricsHistoryResponse(rsp *http.Response) (*GetHostMetricsHist
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListImagesResponse parses an HTTP response from a ListImagesWithResponse call
+func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListImagesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImagePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePullImageResponse parses an HTTP response from a PullImageWithResponse call
+func ParsePullImageResponse(rsp *http.Response) (*PullImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PullImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteImageResponse parses an HTTP response from a DeleteImageWithResponse call
+func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetImageResponse parses an HTTP response from a GetImageWithResponse call
+func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Image
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
@@ -17825,1463 +16300,26 @@ func ParseGetMyPictureResponse(rsp *http.Response) (*GetMyPictureResponse, error
 	return response, nil
 }
 
-// ParseListNamespacesResponse parses an HTTP response from a ListNamespacesWithResponse call
-func ParseListNamespacesResponse(rsp *http.Response) (*ListNamespacesResponse, error) {
+// ParseGetOpenapiYamlResponse parses an HTTP response from a GetOpenapiYamlWithResponse call
+func ParseGetOpenapiYamlResponse(rsp *http.Response) (*GetOpenapiYamlResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListNamespacesResponse{
+	response := &GetOpenapiYamlResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NamespaceList
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "yaml") && rsp.StatusCode == 200:
+		var dest openapi_types.File
+		if err := yaml.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateNamespaceResponse parses an HTTP response from a CreateNamespaceWithResponse call
-func ParseCreateNamespaceResponse(rsp *http.Response) (*CreateNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateNamespaceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Namespace
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteNamespaceResponse parses an HTTP response from a DeleteNamespaceWithResponse call
-func ParseDeleteNamespaceResponse(rsp *http.Response) (*DeleteNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteNamespaceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest Namespace
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest NamespaceNotEmpty
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetNamespaceResponse parses an HTTP response from a GetNamespaceWithResponse call
-func ParseGetNamespaceResponse(rsp *http.Response) (*GetNamespaceResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetNamespaceResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Namespace
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListBrokerActivityResponse parses an HTTP response from a ListBrokerActivityWithResponse call
-func ParseListBrokerActivityResponse(rsp *http.Response) (*ListBrokerActivityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListBrokerActivityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BrokerActivityPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetBrokerActivityResponse parses an HTTP response from a GetBrokerActivityWithResponse call
-func ParseGetBrokerActivityResponse(rsp *http.Response) (*GetBrokerActivityResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetBrokerActivityResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BrokerActivity
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListBrokersResponse parses an HTTP response from a ListBrokersWithResponse call
-func ParseListBrokersResponse(rsp *http.Response) (*ListBrokersResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListBrokersResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BrokerPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteBrokerResponse parses an HTTP response from a DeleteBrokerWithResponse call
-func ParseDeleteBrokerResponse(rsp *http.Response) (*DeleteBrokerResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteBrokerResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetBrokerResponse parses an HTTP response from a GetBrokerWithResponse call
-func ParseGetBrokerResponse(rsp *http.Response) (*GetBrokerResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetBrokerResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Broker
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePutBrokerResponse parses an HTTP response from a PutBrokerWithResponse call
-func ParsePutBrokerResponse(rsp *http.Response) (*PutBrokerResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PutBrokerResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Broker
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Broker
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListBuildsResponse parses an HTTP response from a ListBuildsWithResponse call
-func ParseListBuildsResponse(rsp *http.Response) (*ListBuildsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListBuildsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BuildPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateBuildResponse parses an HTTP response from a CreateBuildWithResponse call
-func ParseCreateBuildResponse(rsp *http.Response) (*CreateBuildResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateBuildResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest Build
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteBuildResponse parses an HTTP response from a DeleteBuildWithResponse call
-func ParseDeleteBuildResponse(rsp *http.Response) (*DeleteBuildResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteBuildResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetBuildResponse parses an HTTP response from a GetBuildWithResponse call
-func ParseGetBuildResponse(rsp *http.Response) (*GetBuildResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetBuildResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Build
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReadBuildLogResponse parses an HTTP response from a ReadBuildLogWithResponse call
-func ParseReadBuildLogResponse(rsp *http.Response) (*ReadBuildLogResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReadBuildLogResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCAResponse parses an HTTP response from a GetCAWithResponse call
-func ParseGetCAResponse(rsp *http.Response) (*GetCAResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCAResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetNamespaceCostsResponse parses an HTTP response from a GetNamespaceCostsWithResponse call
-func ParseGetNamespaceCostsResponse(rsp *http.Response) (*GetNamespaceCostsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetNamespaceCostsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest CostReport
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetCountsResponse parses an HTTP response from a GetCountsWithResponse call
-func ParseGetCountsResponse(rsp *http.Response) (*GetCountsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCountsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest HostCounts
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListImagesResponse parses an HTTP response from a ListImagesWithResponse call
-func ParseListImagesResponse(rsp *http.Response) (*ListImagesResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListImagesResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ImagePage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePullImageResponse parses an HTTP response from a PullImageWithResponse call
-func ParsePullImageResponse(rsp *http.Response) (*PullImageResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PullImageResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Image
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest Image
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON507 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteImageResponse parses an HTTP response from a DeleteImageWithResponse call
-func ParseDeleteImageResponse(rsp *http.Response) (*DeleteImageResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteImageResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetImageResponse parses an HTTP response from a GetImageWithResponse call
-func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetImageResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Image
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListNamespaceKeysResponse parses an HTTP response from a ListNamespaceKeysWithResponse call
-func ParseListNamespaceKeysResponse(rsp *http.Response) (*ListNamespaceKeysResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListNamespaceKeysResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest KeyPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateNamespaceKeyResponse parses an HTTP response from a CreateNamespaceKeyWithResponse call
-func ParseCreateNamespaceKeyResponse(rsp *http.Response) (*CreateNamespaceKeyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateNamespaceKeyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest KeyCreated
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRevokeNamespaceKeyResponse parses an HTTP response from a RevokeNamespaceKeyWithResponse call
-func ParseRevokeNamespaceKeyResponse(rsp *http.Response) (*RevokeNamespaceKeyResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RevokeNamespaceKeyResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListNamespaceMembersResponse parses an HTTP response from a ListNamespaceMembersWithResponse call
-func ParseListNamespaceMembersResponse(rsp *http.Response) (*ListNamespaceMembersResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListNamespaceMembersResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest MemberList
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteNamespaceMemberResponse parses an HTTP response from a DeleteNamespaceMemberWithResponse call
-func ParseDeleteNamespaceMemberResponse(rsp *http.Response) (*DeleteNamespaceMemberResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteNamespaceMemberResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePutNamespaceMemberResponse parses an HTTP response from a PutNamespaceMemberWithResponse call
-func ParsePutNamespaceMemberResponse(rsp *http.Response) (*PutNamespaceMemberResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PutNamespaceMemberResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Member
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
+		response.YAML200 = &dest
 
 	}
 
@@ -19322,13 +16360,6 @@ func ParseListPrincipalsResponse(rsp *http.Response) (*ListPrincipalsResponse, e
 			return nil, err
 		}
 		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -19593,67 +16624,6 @@ func ParseGetBrokerTrustedResponse(rsp *http.Response) (*GetBrokerTrustedRespons
 	return response, nil
 }
 
-// ParseSetNamespaceQuotaResponse parses an HTTP response from a SetNamespaceQuotaWithResponse call
-func ParseSetNamespaceQuotaResponse(rsp *http.Response) (*SetNamespaceQuotaResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetNamespaceQuotaResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Namespace
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListSandboxesResponse parses an HTTP response from a ListSandboxesWithResponse call
 func ParseListSandboxesResponse(rsp *http.Response) (*ListSandboxesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -19688,13 +16658,6 @@ func ParseListSandboxesResponse(rsp *http.Response) (*ListSandboxesResponse, err
 			return nil, err
 		}
 		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	}
 
@@ -19744,14 +16707,14 @@ func ParseCreateSandboxResponse(rsp *http.Response) (*CreateSandboxResponse, err
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
+		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21965,7 +18928,7 @@ func ParseResumeSandboxResponse(rsp *http.Response) (*ResumeSandboxResponse, err
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
+		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -22101,7 +19064,7 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Error
+		var dest Forbidden
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -23146,13 +20109,6 @@ func ParseListHostTunnelsResponse(rsp *http.Response) (*ListHostTunnelsResponse,
 		}
 		response.JSON403 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
 	}
 
 	return response, nil
@@ -23192,13 +20148,6 @@ func ParseListVolumesResponse(rsp *http.Response) (*ListVolumesResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
 
 	}
 
@@ -23253,6 +20202,81 @@ func ParseDeleteVolumeResponse(rsp *http.Response) (*DeleteVolumeResponse, error
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloneVolumeResponse parses an HTTP response from a CloneVolumeWithResponse call
+func ParseCloneVolumeResponse(rsp *http.Response) (*CloneVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloneVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Volume
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -23327,32 +20351,6 @@ func ParseMoveVolumeResponse(rsp *http.Response) (*MoveVolumeResponse, error) {
 	return response, nil
 }
 
-// ParseGetOpenapiYamlResponse parses an HTTP response from a GetOpenapiYamlWithResponse call
-func ParseGetOpenapiYamlResponse(rsp *http.Response) (*GetOpenapiYamlResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetOpenapiYamlResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "yaml") && rsp.StatusCode == 200:
-		var dest openapi_types.File
-		if err := yaml.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.YAML200 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Go to the console
@@ -23361,33 +20359,33 @@ type ServerInterface interface {
 	// The console
 	// (GET /console)
 	GetConsole(w http.ResponseWriter, r *http.Request, params GetConsoleParams)
-	// The console, in one namespace
-	// (GET /console/namespaces/{namespace})
-	GetConsoleNamespace(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
 	// The console, on one build
-	// (GET /console/namespaces/{namespace}/builds/{buildId})
-	GetConsoleBuild(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, buildId BuildID)
+	// (GET /console/builds/{buildId})
+	GetConsoleBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
 	// The console, on one image
-	// (GET /console/namespaces/{namespace}/images/{imageId})
-	GetConsoleImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, imageId ImageID)
+	// (GET /console/images/{imageId})
+	GetConsoleImage(w http.ResponseWriter, r *http.Request, imageId ImageID)
 	// The console, on one sandbox
-	// (GET /console/namespaces/{namespace}/sandboxes/{sandboxId})
-	GetConsoleSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
+	// (GET /console/sandboxes/{sandboxId})
+	GetConsoleSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
 	// The console, on one tab of one sandbox
-	// (GET /console/namespaces/{namespace}/sandboxes/{sandboxId}/{tab})
-	GetConsoleSandboxTab(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tab string)
+	// (GET /console/sandboxes/{sandboxId}/{tab})
+	GetConsoleSandboxTab(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tab string)
 	// The console, on one volume
-	// (GET /console/namespaces/{namespace}/volumes/{volumeName})
-	GetConsoleVolume(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, volumeName VolumeName)
-	// One of the console's pages, in one namespace
-	// (GET /console/namespaces/{namespace}/{page})
-	GetConsoleNamespacePage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, page string)
+	// (GET /console/volumes/{volumeName})
+	GetConsoleVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
 	// One of the console's pages
 	// (GET /console/{page})
 	GetConsolePage(w http.ResponseWriter, r *http.Request, page string)
-	// Is this daemon up
+	// Is this server up
 	// (GET /healthz)
 	Health(w http.ResponseWriter, r *http.Request)
+	// What the sandboxes did through their brokers, from a cursor
+	// (GET /v1/activity)
+	ListBrokerActivity(w http.ResponseWriter, r *http.Request, params ListBrokerActivityParams)
+	// One record, with its bodies
+	// (GET /v1/activity/{activityId})
+	GetBrokerActivity(w http.ResponseWriter, r *http.Request, activityId BrokerActivityID)
 	// How a person may sign in here
 	// (GET /v1/auth)
 	GetAuth(w http.ResponseWriter, r *http.Request)
@@ -23403,9 +20401,42 @@ type ServerInterface interface {
 	// Sign out
 	// (POST /v1/auth/signout)
 	SignOut(w http.ResponseWriter, r *http.Request)
-	// What the namespaces the caller reaches have cost
+	// The shared brokers this server declares
+	// (GET /v1/brokers)
+	ListBrokers(w http.ResponseWriter, r *http.Request)
+	// Withdraw a shared broker
+	// (DELETE /v1/brokers/{brokerName})
+	DeleteBroker(w http.ResponseWriter, r *http.Request, brokerName BrokerName)
+	// One of the shared brokers
+	// (GET /v1/brokers/{brokerName})
+	GetBroker(w http.ResponseWriter, r *http.Request, brokerName BrokerName)
+	// Declare a shared broker, or replace its upstream
+	// (PUT /v1/brokers/{brokerName})
+	PutBroker(w http.ResponseWriter, r *http.Request, brokerName BrokerName)
+	// Every build on this host, the oldest first
+	// (GET /v1/builds)
+	ListBuilds(w http.ResponseWriter, r *http.Request, params ListBuildsParams)
+	// Build an image from a recipe
+	// (POST /v1/builds)
+	CreateBuild(w http.ResponseWriter, r *http.Request)
+	// Stop a build, or forget one that ended
+	// (DELETE /v1/builds/{buildId})
+	DeleteBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
+	// Where a build is, step by step
+	// (GET /v1/builds/{buildId})
+	GetBuild(w http.ResponseWriter, r *http.Request, buildId BuildID)
+	// What the build printed, from a byte offset
+	// (GET /v1/builds/{buildId}/log)
+	ReadBuildLog(w http.ResponseWriter, r *http.Request, buildId BuildID, params ReadBuildLogParams)
+	// The certificate authority this server's sandboxes are identified by
+	// (GET /v1/ca)
+	GetCA(w http.ResponseWriter, r *http.Request)
+	// What this server's sandboxes have cost
 	// (GET /v1/costs)
 	GetCosts(w http.ResponseWriter, r *http.Request, params GetCostsParams)
+	// How many of each thing this host has
+	// (GET /v1/counts)
+	GetCounts(w http.ResponseWriter, r *http.Request)
 	// This document, rendered
 	// (GET /v1/docs)
 	GetDocs(w http.ResponseWriter, r *http.Request)
@@ -23415,16 +20446,28 @@ type ServerInterface interface {
 	// What this host has been using
 	// (GET /v1/host/metrics/history)
 	GetHostMetricsHistory(w http.ResponseWriter, r *http.Request, params GetHostMetricsHistoryParams)
+	// Every image cached on this host
+	// (GET /v1/images)
+	ListImages(w http.ResponseWriter, r *http.Request, params ListImagesParams)
+	// Pull an OCI reference and build the rootfs a VM can boot
+	// (POST /v1/images)
+	PullImage(w http.ResponseWriter, r *http.Request)
+	// Drop a cached rootfs
+	// (DELETE /v1/images/{imageId})
+	DeleteImage(w http.ResponseWriter, r *http.Request, imageId ImageID)
+	// Whether this image is ready, and why it is not
+	// (GET /v1/images/{imageId})
+	GetImage(w http.ResponseWriter, r *http.Request, imageId ImageID)
 	// What this host is and what it can do
 	// (GET /v1/info)
 	GetInfo(w http.ResponseWriter, r *http.Request)
-	// The global keys this daemon will accept
+	// The keys this server will accept
 	// (GET /v1/keys)
 	ListKeys(w http.ResponseWriter, r *http.Request, params ListKeysParams)
-	// Mint a global key
+	// Mint a key
 	// (POST /v1/keys)
 	CreateKey(w http.ResponseWriter, r *http.Request)
-	// Revoke a global key
+	// Revoke a key
 	// (DELETE /v1/keys/{keyId})
 	RevokeKey(w http.ResponseWriter, r *http.Request, keyId string)
 	// Who is calling
@@ -23433,291 +20476,207 @@ type ServerInterface interface {
 	// The caller's picture
 	// (GET /v1/me/picture)
 	GetMyPicture(w http.ResponseWriter, r *http.Request, params GetMyPictureParams)
-	// List namespaces
-	// (GET /v1/namespaces)
-	ListNamespaces(w http.ResponseWriter, r *http.Request, params ListNamespacesParams)
-	// Create a namespace
-	// (POST /v1/namespaces)
-	CreateNamespace(w http.ResponseWriter, r *http.Request)
-	// Delete a namespace
-	// (DELETE /v1/namespaces/{namespace})
-	DeleteNamespace(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params DeleteNamespaceParams)
-	// Read one namespace
-	// (GET /v1/namespaces/{namespace})
-	GetNamespace(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// What the namespace's sandboxes did through their brokers, from a cursor
-	// (GET /v1/namespaces/{namespace}/activity)
-	ListBrokerActivity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListBrokerActivityParams)
-	// One record, with its bodies
-	// (GET /v1/namespaces/{namespace}/activity/{activityId})
-	GetBrokerActivity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, activityId BrokerActivityID)
-	// The shared brokers this namespace declares
-	// (GET /v1/namespaces/{namespace}/brokers)
-	ListBrokers(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Withdraw a shared broker
-	// (DELETE /v1/namespaces/{namespace}/brokers/{brokerName})
-	DeleteBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, brokerName BrokerName)
-	// One of this namespace's shared brokers
-	// (GET /v1/namespaces/{namespace}/brokers/{brokerName})
-	GetBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, brokerName BrokerName)
-	// Declare a shared broker, or replace its upstream
-	// (PUT /v1/namespaces/{namespace}/brokers/{brokerName})
-	PutBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, brokerName BrokerName)
-	// Every build on this host, the oldest first
-	// (GET /v1/namespaces/{namespace}/builds)
-	ListBuilds(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListBuildsParams)
-	// Build an image from a recipe
-	// (POST /v1/namespaces/{namespace}/builds)
-	CreateBuild(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Stop a build, or forget one that ended
-	// (DELETE /v1/namespaces/{namespace}/builds/{buildId})
-	DeleteBuild(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, buildId BuildID)
-	// Where a build is, step by step
-	// (GET /v1/namespaces/{namespace}/builds/{buildId})
-	GetBuild(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, buildId BuildID)
-	// What the build printed, from a byte offset
-	// (GET /v1/namespaces/{namespace}/builds/{buildId}/log)
-	ReadBuildLog(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, buildId BuildID, params ReadBuildLogParams)
-	// The certificate authority this namespace's sandboxes are identified by
-	// (GET /v1/namespaces/{namespace}/ca)
-	GetCA(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// What a namespace has cost
-	// (GET /v1/namespaces/{namespace}/costs)
-	GetNamespaceCosts(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params GetNamespaceCostsParams)
-	// How many of each thing this host has
-	// (GET /v1/namespaces/{namespace}/counts)
-	GetCounts(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Every image cached on this host
-	// (GET /v1/namespaces/{namespace}/images)
-	ListImages(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListImagesParams)
-	// Pull an OCI reference and build the rootfs a VM can boot
-	// (POST /v1/namespaces/{namespace}/images)
-	PullImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Drop a cached rootfs
-	// (DELETE /v1/namespaces/{namespace}/images/{imageId})
-	DeleteImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, imageId ImageID)
-	// Whether this image is ready, and why it is not
-	// (GET /v1/namespaces/{namespace}/images/{imageId})
-	GetImage(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, imageId ImageID)
-	// The keys bound to a namespace
-	// (GET /v1/namespaces/{namespace}/keys)
-	ListNamespaceKeys(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListNamespaceKeysParams)
-	// Mint a key bound to a namespace
-	// (POST /v1/namespaces/{namespace}/keys)
-	CreateNamespaceKey(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Revoke a key bound to a namespace
-	// (DELETE /v1/namespaces/{namespace}/keys/{keyId})
-	RevokeNamespaceKey(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, keyId string)
-	// List a namespace's members
-	// (GET /v1/namespaces/{namespace}/members)
-	ListNamespaceMembers(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Remove a member
-	// (DELETE /v1/namespaces/{namespace}/members/{email})
-	DeleteNamespaceMember(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, email openapi_types.Email)
-	// Add or change a member
-	// (PUT /v1/namespaces/{namespace}/members/{email})
-	PutNamespaceMember(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, email openapi_types.Email)
-	// The principals in this namespace
-	// (GET /v1/namespaces/{namespace}/principals)
-	ListPrincipals(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Delete a principal
-	// (DELETE /v1/namespaces/{namespace}/principals/{principalId})
-	DeletePrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
-	// One principal
-	// (GET /v1/namespaces/{namespace}/principals/{principalId})
-	GetPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
-	// Make a principal, or replace its labels
-	// (PUT /v1/namespaces/{namespace}/principals/{principalId})
-	PutPrincipal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID)
-	// Read a shared broker's document about a principal, through its trusted plane
-	// (GET /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path})
-	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
-	// Set a namespace's quota
-	// (PUT /v1/namespaces/{namespace}/quota)
-	SetNamespaceQuota(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Every sandbox on this host
-	// (GET /v1/namespaces/{namespace}/sandboxes)
-	ListSandboxes(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListSandboxesParams)
-	// Create a sandbox, or return the one this key already made
-	// (POST /v1/namespaces/{namespace}/sandboxes)
-	CreateSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params CreateSandboxParams)
-	// Stop it, take its interface away, and let it go
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId})
-	DeleteSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params DeleteSandboxParams)
-	// What state this sandbox is in
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId})
-	GetSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// The brokers this sandbox has, and the port each is on
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers)
-	ListSandboxBrokers(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Take a broker away from a sandbox
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName})
-	DetachSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName)
-	// Give a sandbox a broker, while it runs
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName})
-	AttachSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName)
-	// Give a sandbox a broker this caller serves, over a WebSocket
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}/serve)
-	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, brokerName BrokerName, params ServeSandboxBrokerParams)
-	// Run one thing and collect what it printed
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/commands)
-	RunCommand(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// The guest's serial console, as bytes
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/console)
-	GetSandboxConsole(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params GetSandboxConsoleParams)
-	// What this sandbox may reach, what it has open, and what it tried and could not
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress)
-	GetSandboxEgress(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Replace every egress rule at once
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress)
-	SetSandboxEgress(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Kill connections a sandbox has open
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/connections/kill)
-	KillConnections(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// List a sandbox's egress rules
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules)
-	ListEgressRules(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Remove one egress rule
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName})
-	DeleteEgressRule(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName)
-	// Read one egress rule
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName})
-	GetEgressRule(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName)
-	// Add a rule, or replace the one with this name
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName})
-	PutEgressRule(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName)
-	// Pause one egress rule, keeping it
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause)
-	PauseEgressRule(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName)
-	// Resume a paused egress rule
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume)
-	ResumeEgressRule(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, ruleName RuleName)
-	// What has happened to this machine, from a cursor
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/events)
-	StreamSandboxEvents(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params StreamSandboxEventsParams)
-	// Remove a file or a tree
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files)
-	DeleteFile(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params DeleteFileParams)
-	// Read a file, or a tree as a tar
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files)
-	ReadFile(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params ReadFileParams)
-	// Write a file, or unpack a tar
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files)
-	WriteFile(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params WriteFileParams)
-	// What is in a directory
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files/list)
-	ListDir(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params ListDirParams)
-	// What this sandbox presents to a brokered upstream
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/identity)
-	GetSandboxIdentity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Replace this sandbox's labels
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/labels)
-	SetSandboxLabels(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// What the machine is using
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics)
-	GetSandboxMetrics(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// What the machine has been using
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics/history)
-	GetSandboxMetricsHistory(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params GetSandboxMetricsHistoryParams)
-	// Freeze a running machine where it is
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/pause)
-	PauseSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// The handles this API holds in this sandbox
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes)
-	ListProcesses(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params ListProcessesParams)
-	// Start something that outlives this request
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes)
-	StartProcess(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Drop the handle and its buffers
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId})
-	ReapProcess(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID)
-	// Whether it is still running, and what it exited with
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId})
-	GetProcess(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID)
-	// Send it a signal
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/signal)
-	SignalProcess(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID)
-	// What it has printed to stderr, from a byte offset
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stderr)
-	ReadProcessStderr(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params ReadProcessStderrParams)
-	// Write to it, and close its input
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdin)
-	WriteProcessStdin(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params WriteProcessStdinParams)
-	// What it has printed, from a byte offset
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdout)
-	ReadProcessStdout(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, processId ProcessID, params ReadProcessStdoutParams)
-	// Set a paused machine going again
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/resume)
-	ResumeSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Refuse commands and writes into a sandbox from now on
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/seal)
-	SealSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Boot a stopped sandbox again
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/start)
-	StartSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Shut the machine down, keep the disk and the id
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/stop)
-	StopSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Every process running in the machine
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/processes)
-	ListSystemProcesses(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Every TCP and UDP socket open in the machine
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/sockets)
-	ListSystemSockets(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// An interactive shell, over a WebSocket
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/terminal)
-	OpenTerminal(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, params OpenTerminalParams)
-	// List a sandbox's tunnels
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels)
-	ListTunnels(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Delete a tunnel
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName})
-	DeleteTunnel(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Read one tunnel
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName})
-	GetTunnel(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Make a tunnel, or replace the one with this name
-	// (PUT /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName})
-	PutTunnel(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Who reached a tunnel, and what they asked for
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity)
-	GetTunnelActivity(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, params GetTunnelActivityParams)
-	// Who a tunnel's admins let in
-	// (GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests)
-	ListTunnelGuests(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Take a guest back out
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email})
-	RevokeTunnelGuest(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, email string)
-	// Stop serving a tunnel, keeping it
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause)
-	PauseTunnel(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Serve a paused tunnel again
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume)
-	ResumeTunnel(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Mint a token that opens this tunnel
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens)
-	CreateTunnelToken(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName)
-	// Revoke a tunnel's token
-	// (DELETE /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId})
-	RevokeTunnelToken(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params RevokeTunnelTokenParams)
-	// Let commands and writes into a sealed sandbox
-	// (POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/unseal)
-	UnsealSandbox(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, sandboxId SandboxID)
-	// Every tunnel on this host, and the relay that serves them
-	// (GET /v1/namespaces/{namespace}/tunnels)
-	ListHostTunnels(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, params ListHostTunnelsParams)
-	// Every volume on this host
-	// (GET /v1/namespaces/{namespace}/volumes)
-	ListVolumes(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath)
-	// Let a volume go, and what was written on it
-	// (DELETE /v1/namespaces/{namespace}/volumes/{volumeName})
-	DeleteVolume(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, volumeName VolumeName)
-	// Bind a volume to a principal
-	// (PUT /v1/namespaces/{namespace}/volumes/{volumeName}/principal)
-	MoveVolume(w http.ResponseWriter, r *http.Request, namespace NamespaceInPath, volumeName VolumeName)
 	// This document
 	// (GET /v1/openapi.yaml)
 	GetOpenapiYaml(w http.ResponseWriter, r *http.Request)
+	// The principals
+	// (GET /v1/principals)
+	ListPrincipals(w http.ResponseWriter, r *http.Request)
+	// Delete a principal
+	// (DELETE /v1/principals/{principalId})
+	DeletePrincipal(w http.ResponseWriter, r *http.Request, principalId PrincipalID)
+	// One principal
+	// (GET /v1/principals/{principalId})
+	GetPrincipal(w http.ResponseWriter, r *http.Request, principalId PrincipalID)
+	// Make a principal, or replace its labels
+	// (PUT /v1/principals/{principalId})
+	PutPrincipal(w http.ResponseWriter, r *http.Request, principalId PrincipalID)
+	// Read a shared broker's document about a principal, through its trusted plane
+	// (GET /v1/principals/{principalId}/brokers/{brokerName}/trusted/{path})
+	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
+	// Every sandbox on this host
+	// (GET /v1/sandboxes)
+	ListSandboxes(w http.ResponseWriter, r *http.Request, params ListSandboxesParams)
+	// Create a sandbox, or return the one this key already made
+	// (POST /v1/sandboxes)
+	CreateSandbox(w http.ResponseWriter, r *http.Request, params CreateSandboxParams)
+	// Stop it, take its interface away, and let it go
+	// (DELETE /v1/sandboxes/{sandboxId})
+	DeleteSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params DeleteSandboxParams)
+	// What state this sandbox is in
+	// (GET /v1/sandboxes/{sandboxId})
+	GetSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// The brokers this sandbox has, and the port each is on
+	// (GET /v1/sandboxes/{sandboxId}/brokers)
+	ListSandboxBrokers(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Take a broker away from a sandbox
+	// (DELETE /v1/sandboxes/{sandboxId}/brokers/{brokerName})
+	DetachSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
+	// Give a sandbox a broker, while it runs
+	// (PUT /v1/sandboxes/{sandboxId}/brokers/{brokerName})
+	AttachSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
+	// Give a sandbox a broker this caller serves, over a WebSocket
+	// (GET /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve)
+	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName, params ServeSandboxBrokerParams)
+	// Run one thing and collect what it printed
+	// (POST /v1/sandboxes/{sandboxId}/commands)
+	RunCommand(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// The guest's serial console, as bytes
+	// (GET /v1/sandboxes/{sandboxId}/console)
+	GetSandboxConsole(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params GetSandboxConsoleParams)
+	// What this sandbox may reach, what it has open, and what it tried and could not
+	// (GET /v1/sandboxes/{sandboxId}/egress)
+	GetSandboxEgress(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Replace every egress rule at once
+	// (PUT /v1/sandboxes/{sandboxId}/egress)
+	SetSandboxEgress(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Kill connections a sandbox has open
+	// (POST /v1/sandboxes/{sandboxId}/egress/connections/kill)
+	KillConnections(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// List a sandbox's egress rules
+	// (GET /v1/sandboxes/{sandboxId}/egress/rules)
+	ListEgressRules(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Remove one egress rule
+	// (DELETE /v1/sandboxes/{sandboxId}/egress/rules/{ruleName})
+	DeleteEgressRule(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, ruleName RuleName)
+	// Read one egress rule
+	// (GET /v1/sandboxes/{sandboxId}/egress/rules/{ruleName})
+	GetEgressRule(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, ruleName RuleName)
+	// Add a rule, or replace the one with this name
+	// (PUT /v1/sandboxes/{sandboxId}/egress/rules/{ruleName})
+	PutEgressRule(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, ruleName RuleName)
+	// Pause one egress rule, keeping it
+	// (POST /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause)
+	PauseEgressRule(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, ruleName RuleName)
+	// Resume a paused egress rule
+	// (POST /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume)
+	ResumeEgressRule(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, ruleName RuleName)
+	// What has happened to this machine, from a cursor
+	// (GET /v1/sandboxes/{sandboxId}/events)
+	StreamSandboxEvents(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params StreamSandboxEventsParams)
+	// Remove a file or a tree
+	// (DELETE /v1/sandboxes/{sandboxId}/files)
+	DeleteFile(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params DeleteFileParams)
+	// Read a file, or a tree as a tar
+	// (GET /v1/sandboxes/{sandboxId}/files)
+	ReadFile(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params ReadFileParams)
+	// Write a file, or unpack a tar
+	// (PUT /v1/sandboxes/{sandboxId}/files)
+	WriteFile(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params WriteFileParams)
+	// What is in a directory
+	// (GET /v1/sandboxes/{sandboxId}/files/list)
+	ListDir(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params ListDirParams)
+	// What this sandbox presents to a brokered upstream
+	// (GET /v1/sandboxes/{sandboxId}/identity)
+	GetSandboxIdentity(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Replace this sandbox's labels
+	// (PUT /v1/sandboxes/{sandboxId}/labels)
+	SetSandboxLabels(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// What the machine is using
+	// (GET /v1/sandboxes/{sandboxId}/metrics)
+	GetSandboxMetrics(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// What the machine has been using
+	// (GET /v1/sandboxes/{sandboxId}/metrics/history)
+	GetSandboxMetricsHistory(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params GetSandboxMetricsHistoryParams)
+	// Freeze a running machine where it is
+	// (POST /v1/sandboxes/{sandboxId}/pause)
+	PauseSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// The handles this API holds in this sandbox
+	// (GET /v1/sandboxes/{sandboxId}/processes)
+	ListProcesses(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params ListProcessesParams)
+	// Start something that outlives this request
+	// (POST /v1/sandboxes/{sandboxId}/processes)
+	StartProcess(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Drop the handle and its buffers
+	// (DELETE /v1/sandboxes/{sandboxId}/processes/{processId})
+	ReapProcess(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID)
+	// Whether it is still running, and what it exited with
+	// (GET /v1/sandboxes/{sandboxId}/processes/{processId})
+	GetProcess(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID)
+	// Send it a signal
+	// (POST /v1/sandboxes/{sandboxId}/processes/{processId}/signal)
+	SignalProcess(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID)
+	// What it has printed to stderr, from a byte offset
+	// (GET /v1/sandboxes/{sandboxId}/processes/{processId}/stderr)
+	ReadProcessStderr(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID, params ReadProcessStderrParams)
+	// Write to it, and close its input
+	// (POST /v1/sandboxes/{sandboxId}/processes/{processId}/stdin)
+	WriteProcessStdin(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID, params WriteProcessStdinParams)
+	// What it has printed, from a byte offset
+	// (GET /v1/sandboxes/{sandboxId}/processes/{processId}/stdout)
+	ReadProcessStdout(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, processId ProcessID, params ReadProcessStdoutParams)
+	// Set a paused machine going again
+	// (POST /v1/sandboxes/{sandboxId}/resume)
+	ResumeSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Refuse commands and writes into a sandbox from now on
+	// (POST /v1/sandboxes/{sandboxId}/seal)
+	SealSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Boot a stopped sandbox again
+	// (POST /v1/sandboxes/{sandboxId}/start)
+	StartSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Shut the machine down, keep the disk and the id
+	// (POST /v1/sandboxes/{sandboxId}/stop)
+	StopSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Every process running in the machine
+	// (GET /v1/sandboxes/{sandboxId}/system/processes)
+	ListSystemProcesses(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Every TCP and UDP socket open in the machine
+	// (GET /v1/sandboxes/{sandboxId}/system/sockets)
+	ListSystemSockets(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// An interactive shell, over a WebSocket
+	// (GET /v1/sandboxes/{sandboxId}/terminal)
+	OpenTerminal(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, params OpenTerminalParams)
+	// List a sandbox's tunnels
+	// (GET /v1/sandboxes/{sandboxId}/tunnels)
+	ListTunnels(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Delete a tunnel
+	// (DELETE /v1/sandboxes/{sandboxId}/tunnels/{tunnelName})
+	DeleteTunnel(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Read one tunnel
+	// (GET /v1/sandboxes/{sandboxId}/tunnels/{tunnelName})
+	GetTunnel(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Make a tunnel, or replace the one with this name
+	// (PUT /v1/sandboxes/{sandboxId}/tunnels/{tunnelName})
+	PutTunnel(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Who reached a tunnel, and what they asked for
+	// (GET /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity)
+	GetTunnelActivity(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName, params GetTunnelActivityParams)
+	// Who a tunnel's admins let in
+	// (GET /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests)
+	ListTunnelGuests(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Take a guest back out
+	// (DELETE /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email})
+	RevokeTunnelGuest(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName, email string)
+	// Stop serving a tunnel, keeping it
+	// (POST /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause)
+	PauseTunnel(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Serve a paused tunnel again
+	// (POST /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume)
+	ResumeTunnel(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Mint a token that opens this tunnel
+	// (POST /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens)
+	CreateTunnelToken(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName)
+	// Revoke a tunnel's token
+	// (DELETE /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId})
+	RevokeTunnelToken(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, tunnelName TunnelName, tokenId TunnelTokenID, params RevokeTunnelTokenParams)
+	// Let commands and writes into a sealed sandbox
+	// (POST /v1/sandboxes/{sandboxId}/unseal)
+	UnsealSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
+	// Every tunnel on this host, and the relay that serves them
+	// (GET /v1/tunnels)
+	ListHostTunnels(w http.ResponseWriter, r *http.Request, params ListHostTunnelsParams)
+	// Every volume on this host
+	// (GET /v1/volumes)
+	ListVolumes(w http.ResponseWriter, r *http.Request)
+	// Let a volume go, and what was written on it
+	// (DELETE /v1/volumes/{volumeName})
+	DeleteVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
+	// Make a new volume that is a copy of this one
+	// (POST /v1/volumes/{volumeName}/clone)
+	CloneVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
+	// Bind a volume to a principal
+	// (PUT /v1/volumes/{volumeName}/principal)
+	MoveVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -23770,44 +20729,10 @@ func (siw *ServerInterfaceWrapper) GetConsole(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// GetConsoleNamespace operation middleware
-func (siw *ServerInterfaceWrapper) GetConsoleNamespace(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleNamespace(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetConsoleBuild operation middleware
 func (siw *ServerInterfaceWrapper) GetConsoleBuild(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "buildId" -------------
 	var buildId BuildID
@@ -23819,7 +20744,7 @@ func (siw *ServerInterfaceWrapper) GetConsoleBuild(w http.ResponseWriter, r *htt
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleBuild(w, r, namespace, buildId)
+		siw.Handler.GetConsoleBuild(w, r, buildId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23834,15 +20759,6 @@ func (siw *ServerInterfaceWrapper) GetConsoleImage(w http.ResponseWriter, r *htt
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "imageId" -------------
 	var imageId ImageID
 
@@ -23853,7 +20769,7 @@ func (siw *ServerInterfaceWrapper) GetConsoleImage(w http.ResponseWriter, r *htt
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleImage(w, r, namespace, imageId)
+		siw.Handler.GetConsoleImage(w, r, imageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23868,15 +20784,6 @@ func (siw *ServerInterfaceWrapper) GetConsoleSandbox(w http.ResponseWriter, r *h
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -23887,7 +20794,7 @@ func (siw *ServerInterfaceWrapper) GetConsoleSandbox(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleSandbox(w, r, namespace, sandboxId)
+		siw.Handler.GetConsoleSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23901,15 +20808,6 @@ func (siw *ServerInterfaceWrapper) GetConsoleSandbox(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) GetConsoleSandboxTab(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -23930,7 +20828,7 @@ func (siw *ServerInterfaceWrapper) GetConsoleSandboxTab(w http.ResponseWriter, r
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleSandboxTab(w, r, namespace, sandboxId, tab)
+		siw.Handler.GetConsoleSandboxTab(w, r, sandboxId, tab)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -23945,15 +20843,6 @@ func (siw *ServerInterfaceWrapper) GetConsoleVolume(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "volumeName" -------------
 	var volumeName VolumeName
 
@@ -23964,41 +20853,7 @@ func (siw *ServerInterfaceWrapper) GetConsoleVolume(w http.ResponseWriter, r *ht
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleVolume(w, r, namespace, volumeName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetConsoleNamespacePage operation middleware
-func (siw *ServerInterfaceWrapper) GetConsoleNamespacePage(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "page" -------------
-	var page string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "page", r.PathValue("page"), &page, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetConsoleNamespacePage(w, r, namespace, page)
+		siw.Handler.GetConsoleVolume(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24038,6 +20893,106 @@ func (siw *ServerInterfaceWrapper) Health(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Health(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBrokerActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListBrokerActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBrokerActivityParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "after", r.URL.Query(), &params.After)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sandbox" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sandbox", r.URL.Query(), &params.Sandbox)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandbox", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "broker" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "broker", r.URL.Query(), &params.Broker)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "broker", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "wait" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "wait", r.URL.Query(), &params.Wait)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBrokerActivity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrokerActivity operation middleware
+func (siw *ServerInterfaceWrapper) GetBrokerActivity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "activityId" -------------
+	var activityId BrokerActivityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "activityId", r.PathValue("activityId"), &activityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "activityId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrokerActivity(w, r, activityId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24159,6 +21114,332 @@ func (siw *ServerInterfaceWrapper) SignOut(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// ListBrokers operation middleware
+func (siw *ServerInterfaceWrapper) ListBrokers(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBrokers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBroker operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBroker(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBroker(w, r, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBroker operation middleware
+func (siw *ServerInterfaceWrapper) GetBroker(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBroker(w, r, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutBroker operation middleware
+func (siw *ServerInterfaceWrapper) PutBroker(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutBroker(w, r, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListBuilds operation middleware
+func (siw *ServerInterfaceWrapper) ListBuilds(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListBuildsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListBuilds(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateBuild operation middleware
+func (siw *ServerInterfaceWrapper) CreateBuild(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateBuild(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBuild operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBuild(w, r, buildId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBuild operation middleware
+func (siw *ServerInterfaceWrapper) GetBuild(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBuild(w, r, buildId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadBuildLog operation middleware
+func (siw *ServerInterfaceWrapper) ReadBuildLog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "buildId" -------------
+	var buildId BuildID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadBuildLogParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "follow" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "follow", r.URL.Query(), &params.Follow)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "follow", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadBuildLog(w, r, buildId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCA operation middleware
+func (siw *ServerInterfaceWrapper) GetCA(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCA(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetCosts operation middleware
 func (siw *ServerInterfaceWrapper) GetCosts(w http.ResponseWriter, r *http.Request) {
 
@@ -24183,8 +21464,46 @@ func (siw *ServerInterfaceWrapper) GetCosts(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// ------------- Optional query parameter "label" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "label", r.URL.Query(), &params.Label)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "volume" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "volume", r.URL.Query(), &params.Volume)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volume", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCosts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCounts operation middleware
+func (siw *ServerInterfaceWrapper) GetCounts(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCounts(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24256,6 +21575,137 @@ func (siw *ServerInterfaceWrapper) GetHostMetricsHistory(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHostMetricsHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListImages operation middleware
+func (siw *ServerInterfaceWrapper) ListImages(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListImagesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListImages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PullImage operation middleware
+func (siw *ServerInterfaceWrapper) PullImage(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PullImage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteImage operation middleware
+func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "imageId" -------------
+	var imageId ImageID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "imageId", r.PathValue("imageId"), &imageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "imageId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteImage(w, r, imageId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetImage operation middleware
+func (siw *ServerInterfaceWrapper) GetImage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "imageId" -------------
+	var imageId ImageID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "imageId", r.PathValue("imageId"), &imageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "imageId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetImage(w, r, imageId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24450,1193 +21900,11 @@ func (siw *ServerInterfaceWrapper) GetMyPicture(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// ListNamespaces operation middleware
-func (siw *ServerInterfaceWrapper) ListNamespaces(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListNamespacesParams
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		return
-	}
+// GetOpenapiYaml operation middleware
+func (siw *ServerInterfaceWrapper) GetOpenapiYaml(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListNamespaces(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateNamespace operation middleware
-func (siw *ServerInterfaceWrapper) CreateNamespace(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateNamespace(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteNamespace operation middleware
-func (siw *ServerInterfaceWrapper) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params DeleteNamespaceParams
-
-	// ------------- Optional query parameter "force" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "force", r.URL.Query(), &params.Force)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "force", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteNamespace(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetNamespace operation middleware
-func (siw *ServerInterfaceWrapper) GetNamespace(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetNamespace(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListBrokerActivity operation middleware
-func (siw *ServerInterfaceWrapper) ListBrokerActivity(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListBrokerActivityParams
-
-	// ------------- Optional query parameter "after" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "after", r.URL.Query(), &params.After)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "sandbox" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "sandbox", r.URL.Query(), &params.Sandbox)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandbox", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "broker" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "broker", r.URL.Query(), &params.Broker)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "broker", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "wait" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "wait", r.URL.Query(), &params.Wait)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListBrokerActivity(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetBrokerActivity operation middleware
-func (siw *ServerInterfaceWrapper) GetBrokerActivity(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "activityId" -------------
-	var activityId BrokerActivityID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "activityId", r.PathValue("activityId"), &activityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "activityId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetBrokerActivity(w, r, namespace, activityId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListBrokers operation middleware
-func (siw *ServerInterfaceWrapper) ListBrokers(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListBrokers(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteBroker operation middleware
-func (siw *ServerInterfaceWrapper) DeleteBroker(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "brokerName" -------------
-	var brokerName BrokerName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteBroker(w, r, namespace, brokerName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetBroker operation middleware
-func (siw *ServerInterfaceWrapper) GetBroker(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "brokerName" -------------
-	var brokerName BrokerName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetBroker(w, r, namespace, brokerName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutBroker operation middleware
-func (siw *ServerInterfaceWrapper) PutBroker(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "brokerName" -------------
-	var brokerName BrokerName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutBroker(w, r, namespace, brokerName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListBuilds operation middleware
-func (siw *ServerInterfaceWrapper) ListBuilds(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListBuildsParams
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListBuilds(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateBuild operation middleware
-func (siw *ServerInterfaceWrapper) CreateBuild(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateBuild(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteBuild operation middleware
-func (siw *ServerInterfaceWrapper) DeleteBuild(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "buildId" -------------
-	var buildId BuildID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteBuild(w, r, namespace, buildId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetBuild operation middleware
-func (siw *ServerInterfaceWrapper) GetBuild(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "buildId" -------------
-	var buildId BuildID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetBuild(w, r, namespace, buildId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ReadBuildLog operation middleware
-func (siw *ServerInterfaceWrapper) ReadBuildLog(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "buildId" -------------
-	var buildId BuildID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "buildId", r.PathValue("buildId"), &buildId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "buildId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ReadBuildLogParams
-
-	// ------------- Optional query parameter "from" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "follow" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "follow", r.URL.Query(), &params.Follow)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "follow", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadBuildLog(w, r, namespace, buildId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetCA operation middleware
-func (siw *ServerInterfaceWrapper) GetCA(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetCA(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetNamespaceCosts operation middleware
-func (siw *ServerInterfaceWrapper) GetNamespaceCosts(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetNamespaceCostsParams
-
-	// ------------- Optional query parameter "window" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "label" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "label", r.URL.Query(), &params.Label)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "volume" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "volume", r.URL.Query(), &params.Volume)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volume", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetNamespaceCosts(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetCounts operation middleware
-func (siw *ServerInterfaceWrapper) GetCounts(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetCounts(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListImages operation middleware
-func (siw *ServerInterfaceWrapper) ListImages(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListImagesParams
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListImages(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PullImage operation middleware
-func (siw *ServerInterfaceWrapper) PullImage(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PullImage(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteImage operation middleware
-func (siw *ServerInterfaceWrapper) DeleteImage(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "imageId" -------------
-	var imageId ImageID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "imageId", r.PathValue("imageId"), &imageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "imageId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteImage(w, r, namespace, imageId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetImage operation middleware
-func (siw *ServerInterfaceWrapper) GetImage(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "imageId" -------------
-	var imageId ImageID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "imageId", r.PathValue("imageId"), &imageId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "imageId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetImage(w, r, namespace, imageId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListNamespaceKeys operation middleware
-func (siw *ServerInterfaceWrapper) ListNamespaceKeys(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListNamespaceKeysParams
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "cursor" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "cursor", r.URL.Query(), &params.Cursor)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "owner" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "owner", r.URL.Query(), &params.Owner)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListNamespaceKeys(w, r, namespace, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateNamespaceKey operation middleware
-func (siw *ServerInterfaceWrapper) CreateNamespaceKey(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateNamespaceKey(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RevokeNamespaceKey operation middleware
-func (siw *ServerInterfaceWrapper) RevokeNamespaceKey(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "keyId" -------------
-	var keyId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "keyId", r.PathValue("keyId"), &keyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "keyId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeNamespaceKey(w, r, namespace, keyId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListNamespaceMembers operation middleware
-func (siw *ServerInterfaceWrapper) ListNamespaceMembers(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListNamespaceMembers(w, r, namespace)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteNamespaceMember operation middleware
-func (siw *ServerInterfaceWrapper) DeleteNamespaceMember(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "email" -------------
-	var email openapi_types.Email
-
-	err = runtime.BindStyledParameterWithOptions("simple", "email", r.PathValue("email"), &email, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "email", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteNamespaceMember(w, r, namespace, email)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutNamespaceMember operation middleware
-func (siw *ServerInterfaceWrapper) PutNamespaceMember(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "email" -------------
-	var email openapi_types.Email
-
-	err = runtime.BindStyledParameterWithOptions("simple", "email", r.PathValue("email"), &email, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "email", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutNamespaceMember(w, r, namespace, email)
+		siw.Handler.GetOpenapiYaml(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25649,17 +21917,6 @@ func (siw *ServerInterfaceWrapper) PutNamespaceMember(w http.ResponseWriter, r *
 // ListPrincipals operation middleware
 func (siw *ServerInterfaceWrapper) ListPrincipals(w http.ResponseWriter, r *http.Request) {
 
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
@@ -25669,7 +21926,7 @@ func (siw *ServerInterfaceWrapper) ListPrincipals(w http.ResponseWriter, r *http
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListPrincipals(w, r, namespace)
+		siw.Handler.ListPrincipals(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25684,15 +21941,6 @@ func (siw *ServerInterfaceWrapper) DeletePrincipal(w http.ResponseWriter, r *htt
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "principalId" -------------
 	var principalId PrincipalID
 
@@ -25711,7 +21959,7 @@ func (siw *ServerInterfaceWrapper) DeletePrincipal(w http.ResponseWriter, r *htt
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeletePrincipal(w, r, namespace, principalId)
+		siw.Handler.DeletePrincipal(w, r, principalId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25726,15 +21974,6 @@ func (siw *ServerInterfaceWrapper) GetPrincipal(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "principalId" -------------
 	var principalId PrincipalID
 
@@ -25753,7 +21992,7 @@ func (siw *ServerInterfaceWrapper) GetPrincipal(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPrincipal(w, r, namespace, principalId)
+		siw.Handler.GetPrincipal(w, r, principalId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25768,15 +22007,6 @@ func (siw *ServerInterfaceWrapper) PutPrincipal(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "principalId" -------------
 	var principalId PrincipalID
 
@@ -25795,7 +22025,7 @@ func (siw *ServerInterfaceWrapper) PutPrincipal(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutPrincipal(w, r, namespace, principalId)
+		siw.Handler.PutPrincipal(w, r, principalId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25809,15 +22039,6 @@ func (siw *ServerInterfaceWrapper) PutPrincipal(w http.ResponseWriter, r *http.R
 func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "principalId" -------------
 	var principalId PrincipalID
@@ -25855,40 +22076,7 @@ func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetBrokerTrusted(w, r, namespace, principalId, brokerName, path)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SetNamespaceQuota operation middleware
-func (siw *ServerInterfaceWrapper) SetNamespaceQuota(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetNamespaceQuota(w, r, namespace)
+		siw.Handler.GetBrokerTrusted(w, r, principalId, brokerName, path)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25902,15 +22090,6 @@ func (siw *ServerInterfaceWrapper) SetNamespaceQuota(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) ListSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	ctx := r.Context()
 
@@ -25964,7 +22143,7 @@ func (siw *ServerInterfaceWrapper) ListSandboxes(w http.ResponseWriter, r *http.
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSandboxes(w, r, namespace, params)
+		siw.Handler.ListSandboxes(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -25978,15 +22157,6 @@ func (siw *ServerInterfaceWrapper) ListSandboxes(w http.ResponseWriter, r *http.
 func (siw *ServerInterfaceWrapper) CreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	ctx := r.Context()
 
@@ -26025,7 +22195,7 @@ func (siw *ServerInterfaceWrapper) CreateSandbox(w http.ResponseWriter, r *http.
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateSandbox(w, r, namespace, params)
+		siw.Handler.CreateSandbox(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26039,15 +22209,6 @@ func (siw *ServerInterfaceWrapper) CreateSandbox(w http.ResponseWriter, r *http.
 func (siw *ServerInterfaceWrapper) DeleteSandbox(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26078,7 +22239,7 @@ func (siw *ServerInterfaceWrapper) DeleteSandbox(w http.ResponseWriter, r *http.
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteSandbox(w, r, namespace, sandboxId, params)
+		siw.Handler.DeleteSandbox(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26093,15 +22254,6 @@ func (siw *ServerInterfaceWrapper) GetSandbox(w http.ResponseWriter, r *http.Req
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26120,7 +22272,7 @@ func (siw *ServerInterfaceWrapper) GetSandbox(w http.ResponseWriter, r *http.Req
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandbox(w, r, namespace, sandboxId)
+		siw.Handler.GetSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26135,15 +22287,6 @@ func (siw *ServerInterfaceWrapper) ListSandboxBrokers(w http.ResponseWriter, r *
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26162,7 +22305,7 @@ func (siw *ServerInterfaceWrapper) ListSandboxBrokers(w http.ResponseWriter, r *
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSandboxBrokers(w, r, namespace, sandboxId)
+		siw.Handler.ListSandboxBrokers(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26177,15 +22320,6 @@ func (siw *ServerInterfaceWrapper) DetachSandboxBroker(w http.ResponseWriter, r 
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26213,7 +22347,7 @@ func (siw *ServerInterfaceWrapper) DetachSandboxBroker(w http.ResponseWriter, r 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DetachSandboxBroker(w, r, namespace, sandboxId, brokerName)
+		siw.Handler.DetachSandboxBroker(w, r, sandboxId, brokerName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26228,15 +22362,6 @@ func (siw *ServerInterfaceWrapper) AttachSandboxBroker(w http.ResponseWriter, r 
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26264,7 +22389,7 @@ func (siw *ServerInterfaceWrapper) AttachSandboxBroker(w http.ResponseWriter, r 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AttachSandboxBroker(w, r, namespace, sandboxId, brokerName)
+		siw.Handler.AttachSandboxBroker(w, r, sandboxId, brokerName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26278,15 +22403,6 @@ func (siw *ServerInterfaceWrapper) AttachSandboxBroker(w http.ResponseWriter, r 
 func (siw *ServerInterfaceWrapper) ServeSandboxBroker(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26326,7 +22442,7 @@ func (siw *ServerInterfaceWrapper) ServeSandboxBroker(w http.ResponseWriter, r *
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ServeSandboxBroker(w, r, namespace, sandboxId, brokerName, params)
+		siw.Handler.ServeSandboxBroker(w, r, sandboxId, brokerName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26340,15 +22456,6 @@ func (siw *ServerInterfaceWrapper) ServeSandboxBroker(w http.ResponseWriter, r *
 func (siw *ServerInterfaceWrapper) RunCommand(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26368,7 +22475,7 @@ func (siw *ServerInterfaceWrapper) RunCommand(w http.ResponseWriter, r *http.Req
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RunCommand(w, r, namespace, sandboxId)
+		siw.Handler.RunCommand(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26382,15 +22489,6 @@ func (siw *ServerInterfaceWrapper) RunCommand(w http.ResponseWriter, r *http.Req
 func (siw *ServerInterfaceWrapper) GetSandboxConsole(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26421,7 +22519,7 @@ func (siw *ServerInterfaceWrapper) GetSandboxConsole(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandboxConsole(w, r, namespace, sandboxId, params)
+		siw.Handler.GetSandboxConsole(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26436,15 +22534,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxEgress(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26463,7 +22552,7 @@ func (siw *ServerInterfaceWrapper) GetSandboxEgress(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandboxEgress(w, r, namespace, sandboxId)
+		siw.Handler.GetSandboxEgress(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26478,15 +22567,6 @@ func (siw *ServerInterfaceWrapper) SetSandboxEgress(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26505,7 +22585,7 @@ func (siw *ServerInterfaceWrapper) SetSandboxEgress(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetSandboxEgress(w, r, namespace, sandboxId)
+		siw.Handler.SetSandboxEgress(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26520,15 +22600,6 @@ func (siw *ServerInterfaceWrapper) KillConnections(w http.ResponseWriter, r *htt
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26547,7 +22618,7 @@ func (siw *ServerInterfaceWrapper) KillConnections(w http.ResponseWriter, r *htt
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.KillConnections(w, r, namespace, sandboxId)
+		siw.Handler.KillConnections(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26562,15 +22633,6 @@ func (siw *ServerInterfaceWrapper) ListEgressRules(w http.ResponseWriter, r *htt
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26589,7 +22651,7 @@ func (siw *ServerInterfaceWrapper) ListEgressRules(w http.ResponseWriter, r *htt
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListEgressRules(w, r, namespace, sandboxId)
+		siw.Handler.ListEgressRules(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26604,15 +22666,6 @@ func (siw *ServerInterfaceWrapper) DeleteEgressRule(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26640,7 +22693,7 @@ func (siw *ServerInterfaceWrapper) DeleteEgressRule(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteEgressRule(w, r, namespace, sandboxId, ruleName)
+		siw.Handler.DeleteEgressRule(w, r, sandboxId, ruleName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26655,15 +22708,6 @@ func (siw *ServerInterfaceWrapper) GetEgressRule(w http.ResponseWriter, r *http.
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26691,7 +22735,7 @@ func (siw *ServerInterfaceWrapper) GetEgressRule(w http.ResponseWriter, r *http.
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetEgressRule(w, r, namespace, sandboxId, ruleName)
+		siw.Handler.GetEgressRule(w, r, sandboxId, ruleName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26706,15 +22750,6 @@ func (siw *ServerInterfaceWrapper) PutEgressRule(w http.ResponseWriter, r *http.
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26742,7 +22777,7 @@ func (siw *ServerInterfaceWrapper) PutEgressRule(w http.ResponseWriter, r *http.
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutEgressRule(w, r, namespace, sandboxId, ruleName)
+		siw.Handler.PutEgressRule(w, r, sandboxId, ruleName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26757,15 +22792,6 @@ func (siw *ServerInterfaceWrapper) PauseEgressRule(w http.ResponseWriter, r *htt
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26793,7 +22819,7 @@ func (siw *ServerInterfaceWrapper) PauseEgressRule(w http.ResponseWriter, r *htt
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PauseEgressRule(w, r, namespace, sandboxId, ruleName)
+		siw.Handler.PauseEgressRule(w, r, sandboxId, ruleName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26808,15 +22834,6 @@ func (siw *ServerInterfaceWrapper) ResumeEgressRule(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -26844,7 +22861,7 @@ func (siw *ServerInterfaceWrapper) ResumeEgressRule(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResumeEgressRule(w, r, namespace, sandboxId, ruleName)
+		siw.Handler.ResumeEgressRule(w, r, sandboxId, ruleName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26858,15 +22875,6 @@ func (siw *ServerInterfaceWrapper) ResumeEgressRule(w http.ResponseWriter, r *ht
 func (siw *ServerInterfaceWrapper) StreamSandboxEvents(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26905,7 +22913,7 @@ func (siw *ServerInterfaceWrapper) StreamSandboxEvents(w http.ResponseWriter, r 
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StreamSandboxEvents(w, r, namespace, sandboxId, params)
+		siw.Handler.StreamSandboxEvents(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26919,15 +22927,6 @@ func (siw *ServerInterfaceWrapper) StreamSandboxEvents(w http.ResponseWriter, r 
 func (siw *ServerInterfaceWrapper) DeleteFile(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -26965,7 +22964,7 @@ func (siw *ServerInterfaceWrapper) DeleteFile(w http.ResponseWriter, r *http.Req
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteFile(w, r, namespace, sandboxId, params)
+		siw.Handler.DeleteFile(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -26979,15 +22978,6 @@ func (siw *ServerInterfaceWrapper) DeleteFile(w http.ResponseWriter, r *http.Req
 func (siw *ServerInterfaceWrapper) ReadFile(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27041,7 +23031,7 @@ func (siw *ServerInterfaceWrapper) ReadFile(w http.ResponseWriter, r *http.Reque
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadFile(w, r, namespace, sandboxId, params)
+		siw.Handler.ReadFile(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27055,15 +23045,6 @@ func (siw *ServerInterfaceWrapper) ReadFile(w http.ResponseWriter, r *http.Reque
 func (siw *ServerInterfaceWrapper) WriteFile(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27125,7 +23106,7 @@ func (siw *ServerInterfaceWrapper) WriteFile(w http.ResponseWriter, r *http.Requ
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.WriteFile(w, r, namespace, sandboxId, params)
+		siw.Handler.WriteFile(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27139,15 +23120,6 @@ func (siw *ServerInterfaceWrapper) WriteFile(w http.ResponseWriter, r *http.Requ
 func (siw *ServerInterfaceWrapper) ListDir(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27201,7 +23173,7 @@ func (siw *ServerInterfaceWrapper) ListDir(w http.ResponseWriter, r *http.Reques
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListDir(w, r, namespace, sandboxId, params)
+		siw.Handler.ListDir(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27216,15 +23188,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxIdentity(w http.ResponseWriter, r *
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27243,7 +23206,7 @@ func (siw *ServerInterfaceWrapper) GetSandboxIdentity(w http.ResponseWriter, r *
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandboxIdentity(w, r, namespace, sandboxId)
+		siw.Handler.GetSandboxIdentity(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27258,15 +23221,6 @@ func (siw *ServerInterfaceWrapper) SetSandboxLabels(w http.ResponseWriter, r *ht
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27285,7 +23239,7 @@ func (siw *ServerInterfaceWrapper) SetSandboxLabels(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetSandboxLabels(w, r, namespace, sandboxId)
+		siw.Handler.SetSandboxLabels(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27300,15 +23254,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxMetrics(w http.ResponseWriter, r *h
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27327,7 +23272,7 @@ func (siw *ServerInterfaceWrapper) GetSandboxMetrics(w http.ResponseWriter, r *h
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandboxMetrics(w, r, namespace, sandboxId)
+		siw.Handler.GetSandboxMetrics(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27341,15 +23286,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxMetrics(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) GetSandboxMetricsHistory(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27380,7 +23316,7 @@ func (siw *ServerInterfaceWrapper) GetSandboxMetricsHistory(w http.ResponseWrite
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSandboxMetricsHistory(w, r, namespace, sandboxId, params)
+		siw.Handler.GetSandboxMetricsHistory(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27394,15 +23330,6 @@ func (siw *ServerInterfaceWrapper) GetSandboxMetricsHistory(w http.ResponseWrite
 func (siw *ServerInterfaceWrapper) PauseSandbox(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27422,7 +23349,7 @@ func (siw *ServerInterfaceWrapper) PauseSandbox(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PauseSandbox(w, r, namespace, sandboxId)
+		siw.Handler.PauseSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27436,15 +23363,6 @@ func (siw *ServerInterfaceWrapper) PauseSandbox(w http.ResponseWriter, r *http.R
 func (siw *ServerInterfaceWrapper) ListProcesses(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27483,7 +23401,7 @@ func (siw *ServerInterfaceWrapper) ListProcesses(w http.ResponseWriter, r *http.
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListProcesses(w, r, namespace, sandboxId, params)
+		siw.Handler.ListProcesses(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27498,15 +23416,6 @@ func (siw *ServerInterfaceWrapper) StartProcess(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27525,7 +23434,7 @@ func (siw *ServerInterfaceWrapper) StartProcess(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StartProcess(w, r, namespace, sandboxId)
+		siw.Handler.StartProcess(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27540,15 +23449,6 @@ func (siw *ServerInterfaceWrapper) ReapProcess(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27576,7 +23476,7 @@ func (siw *ServerInterfaceWrapper) ReapProcess(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReapProcess(w, r, namespace, sandboxId, processId)
+		siw.Handler.ReapProcess(w, r, sandboxId, processId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27591,15 +23491,6 @@ func (siw *ServerInterfaceWrapper) GetProcess(w http.ResponseWriter, r *http.Req
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27627,7 +23518,7 @@ func (siw *ServerInterfaceWrapper) GetProcess(w http.ResponseWriter, r *http.Req
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetProcess(w, r, namespace, sandboxId, processId)
+		siw.Handler.GetProcess(w, r, sandboxId, processId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27642,15 +23533,6 @@ func (siw *ServerInterfaceWrapper) SignalProcess(w http.ResponseWriter, r *http.
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27678,7 +23560,7 @@ func (siw *ServerInterfaceWrapper) SignalProcess(w http.ResponseWriter, r *http.
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SignalProcess(w, r, namespace, sandboxId, processId)
+		siw.Handler.SignalProcess(w, r, sandboxId, processId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27692,15 +23574,6 @@ func (siw *ServerInterfaceWrapper) SignalProcess(w http.ResponseWriter, r *http.
 func (siw *ServerInterfaceWrapper) ReadProcessStderr(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27748,7 +23621,7 @@ func (siw *ServerInterfaceWrapper) ReadProcessStderr(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadProcessStderr(w, r, namespace, sandboxId, processId, params)
+		siw.Handler.ReadProcessStderr(w, r, sandboxId, processId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27762,15 +23635,6 @@ func (siw *ServerInterfaceWrapper) ReadProcessStderr(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) WriteProcessStdin(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27810,7 +23674,7 @@ func (siw *ServerInterfaceWrapper) WriteProcessStdin(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.WriteProcessStdin(w, r, namespace, sandboxId, processId, params)
+		siw.Handler.WriteProcessStdin(w, r, sandboxId, processId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27824,15 +23688,6 @@ func (siw *ServerInterfaceWrapper) WriteProcessStdin(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) ReadProcessStdout(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -27880,7 +23735,7 @@ func (siw *ServerInterfaceWrapper) ReadProcessStdout(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReadProcessStdout(w, r, namespace, sandboxId, processId, params)
+		siw.Handler.ReadProcessStdout(w, r, sandboxId, processId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27895,15 +23750,6 @@ func (siw *ServerInterfaceWrapper) ResumeSandbox(w http.ResponseWriter, r *http.
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27922,7 +23768,7 @@ func (siw *ServerInterfaceWrapper) ResumeSandbox(w http.ResponseWriter, r *http.
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResumeSandbox(w, r, namespace, sandboxId)
+		siw.Handler.ResumeSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27937,15 +23783,6 @@ func (siw *ServerInterfaceWrapper) SealSandbox(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -27964,7 +23801,7 @@ func (siw *ServerInterfaceWrapper) SealSandbox(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SealSandbox(w, r, namespace, sandboxId)
+		siw.Handler.SealSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27979,15 +23816,6 @@ func (siw *ServerInterfaceWrapper) StartSandbox(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28006,7 +23834,7 @@ func (siw *ServerInterfaceWrapper) StartSandbox(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StartSandbox(w, r, namespace, sandboxId)
+		siw.Handler.StartSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28021,15 +23849,6 @@ func (siw *ServerInterfaceWrapper) StopSandbox(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28048,7 +23867,7 @@ func (siw *ServerInterfaceWrapper) StopSandbox(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.StopSandbox(w, r, namespace, sandboxId)
+		siw.Handler.StopSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28063,15 +23882,6 @@ func (siw *ServerInterfaceWrapper) ListSystemProcesses(w http.ResponseWriter, r 
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28090,7 +23900,7 @@ func (siw *ServerInterfaceWrapper) ListSystemProcesses(w http.ResponseWriter, r 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSystemProcesses(w, r, namespace, sandboxId)
+		siw.Handler.ListSystemProcesses(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28105,15 +23915,6 @@ func (siw *ServerInterfaceWrapper) ListSystemSockets(w http.ResponseWriter, r *h
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28132,7 +23933,7 @@ func (siw *ServerInterfaceWrapper) ListSystemSockets(w http.ResponseWriter, r *h
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListSystemSockets(w, r, namespace, sandboxId)
+		siw.Handler.ListSystemSockets(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28146,15 +23947,6 @@ func (siw *ServerInterfaceWrapper) ListSystemSockets(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) OpenTerminal(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28209,7 +24001,7 @@ func (siw *ServerInterfaceWrapper) OpenTerminal(w http.ResponseWriter, r *http.R
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.OpenTerminal(w, r, namespace, sandboxId, params)
+		siw.Handler.OpenTerminal(w, r, sandboxId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28224,15 +24016,6 @@ func (siw *ServerInterfaceWrapper) ListTunnels(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28251,7 +24034,7 @@ func (siw *ServerInterfaceWrapper) ListTunnels(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListTunnels(w, r, namespace, sandboxId)
+		siw.Handler.ListTunnels(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28266,15 +24049,6 @@ func (siw *ServerInterfaceWrapper) DeleteTunnel(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28302,7 +24076,7 @@ func (siw *ServerInterfaceWrapper) DeleteTunnel(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteTunnel(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.DeleteTunnel(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28317,15 +24091,6 @@ func (siw *ServerInterfaceWrapper) GetTunnel(w http.ResponseWriter, r *http.Requ
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28353,7 +24118,7 @@ func (siw *ServerInterfaceWrapper) GetTunnel(w http.ResponseWriter, r *http.Requ
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetTunnel(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.GetTunnel(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28368,15 +24133,6 @@ func (siw *ServerInterfaceWrapper) PutTunnel(w http.ResponseWriter, r *http.Requ
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28404,7 +24160,7 @@ func (siw *ServerInterfaceWrapper) PutTunnel(w http.ResponseWriter, r *http.Requ
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutTunnel(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.PutTunnel(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28418,15 +24174,6 @@ func (siw *ServerInterfaceWrapper) PutTunnel(w http.ResponseWriter, r *http.Requ
 func (siw *ServerInterfaceWrapper) GetTunnelActivity(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28474,7 +24221,7 @@ func (siw *ServerInterfaceWrapper) GetTunnelActivity(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetTunnelActivity(w, r, namespace, sandboxId, tunnelName, params)
+		siw.Handler.GetTunnelActivity(w, r, sandboxId, tunnelName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28488,15 +24235,6 @@ func (siw *ServerInterfaceWrapper) GetTunnelActivity(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) ListTunnelGuests(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28525,7 +24263,7 @@ func (siw *ServerInterfaceWrapper) ListTunnelGuests(w http.ResponseWriter, r *ht
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListTunnelGuests(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.ListTunnelGuests(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28539,15 +24277,6 @@ func (siw *ServerInterfaceWrapper) ListTunnelGuests(w http.ResponseWriter, r *ht
 func (siw *ServerInterfaceWrapper) RevokeTunnelGuest(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28585,7 +24314,7 @@ func (siw *ServerInterfaceWrapper) RevokeTunnelGuest(w http.ResponseWriter, r *h
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeTunnelGuest(w, r, namespace, sandboxId, tunnelName, email)
+		siw.Handler.RevokeTunnelGuest(w, r, sandboxId, tunnelName, email)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28600,15 +24329,6 @@ func (siw *ServerInterfaceWrapper) PauseTunnel(w http.ResponseWriter, r *http.Re
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28636,7 +24356,7 @@ func (siw *ServerInterfaceWrapper) PauseTunnel(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PauseTunnel(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.PauseTunnel(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28651,15 +24371,6 @@ func (siw *ServerInterfaceWrapper) ResumeTunnel(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28687,7 +24398,7 @@ func (siw *ServerInterfaceWrapper) ResumeTunnel(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ResumeTunnel(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.ResumeTunnel(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28702,15 +24413,6 @@ func (siw *ServerInterfaceWrapper) CreateTunnelToken(w http.ResponseWriter, r *h
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
 
@@ -28738,7 +24440,7 @@ func (siw *ServerInterfaceWrapper) CreateTunnelToken(w http.ResponseWriter, r *h
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateTunnelToken(w, r, namespace, sandboxId, tunnelName)
+		siw.Handler.CreateTunnelToken(w, r, sandboxId, tunnelName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28752,15 +24454,6 @@ func (siw *ServerInterfaceWrapper) CreateTunnelToken(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) RevokeTunnelToken(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28809,7 +24502,7 @@ func (siw *ServerInterfaceWrapper) RevokeTunnelToken(w http.ResponseWriter, r *h
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RevokeTunnelToken(w, r, namespace, sandboxId, tunnelName, tokenId, params)
+		siw.Handler.RevokeTunnelToken(w, r, sandboxId, tunnelName, tokenId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28823,15 +24516,6 @@ func (siw *ServerInterfaceWrapper) RevokeTunnelToken(w http.ResponseWriter, r *h
 func (siw *ServerInterfaceWrapper) UnsealSandbox(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	// ------------- Path parameter "sandboxId" -------------
 	var sandboxId SandboxID
@@ -28851,7 +24535,7 @@ func (siw *ServerInterfaceWrapper) UnsealSandbox(w http.ResponseWriter, r *http.
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UnsealSandbox(w, r, namespace, sandboxId)
+		siw.Handler.UnsealSandbox(w, r, sandboxId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28865,15 +24549,6 @@ func (siw *ServerInterfaceWrapper) UnsealSandbox(w http.ResponseWriter, r *http.
 func (siw *ServerInterfaceWrapper) ListHostTunnels(w http.ResponseWriter, r *http.Request) {
 
 	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
 
 	ctx := r.Context()
 
@@ -28903,7 +24578,7 @@ func (siw *ServerInterfaceWrapper) ListHostTunnels(w http.ResponseWriter, r *htt
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListHostTunnels(w, r, namespace, params)
+		siw.Handler.ListHostTunnels(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28916,17 +24591,6 @@ func (siw *ServerInterfaceWrapper) ListHostTunnels(w http.ResponseWriter, r *htt
 // ListVolumes operation middleware
 func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Request) {
 
-	var err error
-
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
@@ -28936,7 +24600,7 @@ func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Re
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListVolumes(w, r, namespace)
+		siw.Handler.ListVolumes(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28951,14 +24615,38 @@ func (siw *ServerInterfaceWrapper) DeleteVolume(w http.ResponseWriter, r *http.R
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
+	// ------------- Path parameter "volumeName" -------------
+	var volumeName VolumeName
 
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeName", r.PathValue("volumeName"), &volumeName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeName", Err: err})
 		return
 	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteVolume(w, r, volumeName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CloneVolume operation middleware
+func (siw *ServerInterfaceWrapper) CloneVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
 
 	// ------------- Path parameter "volumeName" -------------
 	var volumeName VolumeName
@@ -28978,7 +24666,7 @@ func (siw *ServerInterfaceWrapper) DeleteVolume(w http.ResponseWriter, r *http.R
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteVolume(w, r, namespace, volumeName)
+		siw.Handler.CloneVolume(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28993,15 +24681,6 @@ func (siw *ServerInterfaceWrapper) MoveVolume(w http.ResponseWriter, r *http.Req
 
 	var err error
 
-	// ------------- Path parameter "namespace" -------------
-	var namespace NamespaceInPath
-
-	err = runtime.BindStyledParameterWithOptions("simple", "namespace", r.PathValue("namespace"), &namespace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "namespace", Err: err})
-		return
-	}
-
 	// ------------- Path parameter "volumeName" -------------
 	var volumeName VolumeName
 
@@ -29020,21 +24699,7 @@ func (siw *ServerInterfaceWrapper) MoveVolume(w http.ResponseWriter, r *http.Req
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MoveVolume(w, r, namespace, volumeName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetOpenapiYaml operation middleware
-func (siw *ServerInterfaceWrapper) GetOpenapiYaml(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetOpenapiYaml(w, r)
+		siw.Handler.MoveVolume(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -29166,125 +24831,112 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc("GET "+options.BaseURL+"/", wrapper.GetRoot)
 	m.HandleFunc("GET "+options.BaseURL+"/console", wrapper.GetConsole)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}", wrapper.GetConsoleNamespace)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/builds/{buildId}", wrapper.GetConsoleBuild)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/images/{imageId}", wrapper.GetConsoleImage)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.GetConsoleSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/sandboxes/{sandboxId}/{tab}", wrapper.GetConsoleSandboxTab)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/volumes/{volumeName}", wrapper.GetConsoleVolume)
-	m.HandleFunc("GET "+options.BaseURL+"/console/namespaces/{namespace}/{page}", wrapper.GetConsoleNamespacePage)
+	m.HandleFunc("GET "+options.BaseURL+"/console/builds/{buildId}", wrapper.GetConsoleBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/console/images/{imageId}", wrapper.GetConsoleImage)
+	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}", wrapper.GetConsoleSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/console/sandboxes/{sandboxId}/{tab}", wrapper.GetConsoleSandboxTab)
+	m.HandleFunc("GET "+options.BaseURL+"/console/volumes/{volumeName}", wrapper.GetConsoleVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/console/{page}", wrapper.GetConsolePage)
 	m.HandleFunc("GET "+options.BaseURL+"/healthz", wrapper.Health)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/activity", wrapper.ListBrokerActivity)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/activity/{activityId}", wrapper.GetBrokerActivity)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth", wrapper.GetAuth)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google", wrapper.BeginGoogleSignIn)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google/callback", wrapper.CompleteGoogleSignIn)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/password", wrapper.SignInWithPassword)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/auth/signout", wrapper.SignOut)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/brokers", wrapper.ListBrokers)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.DeleteBroker)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.GetBroker)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/brokers/{brokerName}", wrapper.PutBroker)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds", wrapper.ListBuilds)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/builds", wrapper.CreateBuild)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/builds/{buildId}", wrapper.DeleteBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}", wrapper.GetBuild)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}/log", wrapper.ReadBuildLog)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/ca", wrapper.GetCA)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/costs", wrapper.GetCosts)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/counts", wrapper.GetCounts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/docs", wrapper.GetDocs)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/commitments", wrapper.GetHostCommitments)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/metrics/history", wrapper.GetHostMetricsHistory)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/images", wrapper.ListImages)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/images", wrapper.PullImage)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/images/{imageId}", wrapper.DeleteImage)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/images/{imageId}", wrapper.GetImage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/info", wrapper.GetInfo)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/keys", wrapper.ListKeys)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/keys", wrapper.CreateKey)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/keys/{keyId}", wrapper.RevokeKey)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/me", wrapper.GetMe)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/me/picture", wrapper.GetMyPicture)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces", wrapper.ListNamespaces)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces", wrapper.CreateNamespace)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}", wrapper.DeleteNamespace)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}", wrapper.GetNamespace)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/activity", wrapper.ListBrokerActivity)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/activity/{activityId}", wrapper.GetBrokerActivity)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/brokers", wrapper.ListBrokers)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/brokers/{brokerName}", wrapper.DeleteBroker)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/brokers/{brokerName}", wrapper.GetBroker)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/brokers/{brokerName}", wrapper.PutBroker)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/builds", wrapper.ListBuilds)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/builds", wrapper.CreateBuild)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/builds/{buildId}", wrapper.DeleteBuild)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/builds/{buildId}", wrapper.GetBuild)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/builds/{buildId}/log", wrapper.ReadBuildLog)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/ca", wrapper.GetCA)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/costs", wrapper.GetNamespaceCosts)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/counts", wrapper.GetCounts)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/images", wrapper.ListImages)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/images", wrapper.PullImage)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/images/{imageId}", wrapper.DeleteImage)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/images/{imageId}", wrapper.GetImage)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/keys", wrapper.ListNamespaceKeys)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/keys", wrapper.CreateNamespaceKey)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/keys/{keyId}", wrapper.RevokeNamespaceKey)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/members", wrapper.ListNamespaceMembers)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.DeleteNamespaceMember)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/members/{email}", wrapper.PutNamespaceMember)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals", wrapper.ListPrincipals)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.DeletePrincipal)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.GetPrincipal)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}", wrapper.PutPrincipal)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/quota", wrapper.SetNamespaceQuota)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.ListSandboxes)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes", wrapper.CreateSandbox)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.DeleteSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}", wrapper.GetSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers", wrapper.ListSandboxBrokers)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.DetachSandboxBroker)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.AttachSandboxBroker)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}/serve", wrapper.ServeSandboxBroker)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/commands", wrapper.RunCommand)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/console", wrapper.GetSandboxConsole)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress", wrapper.GetSandboxEgress)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress", wrapper.SetSandboxEgress)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/connections/kill", wrapper.KillConnections)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules", wrapper.ListEgressRules)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.DeleteEgressRule)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.GetEgressRule)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.PutEgressRule)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause", wrapper.PauseEgressRule)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume", wrapper.ResumeEgressRule)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/events", wrapper.StreamSandboxEvents)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/files", wrapper.DeleteFile)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/files", wrapper.ReadFile)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/files", wrapper.WriteFile)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/files/list", wrapper.ListDir)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/identity", wrapper.GetSandboxIdentity)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/labels", wrapper.SetSandboxLabels)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics", wrapper.GetSandboxMetrics)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics/history", wrapper.GetSandboxMetricsHistory)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/pause", wrapper.PauseSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes", wrapper.ListProcesses)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes", wrapper.StartProcess)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}", wrapper.ReapProcess)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}", wrapper.GetProcess)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/signal", wrapper.SignalProcess)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stderr", wrapper.ReadProcessStderr)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdin", wrapper.WriteProcessStdin)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdout", wrapper.ReadProcessStdout)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/resume", wrapper.ResumeSandbox)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/seal", wrapper.SealSandbox)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/start", wrapper.StartSandbox)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/stop", wrapper.StopSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/processes", wrapper.ListSystemProcesses)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/sockets", wrapper.ListSystemSockets)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/terminal", wrapper.OpenTerminal)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels", wrapper.ListTunnels)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.DeleteTunnel)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.GetTunnel)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.PutTunnel)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity", wrapper.GetTunnelActivity)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests", wrapper.ListTunnelGuests)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email}", wrapper.RevokeTunnelGuest)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause", wrapper.PauseTunnel)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume", wrapper.ResumeTunnel)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens", wrapper.CreateTunnelToken)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}", wrapper.RevokeTunnelToken)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces/{namespace}/sandboxes/{sandboxId}/unseal", wrapper.UnsealSandbox)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/tunnels", wrapper.ListHostTunnels)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{namespace}/volumes", wrapper.ListVolumes)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{namespace}/volumes/{volumeName}", wrapper.DeleteVolume)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/namespaces/{namespace}/volumes/{volumeName}/principal", wrapper.MoveVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/openapi.yaml", wrapper.GetOpenapiYaml)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/principals", wrapper.ListPrincipals)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/principals/{principalId}", wrapper.DeletePrincipal)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/principals/{principalId}", wrapper.GetPrincipal)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/principals/{principalId}", wrapper.PutPrincipal)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes", wrapper.ListSandboxes)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes", wrapper.CreateSandbox)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}", wrapper.DeleteSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}", wrapper.GetSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers", wrapper.ListSandboxBrokers)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.DetachSandboxBroker)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.AttachSandboxBroker)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve", wrapper.ServeSandboxBroker)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/commands", wrapper.RunCommand)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/console", wrapper.GetSandboxConsole)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress", wrapper.GetSandboxEgress)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress", wrapper.SetSandboxEgress)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/connections/kill", wrapper.KillConnections)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules", wrapper.ListEgressRules)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.DeleteEgressRule)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.GetEgressRule)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules/{ruleName}", wrapper.PutEgressRule)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause", wrapper.PauseEgressRule)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume", wrapper.ResumeEgressRule)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/events", wrapper.StreamSandboxEvents)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/files", wrapper.DeleteFile)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/files", wrapper.ReadFile)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/files", wrapper.WriteFile)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/files/list", wrapper.ListDir)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/identity", wrapper.GetSandboxIdentity)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/labels", wrapper.SetSandboxLabels)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/metrics", wrapper.GetSandboxMetrics)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/metrics/history", wrapper.GetSandboxMetricsHistory)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/pause", wrapper.PauseSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes", wrapper.ListProcesses)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes", wrapper.StartProcess)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}", wrapper.ReapProcess)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}", wrapper.GetProcess)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}/signal", wrapper.SignalProcess)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}/stderr", wrapper.ReadProcessStderr)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}/stdin", wrapper.WriteProcessStdin)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/processes/{processId}/stdout", wrapper.ReadProcessStdout)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/resume", wrapper.ResumeSandbox)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/seal", wrapper.SealSandbox)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/start", wrapper.StartSandbox)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/stop", wrapper.StopSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/system/processes", wrapper.ListSystemProcesses)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/system/sockets", wrapper.ListSystemSockets)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/terminal", wrapper.OpenTerminal)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels", wrapper.ListTunnels)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.DeleteTunnel)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.GetTunnel)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}", wrapper.PutTunnel)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity", wrapper.GetTunnelActivity)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests", wrapper.ListTunnelGuests)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email}", wrapper.RevokeTunnelGuest)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause", wrapper.PauseTunnel)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume", wrapper.ResumeTunnel)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens", wrapper.CreateTunnelToken)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}", wrapper.RevokeTunnelToken)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/unseal", wrapper.UnsealSandbox)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/tunnels", wrapper.ListHostTunnels)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/volumes", wrapper.ListVolumes)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/volumes/{volumeName}", wrapper.DeleteVolume)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/volumes/{volumeName}/clone", wrapper.CloneVolume)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/volumes/{volumeName}/principal", wrapper.MoveVolume)
 
 	return m
 }

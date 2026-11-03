@@ -42,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var o options
 	flags := flag.NewFlagSet("egress", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the daemon")
+	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the server")
 	flags.StringVar(&o.key, "key", os.Getenv("RUNYARD_SANDBOXES_KEY"), "an API key with network.write. Mint one with: runyard-sandboxes keys mint")
 	flags.StringVar(&o.image, "image", "curlimages/curl:8.11.1", "an OCI image with curl and a shell in it")
 	if err := flags.Parse(args); err != nil {
@@ -82,7 +82,7 @@ func egress(ctx context.Context, o options, stdout io.Writer) (err error) {
 		return fmt.Errorf("asking the host what it is: %w", err)
 	}
 	if info.Network != nil && !info.Network.Enabled {
-		return errors.New("this host gives sandboxes no network: its daemon was started with -network=false")
+		return errors.New("this host gives sandboxes no network: its server was started with -network=false")
 	}
 
 	// No entrypoint: the image's is curl itself, which would run once and

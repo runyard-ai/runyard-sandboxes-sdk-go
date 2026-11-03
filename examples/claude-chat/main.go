@@ -71,7 +71,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var o options
 	flags := flag.NewFlagSet("claude-chat", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the daemon")
+	flags.StringVar(&o.addr, "addr", "http://127.0.0.1:8099", "the server")
 	flags.StringVar(&o.key, "key", os.Getenv("RUNYARD_SANDBOXES_KEY"), "an API key with sandboxes.read, sandboxes.write and exec")
 	flags.StringVar(&o.image, "image", "localhost:5001/runyard/claude-sandbox:latest", "the image with the Claude CLI in it (examples/claude/image)")
 	flags.StringVar(&o.volume, "volume", "", "the conversation's volume, to pick one up again; a new one when empty")
@@ -107,10 +107,10 @@ func chat(ctx context.Context, o options, input io.Reader, stdout, stderr io.Wri
 	}
 	declared, err := client.Brokers(ctx)
 	if err != nil {
-		return fmt.Errorf("asking which brokers the namespace declares: %w", err)
+		return fmt.Errorf("asking which brokers the server declares: %w", err)
 	}
 	if !declares(declared, broker) {
-		return fmt.Errorf("%s declares no shared broker %q in this namespace; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
+		return fmt.Errorf("%s declares no shared broker %q; start the Claude broker and declare it (examples/claude/README.md)", info.Id, broker)
 	}
 
 	if o.volume == "" {

@@ -10,7 +10,7 @@ openapi: 3.0.3
 
 info:
   title: runyard-sandboxes
-  version: 2.0.0
+  version: 3.0.0
   description: |
     **One API in front of a pool of microVMs: it makes them from OCI images,
     runs things inside them, moves bytes in and out, and drops them.**
@@ -21,18 +21,16 @@ info:
     is a machine with a disk, an interface and a policy, and every question this
     API answers is a question about a machine.
 
-    ### Namespaces (version 2)
+    ### One server is one tenant (version 3)
 
-    Everything a caller manages — sandboxes and what is under them, volumes,
-    images, builds, shared brokers, the CA that identifies its sandboxes,
-    tunnels and their counts — is in a **namespace**, at
-    `/v1/namespaces/{namespace}/…`, and a key bound to one reaches nothing
-    outside it. A control plane starts with none: see Namespaces. The paths
-    of version 1 (`/v1/sandboxes`, `/v1/volumes`, `/v1/images`,
-    `/v1/brokers`, `/v1/ca`, …) are gone, with no
-    alias: each answers `404`, and its message names where it moved. A
-    client holding a key bound to a namespace learns which from
-    `GET /v1/me`, once.
+    A server holds one tenant's sandboxes, and nothing on it is partitioned
+    further: its sandboxes, volumes, images, builds, shared brokers, the CA
+    that identifies its sandboxes and its tunnels are at `/v1/…`, and every
+    key it accepts reaches all of them, as its scopes and its reach say. Two
+    tenants are two servers, each held to its share of the host by the
+    cgroups its machines run in, so neither can take from the other what a
+    partition inside one server could only count. The paths of version 2,
+    under `/v1/namespaces/{namespace}/…`, are gone, with no alias.
 
     ### Why this is a separate service
 
@@ -50,7 +48,7 @@ info:
     below.
 
     What runyard then does is build its own image — Claude and pi inside, a
-    `Dockerfile`, a `docker push` — and `POST /v1/namespaces/{namespace}/sandboxes` with that
+    `Dockerfile`, a `docker push` — and `POST /v1/sandboxes` with that
     reference. Everything runyard-specific becomes a layer in an image instead
     of a field in an API, which is the whole point.
 
@@ -62,7 +60,7 @@ info:
     A registry is spoken to over HTTPS, with one exception that is Docker's
     own: one on this host's loopback (`localhost:5000/…`, `127.0.0.1:5000/…`)
     that answers in plain HTTP is spoken to in plain HTTP. That is how an image
-    built on the host reaches its daemon — `docker run registry:2` and a
+    built on the host reaches its server — `docker run registry:2` and a
     `docker push` — and nothing between the two crosses a network.
 
     This is a deliberate inversion of runyard's server contract, which refuses
@@ -75,7 +73,7 @@ info:
 
     **A VM boots a filesystem, not a container.** An image's layers are
     flattened into an ext4 rootfs once, cached by manifest digest — see `POST
-    /v1/namespaces/{namespace}/images` — and every sandbox from that image boots the same one,
+    /v1/images` — and every sandbox from that image boots the same one,
     attached read-only. What a sandbox writes goes to a disk of its own, which
     starts empty and is laid over the image inside the guest, the way a
     container's writable layer is. So a sandbox costs what it writes rather than
@@ -87,7 +85,7 @@ info:
     `spec.disk.volume`, or given a random name when the spec names none, it is
     made empty the first time, and attached as it was left to each sandbox
     that names it after — one at a time, and only over the image it was first
-    laid over. See `GET /v1/namespaces/{namespace}/volumes`. That is how a workload that runs in
+    laid over. See `GET /v1/volumes`. That is how a workload that runs in
     short turns keeps its files between them without keeping a machine: each
     turn is a new sandbox, and nothing is copied to give it the last one's
     disk.
@@ -96,13 +94,13 @@ info:
     that answers the exec and file routes is injected at rootfs-build time and
     is the guest's init; the image's own `ENTRYPOINT`/`CMD` is started by it as
     an ordinary supervised process, visible at `GET
-    /v1/namespaces/{namespace}/sandboxes/{id}/processes` under the name `entrypoint`. An unmodified
+    /v1/sandboxes/{id}/processes` under the name `entrypoint`. An unmodified
     `node:22`, `postgres:17` or `ubuntu:24.04` boots and works. Nothing has to
     be based on ours, and there is no unit to add.
 
     **There is no build plane here and there will not be one.** Building an
     image is `docker build` and `docker push`, on a machine with a Docker daemon
-    and a build cache, in a CI job that already exists. A `POST /v1/namespaces/{namespace}/builds` on
+    and a build cache, in a CI job that already exists. A `POST /v1/builds` on
     the host that runs untrusted microVMs would put a compiler, a registry
     credential and an arbitrary `Dockerfile` on exactly the machine this project
     is about keeping small.
@@ -121,27 +119,27 @@ info:
     table, or can take that table away, and no sandbox's table is judged
     against another's. The namespace is pinned on the host
     (`/run/netns/runyard-<instance>-<id>`) rather than held by a process, so a
-    restart or an upgrade of this daemon leaves every rule where it was.
+    restart or an upgrade of this server leaves every rule where it was.
 
     **Leaving the host still crosses the host.** A packet a sandbox is allowed
     to send to the internet goes out of its namespace over a veth and is
     forwarded by the host's own stack, and there a `drop` in any table is
     final. Docker sets the host's `FORWARD` policy to `drop`, so on a host that
-    runs Docker this daemon adds two rules to Docker's `DOCKER-USER` chain —
+    runs Docker this server adds two rules to Docker's `DOCKER-USER` chain —
     what the sandboxes' veths send, and the answers to it — and states them
     again every time it starts. Those, and one table of its own on the host —
     the NAT out, and a refusal of anything a sandbox addresses to the host or
-    to another sandbox — are the only rules this daemon writes outside a
+    to another sandbox — are the only rules this server writes outside a
     sandbox's namespace. The namespace refuses the host's addresses itself as
     well, and is told them again whenever they change, so a flushed host
     table takes away a sandbox's way out and nothing it is refused.
 
-    **Several daemons share a host by name.** Each is an instance
+    **Several servers share a host by name.** Each is an instance
     (`instance` on `GET /v1/host`), and everything it makes on the host
     outside a sandbox's namespace is named by it: its table, its sandboxes'
     namespaces and their links, its rules in `DOCKER-USER`. Stating its own
-    touches no other instance's. A daemon will not start as an instance
-    another daemon is running as, on a state directory another is using or
+    touches no other instance's. A server will not start as an instance
+    another server is running as, on a state directory another is using or
     that belongs to another instance, or on a subnet that overlaps one
     another instance's sandboxes are on.
 
@@ -171,16 +169,16 @@ info:
     and `egress: {}` and `egress: {rules: [{name: github, domains: [github.com]}]}`
     differ by the contents of a list.
 
-    `GET /v1/namespaces/{namespace}/sandboxes/{id}/egress` reports the live policy **and the last
+    `GET /v1/sandboxes/{id}/egress` reports the live policy **and the last
     refusals**, because a deny-by-default network whose refusals are invisible
     is a network people disable. Its rules are named, and each is added,
     replaced, paused, resumed and removed on its own at
     `.../egress/rules/{ruleName}` on a running machine — or all at once with
     `PUT .../egress`.
 
-    ### Naming: this daemon names what it creates, and the caller labels it
+    ### Naming: this server names what it creates, and the caller labels it
 
-    **A sandbox's id is a UUID this daemon mints, and no two sandboxes ever have
+    **A sandbox's id is a UUID this server mints, and no two sandboxes ever have
     the same one** — not two on one host at once, and not a sandbox and the one
     created after it was dropped. The id is what the machine's identity is made
     of: it is the `uri` an upstream sees on a brokered call, and an upstream
@@ -192,13 +190,13 @@ info:
     in place of the id and `?label=name=…` finds. It is not unique and nothing
     here interprets it.
 
-    `POST /v1/namespaces/{namespace}/sandboxes` therefore — and a lost response must still not create
+    `POST /v1/sandboxes` therefore — and a lost response must still not create
     a second machine, because a caller whose connection dropped has started a VM
     it cannot name, cannot stop and cannot find, and its retry makes another. So
     the create carries an **`Idempotency-Key`** the caller chose: a repeat with
     the same key returns the machine the first one made.
 
-    Images are the other case: `POST /v1/namespaces/{namespace}/images` with a reference, because an
+    Images are the other case: `POST /v1/images` with a reference, because an
     image is content-addressed. The id is derived from the
     manifest digest, so the same reference posted twice is the same image by
     construction and there is no id for a caller to invent.
@@ -214,27 +212,27 @@ info:
     `unreachable` and `failed` are separate because retrying fixes one and never
     fixes the other, and "reconnecting…" forever is worse than a reason.
 
-    ### The daemon restarting is not the sandbox stopping
+    ### The server restarting is not the sandbox stopping
 
-    Every sandbox is written down on the host, and outlives the daemon that
-    made it — whether that daemon was upgraded, told to stop, or killed. The
+    Every sandbox is written down on the host, and outlives the server that
+    made it — whether that server was upgraded, told to stop, or killed. The
     next one answers for the same ids, specs, labels, brokers on the same ports,
     idempotency keys and event history, with sequence numbers that carry on, so
     a cursor held across the restart still reads on from where it was.
 
-    A machine that was running and still is — its daemon was restarted for an
+    A machine that was running and still is — its server was restarted for an
     upgrade, or killed — is taken back as it is: `ready`, with every process in
     it still running and every process cursor still good. Only the host's side
     was away: a broker connection open across the restart is cut, and a new one
     works. A machine that is not there any more — the host rebooted, or its
-    daemon was told to take its machines down — comes back `creating` and boots
+    server was told to take its machines down — comes back `creating` and boots
     again on its own disk, from the image digest it was first made from.
     What was `stopped` stays stopped, what `failed` keeps its reason, and a
     `DELETE` that did not finish is listed `gone` until it is sent again.
 
     ### Streams
 
-    `GET /v1/namespaces/{namespace}/sandboxes/{id}/events` is a chunked `application/x-ndjson` body:
+    `GET /v1/sandboxes/{id}/events` is a chunked `application/x-ndjson` body:
     one envelope per line, in sequence order, `?from=` naming the last sequence
     the caller committed. Process output is the same shape. Not a WebSocket:
     this is bytes in one direction, which is what an HTTP body already is.
@@ -242,7 +240,7 @@ info:
     ### Keys
 
     Every request carries `Authorization: Bearer rysk_<id>_<secret>`, scoped and
-    expiring. The first key is minted by this daemon's own command line, on the
+    expiring. The first key is minted by this server's own command line, on the
     host, not by this API — an API that can mint its own first credential has an
     unauthenticated route on it by definition.
 
@@ -267,9 +265,9 @@ info:
     out. It comes back with the allowlist advertised in `GET /v1/info` and a
     `422` naming it.
 
-    **Two WebSockets, and only two.** `GET /v1/namespaces/{namespace}/sandboxes/{id}/terminal` is an
+    **Two WebSockets, and only two.** `GET /v1/sandboxes/{id}/terminal` is an
     interactive shell with a PTY, and `GET
-    /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve` carries a client broker's
+    /v1/sandboxes/{id}/brokers/{name}/serve` carries a client broker's
     connections to the caller serving it. Each is a WebSocket because it is
     bytes in BOTH directions at once, for as long as the caller stays.
     Everything else stays a request or a chunked body.
@@ -278,13 +276,13 @@ info:
     could carry a token, a key or a registry password, which is a stronger
     property than a validator that refuses them. Anything written into a sandbox
     is disclosed to the workload by definition — see `PUT
-    /v1/namespaces/{namespace}/sandboxes/{id}/files`. Registry credentials for a private image are this
-    daemon's configuration, not a field on a pull.
+    /v1/sandboxes/{id}/files`. Registry credentials for a private image are this
+    server's configuration, not a field on a pull.
 
 servers:
   - url: http://127.0.0.1:8099
     description: >-
-      One daemon, on one host, owning that host's VMs. Where it listens and who
+      One server, on one host, owning that host's VMs. Where it listens and who
       can reach it is the deployment's business; nothing here depends on the
       address.
 
@@ -297,18 +295,14 @@ tags:
     description: Liveness, protocol, and what this host can do.
   - name: Costs
     description: >-
-      What each namespace's sandboxes, volumes, images and tunnels used and
-      cost, at the rates the daemon's configuration names: metered every
+      What this server's sandboxes, volumes, images and tunnels used and
+      cost, at the rates the server's configuration names: metered every
       minute, kept an hour at a time, and kept after what it was about is
       deleted.
   - name: Images
     description: >-
       OCI references turned into the rootfs a VM boots, and the cache of them.
-      Content-addressed, so pulling twice costs one pull. Each namespace has
-      a cache of its own: a sandbox boots only from an image in its own
-      namespace, an image another namespace has is this one's to pull again,
-      and a pull logs in with this namespace's registry logins and no
-      other's.
+      Content-addressed, so pulling twice costs one pull.
   - name: Builds
     description: >-
       Images made on this host from a recipe: a Dockerfile whose every RUN step
@@ -335,23 +329,23 @@ tags:
       broker then sends upstream on its own account is not here — that is
       the broker's, and the record is of the sandbox's acts.
 
-      Every brokered connection crosses this daemon on its way out of the
+      Every brokered connection crosses this server on its way out of the
       machine, which is why it is kept here: nothing inside the sandbox can
       leave it out, and nothing a broker says can put something in but its
       own `Runyard-Activity` header, which says what an exchange was and is
       taken off the answer before the sandbox sees it. Kept for the
-      daemon's `activity.keep`, and sent on to its sinks.
+      server's `activity.keep`, and sent on to its sinks.
   - name: Tunnels
     description: |
       A port of a sandbox, at a public address, for the people and tokens
       its tunnel names.
 
-      Three services and a guest carry it, and this daemon is none of the
+      Three services and a guest carry it, and this server is none of the
       ones a visitor touches. The **gateway** is public: it signs a visitor in
       with Google, checks them against the tunnel, and asks for their bytes.
       This host's **relay** holds a line to it, and carries each visitor's
       connection over the sandbox's vsock to the **agent**, which dials the
-      port on the sandbox's loopback. This daemon writes down what the relay
+      port on the sandbox's loopback. This server writes down what the relay
       serves — a file the relay watches — and is out of the path: restarting
       or upgrading it ends no visitor's connection.
 
@@ -366,36 +360,20 @@ tags:
       parsed. `POST .../processes` is the one whose result survives a dropped
       connection: a handle, output read from a cursor, an end asked about
       separately. Anything long-running is a process, not a command.
-  - name: Namespaces
-    description: |
-      A namespace is a named, isolated partition of this control plane. A
-      key bound to one reaches only what is in it: anything else is a
-      `404`, as for something that is not there.
-
-      A control plane starts with none, and no name means anything to it:
-      every namespace is made, kept and deleted the same way.
-  - name: Members
-    description: |
-      Who is in a namespace, and with which scopes. A membership says where
-      a person may act, never how much: what they may do in a namespace is
-      the membership's scopes intersected with what this daemon's
-      configuration lets them do, at every request, so a row only ever
-      narrows it.
   - name: Brokers
     description: |
       The way out of a sandbox, and the only one.
 
       A sandbox's network starts closed. What it is given instead is a set of
-      loopback ports inside itself, each carried over its vsock to this daemon,
+      loopback ports inside itself, each carried over its vsock to this server,
       which opens a TLS connection to the upstream and attaches the sandbox's
-      own client certificate — minted by its namespace's CA, held here, and
+      own client certificate — minted by this server's CA, held here, and
       readable by nothing inside the machine.
 
       **Three kinds of broker, one mechanism.**
 
-      - A **shared** broker is declared in a namespace by `PUT
-        /v1/namespaces/{namespace}/brokers/{name}` — there is no other way to
-        declare one — and any sandbox in that namespace may be given it by
+      - A **shared** broker is declared by `PUT /v1/brokers/{name}` — there
+        is no other way to declare one — and any sandbox may be given it by
         name. It is a live reference: changing a shared broker's upstream
         changes where every sandbox using it is carried, on its next
         connection.
@@ -404,7 +382,7 @@ tags:
         and it goes when the sandbox does.
       - A **client** broker is one a caller of this API holds: it exists from
         the moment the caller opens `GET
-        /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve` until that connection ends,
+        /v1/sandboxes/{id}/brokers/{name}/serve` until that connection ends,
         and its connections are handed to the caller. What answers the
         workload is the caller's own program, wherever it runs — so a
         credential it puts on a request never reaches the sandbox, and never
@@ -430,7 +408,7 @@ tags:
       are refused at connect time, after resolution — they are this host's own
       services, its cloud's metadata endpoint and the operator's network, and
       an A record is written by whoever runs the domain. An operator who wants
-      one-off brokers to reach those starts the daemon with
+      one-off brokers to reach those starts the server with
       `-broker-allow-private`, and `GET /v1/info` says which it is. A shared
       broker, declared by whoever holds `brokers.admin`, may point anywhere.
 
@@ -438,13 +416,13 @@ tags:
       principal it is.** Its certificate's first URI is
       `runyard-sandbox://<host>/<sandbox id>`, as it always was. A sandbox
       bound to a principal (`spec.principal`, see Principals) carries one
-      more after it: `runyard-principal://<host>/<namespace>/<principal id>`.
+      more after it: `runyard-principal://<host>/<tenant>/<principal id>`.
       An upstream that knows nothing of principals reads the first and
       nothing else.
 
       **An upstream that cannot ask for a certificate is told by a token**
       (`auth: jwt`): one behind an ingress that ends TLS, or a plain HTTP
-      server on a private link. This daemon then serves the sandbox's
+      server on a private link. This server then serves the sandbox's
       connection as HTTP/1.1 itself and sends each request on to `url` — its
       path a prefix, the query kept, `Host` the upstream's, redirects passed
       back rather than followed, upgrades such as a WebSocket carried — with
@@ -459,7 +437,7 @@ tags:
       The leaf is exactly the certificate `certificate` would have presented
       on that connection, and the token is signed with its key, which never
       leaves this host. So a broker verifies the leaf as it verifies a
-      client certificate — this namespace's CA, client auth, the time, the
+      client certificate — this server's CA, client auth, the time, the
       URIs above — then the signature with the leaf's key, then that `aud`
       is its own url, that `exp` has not passed, and that `exp - iat` is no
       more than 600. One sandbox is sent the same token while it has more
@@ -467,13 +445,13 @@ tags:
       read the link can present it, as that sandbox, until it expires.
 
       **A shared broker may have a trusted plane** (`trustedUrl`): a second
-      address of the broker that only this daemon dials, presenting a
+      address of the broker that only this server dials, presenting a
       principal's trusted certificate —
-      `runyard-trusted://<host>/<namespace>/<principal id>`, and no
+      `runyard-trusted://<host>/<tenant>/<principal id>`, and no
       `runyard-sandbox` URI. A sandbox's certificate never carries
       `runyard-trusted`, so a trusted plane that requires it is never reached
       by a workload, and a data plane that refuses it is never reached with
-      a principal's certificate. What this daemon reads there is a broker's
+      a principal's certificate. What this server reads there is a broker's
       `.well-known/` documents about a principal, and nothing else.
 
   - name: Principals
@@ -481,10 +459,10 @@ tags:
       An identity that outlives a sandbox, as a volume is a disk that
       outlives one.
 
-      A principal is an id in a namespace, and labels. It is an identity
+      A principal is an id, and labels. It is an identity
       **of its own** — not a person's, and standing for nobody: what it may do
       with somebody's data is what that data's broker has granted it, and
-      this daemon vouches only for which principal is calling. The id is the
+      this server vouches only for which principal is calling. The id is the
       caller's to choose, and **never reused**: once a principal is deleted
       its id is retired, and a `PUT` of it is refused (`409
       principal_retired`), because a broker keys its grants on the id. Making
@@ -494,7 +472,8 @@ tags:
       **A sandbox may be one** (`spec.principal`), fixed for the life of the
       sandbox. Its certificate then carries, after its own
       `runyard-sandbox://<host>/<sandbox id>` URI, the principal's:
-      `runyard-principal://<host>/<namespace>/<principal id>`. Several
+      `runyard-principal://<host>/<tenant>/<principal id>`, `<tenant>` being
+      the name this server's configuration gives its tenant. Several
       sandboxes can be one principal, one after another or at once, and a
       broker sees the same principal whichever is calling. A broker that
       knows nothing of principals reads the first URI as it always has.
@@ -505,11 +484,11 @@ tags:
       what is on the disk is what that principal's grants fetched, and what a
       principal boots on is what it runs with its own grants. Moving a volume
       to another principal is explicit: `PUT
-      /v1/namespaces/{namespace}/volumes/{volumeName}/principal`.
+      /v1/volumes/{volumeName}/principal`.
 
       **A broker may have a trusted plane** (`trustedUrl`), which only this
-      daemon reaches, with a certificate of the principal's own —
-      `runyard-trusted://<host>/<namespace>/<principal id>`, and no
+      server reaches, with a certificate of the principal's own —
+      `runyard-trusted://<host>/<tenant>/<principal id>`, and no
       sandbox — minted from the principal's record, so no machine has
       to be running. `GET .../principals/{id}/brokers/{name}/trusted/{path}`
       reads the broker's `.well-known/` documents about a principal through
@@ -540,7 +519,7 @@ tags:
 
       **Every key belongs to a person**, and does what its own scopes say and
       its owner may still do, whichever is less. A person taken off this
-      daemon's lists takes every key they hold with them, at once, without
+      server's lists takes every key they hold with them, at once, without
       anybody having to find those keys first.
 
       **A key reaches every sandbox on the host, or only its own.** Its scopes
@@ -552,11 +531,11 @@ tags:
   - name: Auth
     description: |
       Who is calling. A program calls with a key; a person signs in to the
-      console — with Google, or with a password from the daemon's htpasswd
+      console — with Google, or with a password from the server's htpasswd
       file — and is given a session, which is a cookie the browser sends and
       nothing else can.
 
-      **Who may sign in, and what they may do, is this daemon's
+      **Who may sign in, and what they may do, is this server's
       configuration and not something the API changes.** Its administrators
       are named on its command line and hold every scope; the other people
       it lets in hold the scopes it gives them. There is no route that
@@ -564,10 +543,10 @@ tags:
       mints a first key: an API that can grant its own highest privilege
       has an unauthenticated way to it somewhere.
 
-      What a daemon knows of the people who signed in, their sessions and
+      What a server knows of the people who signed in, their sessions and
       their keys is in a PostgreSQL database rather than in its memory, and
-      that database is served by exactly one daemon: a revocation is a row
-      the daemon reads at the next request, and nothing that authenticates
+      that database is served by exactly one server: a revocation is a row
+      the server reads at the next request, and nothing that authenticates
       a request is lost with the process that answered it.
 
 paths:
@@ -578,7 +557,7 @@ paths:
       security: []
       summary: Go to the console
       description: >-
-        A redirect to `/console`, so that a person handed this daemon's address
+        A redirect to `/console`, so that a person handed this server's address
         and nothing else lands somewhere rather than on a `404`.
 
 
@@ -605,7 +584,7 @@ paths:
         sandboxes on it and the images cached for them.
 
         **One page, with everything in it.** The script, the stylesheet and the
-        fonts are inlined, for the reason `/v1/docs` is — this daemon runs on
+        fonts are inlined, for the reason `/v1/docs` is — this server runs on
         the host that boots untrusted microVMs, which is the last host that
         should be reaching a CDN, and a console that fetched a chunk from one
         would be a blank screen exactly where it is needed. It is also why
@@ -629,7 +608,7 @@ paths:
         **Its pages have addresses of their own**, below, and each answers with
         these same bytes, so a person can reload, bookmark or share any of
         them. They are named rather than a wildcard: the page decides what to
-        show from the address, and the daemon serves nothing but this one page
+        show from the address, and the server serves nothing but this one page
         at any of them.
       parameters:
         - name: signInError
@@ -653,7 +632,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [usage, costs, keys]
+          enum: [overview, usage, costs, keys, sandboxes, tunnels, volumes, images, builds, brokers]
     get:
       operationId: getConsolePage
       tags: [Meta]
@@ -662,8 +641,7 @@ paths:
       description: |
         The console, as `GET /console` answers it: the page reads which of its
         pages to show from the address. A page the console does not have is a
-        `404`. These are the pages about the whole control plane; what is in
-        a namespace is at `/console/namespaces/{namespace}/…`.
+        `404`.
       responses:
         "200":
           description: The console.
@@ -673,57 +651,8 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /console/namespaces/{namespace}:
+  /console/sandboxes/{sandboxId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    get:
-      operationId: getConsoleNamespace
-      tags: [Meta]
-      security: []
-      summary: The console, in one namespace
-      description: >-
-        The console, as `GET /console` answers it, in one namespace. Whether
-        that namespace exists, or is the caller's, is not checked here: this
-        route has no key, and an answer that differed would tell anybody which
-        namespaces exist. The page asks, with the key the person gave it.
-      responses:
-        "200":
-          description: The console.
-          content:
-            text/html:
-              schema: { type: string, format: binary }
-
-  /console/namespaces/{namespace}/{page}:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-      - name: page
-        in: path
-        required: true
-        schema:
-          type: string
-          enum: [overview, usage, costs, keys, sandboxes, tunnels, volumes, images, builds, brokers]
-    get:
-      operationId: getConsoleNamespacePage
-      tags: [Meta]
-      security: []
-      summary: One of the console's pages, in one namespace
-      description: >-
-        As `GET /console/namespaces/{namespace}`, on one of its pages: those
-        about what is in a namespace, and the ones about the whole control
-        plane, read without leaving it. Its keys are the namespace's. A page
-        the console does not have is a `404`.
-      responses:
-        "200":
-          description: The console.
-          content:
-            text/html:
-              schema: { type: string, format: binary }
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /console/namespaces/{namespace}/sandboxes/{sandboxId}:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getConsoleSandbox
@@ -744,9 +673,8 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
-  /console/namespaces/{namespace}/volumes/{volumeName}:
+  /console/volumes/{volumeName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/VolumeName"
     get:
       operationId: getConsoleVolume
@@ -756,7 +684,7 @@ paths:
       description: >-
         The console, as `GET /console` answers it, showing one volume. Whether
         that volume exists is not checked here, for the reason
-        `GET /console/namespaces/{namespace}/sandboxes/{sandboxId}` does not check its sandbox: the
+        `GET /console/sandboxes/{sandboxId}` does not check its sandbox: the
         page asks, with the key the person gave it.
       responses:
         "200":
@@ -767,9 +695,8 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
-  /console/namespaces/{namespace}/images/{imageId}:
+  /console/images/{imageId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/ImageID"
     get:
       operationId: getConsoleImage
@@ -780,7 +707,7 @@ paths:
         The console, as `GET /console` answers it, showing one image: what it
         is, what it holds of the disk, and its recipe. Whether that image
         exists is not checked here, for the reason
-        `GET /console/namespaces/{namespace}/sandboxes/{sandboxId}` does not check its sandbox: the
+        `GET /console/sandboxes/{sandboxId}` does not check its sandbox: the
         page asks, with the key the person gave it.
       responses:
         "200":
@@ -789,9 +716,8 @@ paths:
             text/html:
               schema: { type: string, format: binary }
 
-  /console/namespaces/{namespace}/builds/{buildId}:
+  /console/builds/{buildId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/BuildID"
     get:
       operationId: getConsoleBuild
@@ -801,7 +727,7 @@ paths:
       description: >-
         The console, as `GET /console` answers it, showing one build: its
         steps and its log, followed while it runs. Whether that build exists
-        is not checked here, for the reason `GET /console/namespaces/{namespace}/sandboxes/{sandboxId}`
+        is not checked here, for the reason `GET /console/sandboxes/{sandboxId}`
         does not check its sandbox: the page asks, with the key the person
         gave it.
       responses:
@@ -811,9 +737,8 @@ paths:
             text/html:
               schema: { type: string, format: binary }
 
-  /console/namespaces/{namespace}/sandboxes/{sandboxId}/{tab}:
+  /console/sandboxes/{sandboxId}/{tab}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - name: tab
         in: path
@@ -827,7 +752,7 @@ paths:
       security: []
       summary: The console, on one tab of one sandbox
       description: >-
-        As `GET /console/namespaces/{namespace}/sandboxes/{sandboxId}`, open on one of its tabs. A tab
+        As `GET /console/sandboxes/{sandboxId}`, open on one of its tabs. A tab
         the console does not have is a `404`.
       responses:
         "200":
@@ -844,7 +769,7 @@ paths:
     get:
       operationId: health
       tags: [Meta]
-      summary: Is this daemon up
+      summary: Is this server up
       security: []
       description: >-
         Unauthenticated, and it says nothing about the host beyond the fact that
@@ -863,7 +788,7 @@ paths:
       security: []
       summary: This document
       description: |
-        The bytes of `openapi/sandboxes.yaml`, served by the daemon that
+        The bytes of `openapi/sandboxes.yaml`, served by the server that
         implements it — a copy embedded in the binary at build time, so a
         deployment ships one file and there is no second copy to drift.
 
@@ -886,10 +811,10 @@ paths:
       security: []
       summary: This document, rendered
       description: |
-        The API reference as one self-contained HTML page, built from
-        `/v1/openapi.yaml` by Redoc at build time.
+        The API reference as one self-contained HTML page: Redoc, in the
+        page, rendering `/v1/openapi.yaml` in the browser.
 
-        **It loads nothing from any host but this one.** A daemon here runs on
+        **It loads nothing from any host but this one.** A server here runs on
         the machine that boots untrusted microVMs, which is the last host that
         should have egress — and a page that pulls its renderer from a CDN is a
         blank screen on such a host.
@@ -900,20 +825,17 @@ paths:
             text/html:
               schema: { type: string, format: binary }
 
-  /v1/namespaces/{namespace}/ca:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/ca:
     get:
       operationId: getCA
       tags: [Brokers]
-      summary: The certificate authority this namespace's sandboxes are identified by
+      summary: The certificate authority this server's sandboxes are identified by
       description: |
         The PEM an upstream needs in order to verify the sandboxes calling it.
 
-        **Each namespace has a CA of its own**, made with the namespace and
-        removed with it, and signs its own sandboxes' identities and no
-        other's: an upstream that trusts one namespace's sandboxes does not
-        thereby trust another's.
+        **Each server has a CA of its own**, and signs its own sandboxes'
+        identities and no other's: an upstream that trusts one server's
+        sandboxes does not thereby trust another's.
 
         This is the other half of the broker plane: an operator declares an
         upstream here, and gives that upstream this certificate. Everything the
@@ -921,11 +843,9 @@ paths:
         comes from the connection rather than from anything the caller sent.
 
         It is a public certificate and carries no key. What it is NOT is a
-        credential: holding it lets somebody verify this namespace's
+        credential: holding it lets somebody verify this server's
         sandboxes, not impersonate one.
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -935,9 +855,8 @@ paths:
               schema: { type: string }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/identity:
+  /v1/sandboxes/{sandboxId}/identity:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandboxIdentity
@@ -945,7 +864,7 @@ paths:
       summary: What this sandbox presents to a brokered upstream
       description: >-
         The certificate's subject, its URI and its fingerprint — never its key,
-        which does not leave this daemon and is the reason the sandbox cannot
+        which does not leave this server and is the reason the sandbox cannot
         present it itself.
       responses:
         "403":
@@ -961,9 +880,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/tunnels:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/tunnels:
     get:
       operationId: listHostTunnels
       tags: [Tunnels]
@@ -985,8 +902,6 @@ paths:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "200":
           description: The relay's state, and a page of the tunnels.
           content:
@@ -998,21 +913,14 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/brokers:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/brokers:
     get:
       operationId: listBrokers
       tags: [Brokers]
-      summary: The shared brokers this namespace declares
+      summary: The shared brokers this server declares
       description: |
-        Every broker a spec in this namespace may name without writing out an
-        upstream. A broker is shared by the sandboxes of its namespace: a
-        sandbox in another namespace that names the same broker is given that
-        namespace's, or none.
+        Every broker a spec may name without writing out an upstream.
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "200":
           description: The brokers, in name order.
           content:
@@ -1022,14 +930,13 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/brokers/{brokerName}:
+  /v1/brokers/{brokerName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/BrokerName"
     get:
       operationId: getBroker
       tags: [Brokers]
-      summary: One of this namespace's shared brokers
+      summary: One of the shared brokers
       responses:
         "200":
           description: The broker.
@@ -1052,18 +959,16 @@ paths:
         By name, and idempotent: the name is what every spec refers to, so it is
         the caller's to choose and a repeat is the same broker.
 
-        **Replacing an upstream moves every sandbox in this namespace that uses
-        it,** on its next connection — that is what "shared" means, and it is
+        **Replacing an upstream moves every sandbox that uses it,** on its next connection — that is what "shared" means, and it is
         why this needs
         `brokers.admin` rather than anything a scheduler holds. Connections
         already open finish where they started. It is also why a key that acts
         only on its `own` sandboxes is refused it, `403`, whatever its scopes:
         the sandboxes it would move are not its own.
 
-        This is the only way to declare one — the daemon has no flag for it,
+        This is the only way to declare one — the server has no flag for it,
         so a broker's upstream has one source — and it survives a restart of
-        the daemon. It is the namespace's, kept with it and removed with it,
-        and never readable from another namespace.
+        the server.
       requestBody:
         required: true
         content:
@@ -1093,8 +998,7 @@ paths:
       tags: [Brokers]
       summary: Withdraw a shared broker
       description: |
-        Refused with `409 broker_in_use` while any sandbox in this namespace is
-        given it, naming them: a broker withdrawn from under a sandbox leaves a port
+        Refused with `409 broker_in_use` while any sandbox is given it, naming them: a broker withdrawn from under a sandbox leaves a port
         inside the machine that answers and goes nowhere, which from inside
         reads as an upstream that is down. Detach it from those sandboxes first.
 
@@ -1118,13 +1022,11 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/principals:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/principals:
     get:
       operationId: listPrincipals
       tags: [Principals]
-      summary: The principals in this namespace
+      summary: The principals
       description: >-
         In id order. A key that acts only on its `own` sandboxes is listed
         the principals it made.
@@ -1134,8 +1036,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PrincipalPage" }
-        "404":
-          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1147,9 +1047,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/principals/{principalId}:
+  /v1/principals/{principalId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/PrincipalID"
     get:
       operationId: getPrincipal
@@ -1186,7 +1085,7 @@ paths:
         Nothing else of a principal changes, so a repeat cuts nothing.
 
         Written down before it is answered, and kept across restarts of the
-        daemon. A principal being deleted is refused, `409
+        server. A principal being deleted is refused, `409
         principal_deleting`; an id a deleted principal had is refused for
         good, `409 principal_retired`, because a broker may hold grants
         under it. A key that acts only on its `own` sandboxes is
@@ -1273,9 +1172,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/principals/{principalId}/brokers/{brokerName}/trusted/{path}:
+  /v1/principals/{principalId}/brokers/{brokerName}/trusted/{path}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/PrincipalID"
       - $ref: "#/components/parameters/BrokerName"
       - $ref: "#/components/parameters/TrustedPath"
@@ -1284,16 +1182,16 @@ paths:
       tags: [Principals]
       summary: Read a shared broker's document about a principal, through its trusted plane
       description: |
-        This daemon sends `GET` to the broker's `trustedUrl` + `/` + `path`,
+        This server sends `GET` to the broker's `trustedUrl` + `/` + `path`,
         presenting the principal's trusted certificate, and answers with the
         broker's status, `Content-Type` and body. It is a way of reading a
         broker's documents about a principal and not a second door to the
         broker: only `GET`, and only under `.well-known/`.
 
         **What the broker answered carries `Runyard-Broker-Answered: true`**,
-        whatever its status; a refusal of this daemon's own never does. So a
+        whatever its status; a refusal of this server's own never does. So a
         `404` the broker sent ("there is none") is told apart from this
-        daemon's ("no such principal").
+        server's ("no such principal").
 
         `400` when `path` does not start with `.well-known/` or has a `..`
         segment. `404 no_trusted_plane` when the broker has no `trustedUrl`.
@@ -1304,7 +1202,7 @@ paths:
           description: The broker's answer.
           headers:
             Runyard-Broker-Answered:
-              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              description: "`true`: this is the broker's answer, not a refusal of this server's."
               schema: { type: string, enum: ["true"] }
           content:
             "*/*":
@@ -1336,14 +1234,12 @@ paths:
             `Runyard-Broker-Answered`.
           headers:
             Runyard-Broker-Answered:
-              description: "`true`: this is the broker's answer, not a refusal of this daemon's."
+              description: "`true`: this is the broker's answer, not a refusal of this server's."
               schema: { type: string, enum: ["true"] }
           content:
             "*/*":
               schema: {}
-  /v1/namespaces/{namespace}/counts:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/counts:
     get:
       operationId: getCounts
       tags: [Meta]
@@ -1358,8 +1254,6 @@ paths:
         `sandboxes.read`, as their lists are. A count the key may not read is
         absent rather than zero, because zero is an answer.
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1384,7 +1278,7 @@ paths:
         caller otherwise learns from a refusal: whether this host can nest, and
         what its ceilings are.
 
-        There is no `/v1/hosts`. **A daemon IS the boundary** — its own VMs, its
+        There is no `/v1/hosts`. **A server IS the boundary** — its own VMs, its
         own image cache, its own nftables tables, its own store. Several run the
         way several of anything do. A collection here is the shape that invites
         a picker, a registry and a scheduler to grow back, and a scheduler over
@@ -1442,17 +1336,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/activity:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/activity:
     get:
       operationId: listBrokerActivity
       tags: [Activity]
-      summary: What the namespace's sandboxes did through their brokers, from a cursor
+      summary: What the sandboxes did through their brokers, from a cursor
       description: |
-        The namespace's records after `after`, oldest first, without their
-        bodies, and the cursor to ask with next. A namespace's records are
-        numbered in the order they were kept (`seq`), so a reader that
+        The records after `after`, oldest first, without their bodies, and
+        the cursor to ask with next. The records are numbered in the order they were kept (`seq`), so a reader that
         keeps the last cursor it was given misses none and sees none twice.
         A number may be skipped: a record kept twice is kept once.
 
@@ -1461,8 +1352,8 @@ paths:
         asking over and over. An answer with none is a `200` with no
         items.
 
-        **A key that acts only on its `own` sandboxes is refused it**: a
-        namespace's records are every sandbox's in it.
+        **A key that acts only on its `own` sandboxes is refused it**: the
+        records are every sandbox's.
       parameters:
         - name: after
           in: query
@@ -1493,11 +1384,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /v1/namespaces/{namespace}/activity/{activityId}:
+  /v1/activity/{activityId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - name: activityId
         in: path
         required: true
@@ -1509,9 +1397,8 @@ paths:
       summary: One record, with its bodies
       description: |
         A record whole: as much of the body the sandbox sent, and of the one
-        it was answered, as the daemon keeps (`activity.requestBodyAtMost`
-        and `activity.responseBodyAtMost`), base64. A record of another
-        namespace is no such record.
+        it was answered, as the server keeps (`activity.requestBodyAtMost`
+        and `activity.responseBodyAtMost`), base64.
       responses:
         "200":
           description: The record.
@@ -1530,62 +1417,9 @@ paths:
     get:
       operationId: getCosts
       tags: [Costs]
-      summary: What the namespaces the caller reaches have cost
+      summary: What this server's sandboxes have cost
       description: |
-        Every namespace the caller reaches, together and each on its own: an
-        administrator, every namespace there ever was, deleted ones too; a
-        member, the namespaces they are a member of.
-
-        **What is charged for.** A sandbox running — `creating`, `booting`,
-        `ready`, `unreachable` or `paused`, a paused one still holding its
-        memory — for its vCPUs and its memory. A volume, every sandbox's disk
-        among them, for its size, whatever its sandbox is doing: what it may
-        grow to, as a disk is reserved. An image, for its filesystem's size.
-        A tunnel, for each hour it is served: its sandbox `ready`, and the
-        tunnel neither paused nor expired.
-
-        **What it is priced at.** The daemon looks every minute and keeps,
-        for each thing, an hour at a time, what it used — vCPU-hours,
-        GiB-hours of memory and of disk, tunnel-hours — and what each of
-        those cost at the rates of that moment. A rate changed later prices
-        what comes after, and does not rewrite what was. The time the daemon
-        was not running is not charged.
-
-        **Nothing is forgotten with what it was about**: a sandbox deleted, a
-        volume let go and a namespace deleted keep what they cost, and are
-        listed with `live: false`.
-
-        Refused, `403`, to a key that acts only on its `own` sandboxes, and
-        to a key bound to a namespace: it reads its namespace's at
-        `GET /v1/namespaces/{namespace}/costs`.
-      parameters:
-        - $ref: "#/components/parameters/CostWindowInQuery"
-      responses:
-        "200":
-          description: What was spent over the window, and what is spent an hour now.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CostReport" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "503":
-          description: The control plane's database did not answer.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/costs:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    get:
-      operationId: getNamespaceCosts
-      tags: [Costs]
-      summary: What a namespace has cost
-      description: |
-        What a namespace's sandboxes, volumes, images and tunnels used and
+        What this server's sandboxes, volumes, images and tunnels used and
         cost over a window, hour by hour or day by day, and what each costs
         an hour now.
 
@@ -1597,20 +1431,19 @@ paths:
         A tunnel, for each hour it is served: its sandbox `ready`, and the
         tunnel neither paused nor expired.
 
-        **What it is priced at.** The daemon looks every minute and keeps,
+        **What it is priced at.** The server looks every minute and keeps,
         for each thing, an hour at a time, what it used — vCPU-hours,
         GiB-hours of memory and of disk, tunnel-hours — and what each of
         those cost at the rates of that moment. A rate changed later prices
-        what comes after, and does not rewrite what was. The time the daemon
+        what comes after, and does not rewrite what was. The time the server
         was not running is not charged.
 
         **Nothing is forgotten with what it was about**: a sandbox deleted, a
-        volume let go and a namespace deleted keep what they cost, and are
-        listed with `live: false`.
+        volume let go keep what they cost, and are listed with `live: false`.
 
         **A key that acts only on its `own` sandboxes** is shown what it made
-        — its sandboxes, their tunnels, its volumes — and the namespace's
-        images, which every sandbox in it boots from.
+        — its sandboxes, their tunnels, its volumes — and the images, which
+        every sandbox boots from.
 
         **Narrowed to one workload**, by `label` and `volume`: the sandboxes
         carrying every label asked for, and their tunnels, together with the
@@ -1651,8 +1484,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "503":
           description: The control plane's database did not answer.
           content:
@@ -1670,8 +1501,8 @@ paths:
 
         Read with every sandbox, on the same ten-second tick, and kept the
         same way: an hour of the readings as taken and a day of one-minute
-        averages, written to the daemon's state directory every minute. The
-        time the daemon was not running is absent, never zeroes.
+        averages, written to the server's state directory every minute. The
+        time the server was not running is absent, never zeroes.
 
         Refused, `403`, to a key that acts only on its `own` sandboxes: what
         every sandbox on the host is using is not its own to read.
@@ -1696,9 +1527,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/images:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/images:
     get:
       operationId: listImages
       tags: [Images]
@@ -1707,8 +1536,6 @@ paths:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1734,14 +1561,14 @@ paths:
         which is minutes for a large image, and a request held open for it is
         one a proxy will cut at a timeout nobody here controls. This answers
         `202` with the image in `pulling`; the caller watches `GET
-        /v1/namespaces/{namespace}/images/{imageId}`.
+        /v1/images/{imageId}`.
 
         **A tag is re-resolved every time.** A tag that was pushed over is new
         content, so it is a new id without anybody asking — the old one stays,
         because a sandbox may be booted from it. That is also why deleting an
         image in use is a `409` rather than a broken machine.
 
-        Calling this is optional. `POST /v1/namespaces/{namespace}/sandboxes` pulls what it needs,
+        Calling this is optional. `POST /v1/sandboxes` pulls what it needs,
         and the sandbox sits in `creating` while it does. It is here so a
         deployment can warm the cache before the machine that needs it is
         wanted, which is the difference between a sandbox that starts in seconds
@@ -1752,8 +1579,6 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ImageRequest" }
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "202":
           description: Accepted. The image is `pulling`.
           content:
@@ -1773,7 +1598,7 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           description: >-
-            The reference does not parse, or names a registry this daemon has no
+            The reference does not parse, or names a registry this server has no
             credential for. Refused here rather than as an image that goes
             `failed` a minute later.
           content:
@@ -1788,9 +1613,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/images/{imageId}:
+  /v1/images/{imageId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/ImageID"
     get:
       operationId: getImage
@@ -1837,9 +1661,7 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/builds:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/builds:
     get:
       operationId: listBuilds
       tags: [Builds]
@@ -1851,8 +1673,6 @@ paths:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1893,18 +1713,16 @@ paths:
         layers to this host's registry as `repository`, tagged with the build's
         id, and then cached as any pulled image is — `imageId` once it is
         `succeeded`. The recipe is in the image, as its label
-        `ai.runyard.recipe`, and is its `recipe` in `GET /v1/namespaces/{namespace}/images`.
+        `ai.runyard.recipe`, and is its `recipe` in `GET /v1/images`.
 
         **Asynchronous.** It answers `202` with the build `queued`; the caller
-        watches `GET /v1/namespaces/{namespace}/builds/{buildId}` and reads its log.
+        watches `GET /v1/builds/{buildId}` and reads its log.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/BuildRequest" }
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "202":
           description: Accepted. The build is `queued`.
           content:
@@ -1929,15 +1747,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: This daemon is going down, and starts no build.
+          description: This server is going down, and starts no build.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/builds/{buildId}:
+  /v1/builds/{buildId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/BuildID"
     get:
       operationId: getBuild
@@ -1962,8 +1779,7 @@ paths:
       description: >-
         A build that runs is cancelled: its machine is removed, and nothing is
         pushed. One that ended is forgotten with its log; the image it made
-        stays. A build that is not in this namespace — gone, never there, or
-        another namespace's — is a `404`, to every caller and in one body.
+        stays.
       responses:
         "403":
           $ref: "#/components/responses/Forbidden"
@@ -1973,9 +1789,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/builds/{buildId}/log:
+  /v1/builds/{buildId}/log:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/BuildID"
     get:
       operationId: readBuildLog
@@ -2003,9 +1818,7 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/volumes:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+  /v1/volumes:
     get:
       operationId: listVolumes
       tags: [Volumes]
@@ -2020,8 +1833,6 @@ paths:
         made, and told which sandbox holds one only when that sandbox is its
         own too.
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -2031,9 +1842,8 @@ paths:
               schema: { $ref: "#/components/schemas/VolumeList" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/volumes/{volumeName}:
+  /v1/volumes/{volumeName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/VolumeName"
     delete:
       operationId: deleteVolume
@@ -2041,7 +1851,7 @@ paths:
       summary: Let a volume go, and what was written on it
       description: >-
         The one way a volume is reclaimed that does not also drop a sandbox —
-        `DELETE /v1/namespaces/{namespace}/sandboxes/{id}?disk=delete` does it too, for the volume
+        `DELETE /v1/sandboxes/{id}?disk=delete` does it too, for the volume
         that sandbox holds.
 
 
@@ -2073,9 +1883,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/volumes/{volumeName}/principal:
+  /v1/volumes/{volumeName}/principal:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/VolumeName"
     put:
       operationId: moveVolume
@@ -2126,9 +1935,115 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes:
+  /v1/volumes/{volumeName}/clone:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
+      - $ref: "#/components/parameters/VolumeName"
+    post:
+      operationId: cloneVolume
+      tags: [Volumes]
+      summary: Make a new volume that is a copy of this one
+      description: |
+        A new volume, `name`, holding what this one holds now: a fork of a
+        sandbox's whole disk — whatever was installed anywhere on it — without
+        it passing through the API, and without waking a sandbox to read it.
+        The clone records the image this volume was laid over, so it boots on
+        the same image, and it is the caller's: made by them, and dropped
+        like any other volume.
+
+        **Copied on write where the host can.** On a filesystem with reflinks
+        (`capabilities.reflink` in `GET /v1/info`) the clone shares this
+        volume's blocks until either writes to them, and is made in the same
+        time whatever its size. Elsewhere it is a sparse copy on this host:
+        complete, and as slow as the volume is large.
+
+        **Only a volume no machine is writing.** A volume held by a sandbox
+        that is running — or on its way up, or paused, or on its way down —
+        is refused `409 volume_in_use`, since a copy of a filesystem a guest
+        is writing is not one it would boot from. A stopped or failed
+        sandbox's volume is cloned as it was left, and starting that sandbox
+        waits for no clone: it is refused `409` while one is being made, as
+        is any create naming this volume or `name`, and a delete of either.
+
+        **On this host alone.** A volume is a file on the host that holds it,
+        and a clone is a copy of that file there. Asked of a host that does
+        not hold this volume it is `404 not_found`, as a volume that is not
+        there anywhere is: it is never copied between hosts, and a caller
+        whose fork lands on another host copies what it needs itself.
+
+        **Bound to a principal as the source is, unless the call says
+        otherwise.** `principal` absent, the clone is bound to the principal
+        this volume is bound to, or to none. Named, the clone is bound to it;
+        when this volume is already bound to another, that moves what was
+        fetched under one principal's grants to another, which is what `PUT
+        .../volumes/{volumeName}/principal` does and needs: `principals.write`
+        as well, or `403`.
+
+        **Counted at its full size.** What this host's capacity holds a clone to is its size, as for any volume — not
+        the blocks it does not share, which no count can know in advance. That
+        overstates what a reflinked clone costs, on the safe side; refused
+        `507 capacity_exceeded` as a create would be.
+
+        The rules for this volume are those for attaching it: a key that acts
+        only on its `own` sandboxes clones only the volumes it made, and one
+        that is somebody else's is answered as one that is not there. A
+        volume a key held to its own laid down is cloned by that key alone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VolumeClone" }
+      responses:
+        "201":
+          description: The new volume.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Volume" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: >-
+            As every route's `403` — or this call names a principal other than
+            the one this volume is bound to and does not hold
+            `principals.write`, or this volume was laid down by a key held to
+            its own and this is another caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: >-
+            No volume of that name on this host — not there, on another host,
+            or not one this key may reach — or the principal it names is not
+            there.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >-
+            `volume_in_use`: a machine is using this volume, or it or `name`
+            is being cloned already, or a sandbox holds `name`. Or
+            `volume_exists`: there is already a volume called `name`. Or
+            `principal_deleting`: the principal it names is being deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: >-
+            The copy or the new volume's record could not be written on this
+            host, and the message says what the disk said. Nothing of the
+            clone is left behind.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: >-
+            This host is full: what its capacity allows of disk, overcommitted
+            as its configuration says, leaves no room for the clone's size.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/sandboxes:
     get:
       operationId: listSandboxes
       tags: [Sandboxes]
@@ -2165,8 +2080,6 @@ paths:
           schema: { type: string, maxLength: 200 }
           example: review
       responses:
-        "404":
-          $ref: "#/components/responses/NotFound"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -2189,8 +2102,8 @@ paths:
         **Asynchronous, and it has to be.** There is an image to have, a disk to
         make, a network namespace to make with a ruleset and a TAP in it, a
         kernel to boot and a guest to wait for. So this answers `202` at once with the sandbox in
-        `creating`, and the caller watches `GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}` or
-        reads `GET /v1/namespaces/{namespace}/sandboxes/{sandboxId}/events`.
+        `creating`, and the caller watches `GET /v1/sandboxes/{sandboxId}` or
+        reads `GET /v1/sandboxes/{sandboxId}/events`.
 
         **Idempotent by `Idempotency-Key`.** A repeat with the same key and the
         same spec returns `200` and the sandbox the first request made, whatever
@@ -2207,7 +2120,7 @@ paths:
         `failed` half a minute later for a reason found in an event stream.
         Whether the rootfs is already cached is not part of that: a cache miss
         is a sandbox that sits in `creating` for longer, and `GET
-        /v1/namespaces/{namespace}/sandboxes/{id}/events` says so while it does.
+        /v1/sandboxes/{id}/events` says so while it does.
 
         **A spec this host cannot satisfy is a `422`.** `nested: true` on a host
         without nested virtualisation is the one that matters — the alternative
@@ -2238,7 +2151,12 @@ paths:
             schema: { $ref: "#/components/schemas/SandboxSpec" }
       responses:
         "404":
-          $ref: "#/components/responses/NotFound"
+          description: >-
+            The principal it names is not there — or, to a key held to its
+            own sandboxes, is another key's: one answer for both.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "202":
           description: Accepted. The sandbox is `creating`.
           content:
@@ -2255,14 +2173,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
-          description: >-
-            As every route's `403` — or `quota_exceeded`: the namespace's
-            quota (`NamespaceQuota`) leaves no room for the vCPUs, the memory
-            or the disk this sandbox asks for, and the message says which, what
-            is held and by how much.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+          $ref: "#/components/responses/Forbidden"
         "409":
           description: >-
             This key already made a sandbox with a different spec, or made one
@@ -2296,9 +2207,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}:
+  /v1/sandboxes/{sandboxId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandbox
@@ -2337,20 +2247,18 @@ paths:
         outlives the sandbox by design, and a caller that means to reclaim the
         space says so.
 
-        **A kept disk is a free volume.** It stays in `GET /v1/namespaces/{namespace}/volumes`, let
+        **A kept disk is a free volume.** It stays in `GET /v1/volumes`, let
         go for the next sandbox that names it in `spec.disk.volume`, until
-        `DELETE /v1/namespaces/{namespace}/volumes/{name}` lets it go. It holds what the workload
+        `DELETE /v1/volumes/{name}` lets it go. It holds what the workload
         changed and not the image under it — files it wrote, and for each one
         it deleted, a marker saying so.
 
         `disk=delete` deletes the volume: it is this sandbox's disk, and the
         parameter means what it says about it.
 
-        A sandbox that is not in this namespace — gone, never there, or
-        another namespace's — is answered `404`, to every caller and in one
-        body: that a sandbox is somewhere else is not this namespace's to
-        know. So is every sandbox that is not its own, to a key that acts
-        only on its `own` sandboxes. A delete that is retried after it
+        A sandbox that is not its own is answered `404`, to a key that acts
+        only on its `own` sandboxes, in the body a sandbox that is not there
+        is. A delete that is retried after it
         succeeded is answered as one that is gone.
       parameters:
         - name: disk
@@ -2371,9 +2279,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/stop:
+  /v1/sandboxes/{sandboxId}/stop:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: stopSandbox
@@ -2406,9 +2313,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/start:
+  /v1/sandboxes/{sandboxId}/start:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: startSandbox
@@ -2419,18 +2325,11 @@ paths:
         with its policy stated again. Processes do not come back — a process is a process, and the
         machine it was in was switched off. What comes back is the filesystem.
 
-        Its vCPUs and memory are held again, and measured first against the
-        namespace's quota (`403` `quota_exceeded`) and this host's capacity
-        (`507` `capacity_exceeded`).
+        Its vCPUs and memory are held again, and measured first against
+        this host's capacity (`507` `capacity_exceeded`).
       responses:
         "403":
-          description: >-
-            As every route's `403` — or `quota_exceeded`: the namespace's
-            quota leaves no room for its vCPUs or its memory, and the message
-            says which and by how much.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+          $ref: "#/components/responses/Forbidden"
         "507":
           description: >-
             This host is full: what its capacity allows of vCPUs or memory,
@@ -2455,9 +2354,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/unseal:
+  /v1/sandboxes/{sandboxId}/unseal:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: unsealSandbox
@@ -2483,9 +2381,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/seal:
+  /v1/sandboxes/{sandboxId}/seal:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: sealSandbox
@@ -2519,9 +2416,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/pause:
+  /v1/sandboxes/{sandboxId}/pause:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: pauseSandbox
@@ -2545,7 +2441,7 @@ paths:
         the pause lasts. Its egress can still be changed, being the host's.
         Connections are kept on the machine's side only: a peer that gives up
         on a silent connection has given up, and the workload finds that out
-        when it is resumed. It stays paused across a restart of the daemon
+        when it is resumed. It stays paused across a restart of the server
         that leaves it running; one that powers it off loses its memory, and
         it comes back `stopped`.
       responses:
@@ -2574,9 +2470,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/resume:
+  /v1/sandboxes/{sandboxId}/resume:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: resumeSandbox
@@ -2589,8 +2484,7 @@ paths:
         it was paused at.
 
         A paused sandbox kept its memory and gave back its vCPUs, which are
-        measured again against the namespace's quota (`403`
-        `quota_exceeded`) and this host's capacity (`507`
+        measured again against this host's capacity (`507`
         `capacity_exceeded`). Refused, it stays paused.
       responses:
         "507":
@@ -2625,16 +2519,9 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          description: >-
-            As every route's `403` — or `quota_exceeded`: the namespace's
-            quota leaves no room for its vCPUs, and the message says by how
-            much.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/labels:
+          $ref: "#/components/responses/Forbidden"
+  /v1/sandboxes/{sandboxId}/labels:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     put:
       operationId: setSandboxLabels
@@ -2665,9 +2552,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/events:
+  /v1/sandboxes/{sandboxId}/events:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: streamSandboxEvents
@@ -2681,7 +2567,7 @@ paths:
         root filesystem.
 
         It is also the sandbox's operation log. Every call that changed it is
-        an `operation` event, in the same sequence as what the daemon did
+        an `operation` event, in the same sequence as what the server did
         about it, so "who stopped this, and when" and "what it did next" are
         one read.
 
@@ -2708,9 +2594,8 @@ paths:
           $ref: "#/components/responses/Gapped"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/console:
+  /v1/sandboxes/{sandboxId}/console:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandboxConsole
@@ -2721,7 +2606,7 @@ paths:
         at this host's limit and truncated from the front when it is hit.
 
         **Separate from the event stream and not merged into it.** An event is
-        this daemon's account of what it did; this is the guest's account of
+        this server's account of what it did; this is the guest's account of
         what happened to it, and it is untrusted output from a machine running
         somebody else's code. Rendering the two in one list invites a workload
         to write something that reads like a state transition.
@@ -2745,9 +2630,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers:
+  /v1/sandboxes/{sandboxId}/brokers:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listSandboxBrokers
@@ -2770,9 +2654,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}:
+  /v1/sandboxes/{sandboxId}/brokers/{brokerName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/BrokerName"
     put:
@@ -2850,9 +2733,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/brokers/{brokerName}/serve:
+  /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/BrokerName"
     get:
@@ -2879,7 +2761,7 @@ paths:
 
         **The frames.** Binary frames only, and together they are one
         [yamux](https://github.com/hashicorp/yamux/blob/master/spec.md)
-        session, version 0. This daemon is the yamux client — the streams it
+        session, version 0. This server is the yamux client — the streams it
         opens have odd ids — and the caller is the yamux server, which accepts
         them and opens none. A stream is one connection from the workload:
         one that is HTTP/1.x carries the requests the workload sent, one at a
@@ -2912,8 +2794,8 @@ paths:
 
         **Only a running sandbox.** The port is the machine's, so there is
         nothing to give one that is not `ready`, and the serve ends when the
-        sandbox is paused, stopped or deleted, and when this daemon stops. A
-        daemon that ends it closes the WebSocket with status `1001`, going
+        sandbox is paused, stopped or deleted, and when this server stops. A
+        server that ends it closes the WebSocket with status `1001`, going
         away.
 
         Everything that refuses does so before the WebSocket is accepted, as
@@ -2933,7 +2815,7 @@ paths:
           in: query
           description: >-
             Whether what the sandbox does through this broker is recorded
-            (`GET /v1/namespaces/{namespace}/activity`), for as long as the
+            (`GET /v1/activity`), for as long as the
             caller serves it. `false` for a caller that keeps its own record
             of every exchange.
           schema: { type: boolean, default: true }
@@ -2963,9 +2845,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/terminal:
+  /v1/sandboxes/{sandboxId}/terminal:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: openTerminal
@@ -2981,7 +2862,7 @@ paths:
         directions, unmodified. Text frames are control, as JSON:
 
         - from the caller, `{"type":"resize","cols":120,"rows":40}`;
-        - from this daemon, `{"type":"exit","exitCode":0}` once, just before it
+        - from this server, `{"type":"exit","exitCode":0}` once, just before it
           closes the socket, so a closed terminal can say whether what ran in
           it succeeded.
 
@@ -3039,9 +2920,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics:
+  /v1/sandboxes/{sandboxId}/metrics:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandboxMetrics
@@ -3076,16 +2956,15 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/metrics/history:
+  /v1/sandboxes/{sandboxId}/metrics/history:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandboxMetricsHistory
       tags: [Sandboxes]
       summary: What the machine has been using
       description: |
-        The readings behind `GET .../metrics`, over time. The daemon reads every
+        The readings behind `GET .../metrics`, over time. The server reads every
         running sandbox every ten seconds and keeps an hour of those, and a day
         of one-minute averages.
 
@@ -3095,7 +2974,7 @@ paths:
 
         A stopped sandbox keeps what it had, and the time it was stopped is
         simply absent — never zeroes, which would read as a machine that was
-        running and idle. Readings are written to the daemon's state directory
+        running and idle. Readings are written to the server's state directory
         every minute, so a restart loses at most that.
       parameters:
         - name: window
@@ -3117,9 +2996,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/processes:
+  /v1/sandboxes/{sandboxId}/system/processes:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listSystemProcesses
@@ -3164,9 +3042,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/system/sockets:
+  /v1/sandboxes/{sandboxId}/system/sockets:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listSystemSockets
@@ -3209,9 +3086,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress:
+  /v1/sandboxes/{sandboxId}/egress:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: getSandboxEgress
@@ -3287,9 +3163,8 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules:
+  /v1/sandboxes/{sandboxId}/egress/rules:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listEgressRules
@@ -3322,9 +3197,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}:
+  /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/RuleName"
     get:
@@ -3423,9 +3297,8 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause:
+  /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/RuleName"
     post:
@@ -3464,9 +3337,8 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume:
+  /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/RuleName"
     post:
@@ -3503,9 +3375,8 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/egress/connections/kill:
+  /v1/sandboxes/{sandboxId}/egress/connections/kill:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: killConnections
@@ -3569,9 +3440,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels:
+  /v1/sandboxes/{sandboxId}/tunnels:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listTunnels
@@ -3603,9 +3473,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     get:
@@ -3700,9 +3569,8 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     post:
@@ -3730,9 +3598,8 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     post:
@@ -3758,9 +3625,8 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     post:
@@ -3774,7 +3640,7 @@ paths:
         other, and is taken off the request before it reaches the sandbox.
 
         **The answer is the only time the token exists outside the caller.**
-        This daemon keeps its hash, and so does the gateway.
+        This server keeps its hash, and so does the gateway.
       requestBody:
         required: true
         content:
@@ -3801,9 +3667,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
       - $ref: "#/components/parameters/TunnelTokenID"
@@ -3840,9 +3705,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     get:
@@ -3874,9 +3738,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email}:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
       - name: email
@@ -3910,9 +3773,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity:
+  /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/TunnelName"
     get:
@@ -3951,9 +3813,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/commands:
+  /v1/sandboxes/{sandboxId}/commands:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     post:
       operationId: runCommand
@@ -4004,9 +3865,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes:
+  /v1/sandboxes/{sandboxId}/processes:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listProcesses
@@ -4014,7 +3874,7 @@ paths:
       summary: The handles this API holds in this sandbox
       description: >-
         What was started through this API and has not been reaped — not the
-        sandbox's process table, which is `GET /v1/namespaces/{namespace}/sandboxes/{id}/metrics` and
+        sandbox's process table, which is `GET /v1/sandboxes/{id}/metrics` and
         is the guest's own claim about itself.
 
 
@@ -4053,7 +3913,7 @@ paths:
         The guest owns the handle, its output buffers, and a grace period after
         exit in which the result can still be collected — so a caller whose
         connection dropped reads the exit code rather than wondering. This
-        daemon holds no state for this plane and proxies it.
+        server holds no state for this plane and proxies it.
       requestBody:
         required: true
         content:
@@ -4087,9 +3947,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}:
+  /v1/sandboxes/{sandboxId}/processes/{processId}:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/ProcessID"
     get:
@@ -4138,9 +3997,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdout:
+  /v1/sandboxes/{sandboxId}/processes/{processId}/stdout:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/ProcessID"
     get:
@@ -4177,9 +4035,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stderr:
+  /v1/sandboxes/{sandboxId}/processes/{processId}/stderr:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/ProcessID"
     get:
@@ -4212,9 +4069,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/stdin:
+  /v1/sandboxes/{sandboxId}/processes/{processId}/stdin:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/ProcessID"
     post:
@@ -4256,9 +4112,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/processes/{processId}/signal:
+  /v1/sandboxes/{sandboxId}/processes/{processId}/signal:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
       - $ref: "#/components/parameters/ProcessID"
     post:
@@ -4289,9 +4144,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files:
+  /v1/sandboxes/{sandboxId}/files:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: readFile
@@ -4413,9 +4267,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/sandboxes/{sandboxId}/files/list:
+  /v1/sandboxes/{sandboxId}/files/list:
     parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
       - $ref: "#/components/parameters/SandboxID"
     get:
       operationId: listDir
@@ -4450,12 +4303,10 @@ paths:
     get:
       operationId: listKeys
       tags: [Keys]
-      summary: The global keys this daemon will accept
+      summary: The keys this server will accept
       description: >-
-        The caller's own global keys, bound to no namespace; an
-        administrator's call lists everybody's, each with its owner, and may
-        ask for one person's. A namespace's keys are listed in it
-        (`GET /v1/namespaces/{namespace}/keys`).
+        The caller's own keys; an administrator's call lists everybody's,
+        each with its owner, and may ask for one person's.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -4478,15 +4329,8 @@ paths:
     post:
       operationId: createKey
       tags: [Keys]
-      summary: Mint a global key
+      summary: Mint a key
       description: >-
-        A key bound to no namespace: it reaches every namespace its owner
-        does, and can never hold `members.admin`, which is held in one. A key
-        for one namespace is minted in it
-        (`POST /v1/namespaces/{namespace}/keys`), and a key bound to a
-        namespace mints no global key.
-
-
         Needs `keys.admin`, and may only grant scopes the caller already has.
         Otherwise `keys.admin` is `*`, spelled at one remove. Nor may it grant
         a wider reach than the caller's: a key that acts only on its `own`
@@ -4495,9 +4339,9 @@ paths:
 
 
         **The key is its owner's**: the caller's, unless an administrator
-        names somebody else, who must be somebody this daemon lets in. It can
+        names somebody else, who must be somebody this server lets in. It can
         never do more than its owner may, and stops working when its owner is
-        taken off this daemon's lists.
+        taken off this server's lists.
 
 
         **The secret is in this response and nowhere else.** What is stored is a
@@ -4529,13 +4373,11 @@ paths:
     delete:
       operationId: revokeKey
       tags: [Keys]
-      summary: Revoke a global key
+      summary: Revoke a key
       description: >-
-        In force at once, on every daemon in front of the same database: a
+        In force at once, on every server in front of the same database: a
         key revoked in a minute is a key that is not revoked. Idempotent.
-        The caller's own keys, or anybody's for an administrator. A key bound
-        to a namespace is revoked in it, and is not one here: revoking it
-        here revokes nothing.
+        The caller's own keys, or anybody's for an administrator.
       responses:
         "204":
           description: Revoked, or was already.
@@ -4570,7 +4412,7 @@ paths:
         which sends it back to `/v1/auth/google/callback`.
 
         The sign-in is written to the database, not held by this process, so
-        a restart of the daemon between the two does not lose it.
+        a restart of the server between the two does not lose it.
       parameters:
         - name: returnTo
           in: query
@@ -4580,7 +4422,7 @@ paths:
             sent. Anything else — another host, another path on this one — is
             refused, since a sign-in that redirects wherever its link says is
             how a phishing page ends up behind a real login.
-          schema: { type: string, example: /console/namespaces/acme/sandboxes }
+          schema: { type: string, example: /console/sandboxes }
       responses:
         "302":
           description: To Google.
@@ -4590,7 +4432,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
-          description: This daemon has no Google sign-in configured.
+          description: This server has no Google sign-in configured.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4608,11 +4450,11 @@ paths:
       security: []
       summary: Where Google sends a browser back
       description: |
-        Registered with Google as this daemon's redirect URI:
+        Registered with Google as this server's redirect URI:
         `<console url>/v1/auth/google/callback`.
 
         A person Google vouches for — an address it has verified — and whom
-        this daemon lets in is given a session and sent to the page they
+        this server lets in is given a session and sent to the page they
         started from. Anybody else is sent to `/console` with
         `signInError` saying why, and given nothing.
       parameters:
@@ -4633,7 +4475,7 @@ paths:
             Set-Cookie:
               schema: { type: string }
         "404":
-          description: This daemon has no Google sign-in configured.
+          description: This server has no Google sign-in configured.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4644,11 +4486,11 @@ paths:
       security: []
       summary: Sign in with a password
       description: |
-        Sign-in for a daemon with no Google to ask — one on a machine of its
+        Sign-in for a server with no Google to ask — one on a machine of its
         own, say: an address and its password, checked against the htpasswd
-        file the daemon is configured with, read at each sign-in so that a
+        file the server is configured with, read at each sign-in so that a
         password changed there is the one asked for next. A person whose
-        password it is and whom this daemon lets in is given a session, the
+        password it is and whom this server lets in is given a session, the
         same as one signed in with Google.
 
         Made by the console's own page and nothing else: a page elsewhere
@@ -4677,13 +4519,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "403":
           description: >-
-            The password is right, and this daemon does not let that address
+            The password is right, and this server does not let that address
             in — or the request is not the console's own page's.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
-          description: This daemon has no password sign-in configured.
+          description: This server has no password sign-in configured.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4701,7 +4543,7 @@ paths:
       security: []
       summary: Sign out
       description: >-
-        Ends the session the request carries, on every daemon in front of the
+        Ends the session the request carries, on every server in front of the
         same database, and tells the browser to forget it. Answers the same
         with no session, or one already ended.
       responses:
@@ -4752,389 +4594,6 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
-  /v1/namespaces:
-    get:
-      operationId: listNamespaces
-      tags: [Namespaces]
-      summary: List namespaces
-      description: >-
-        `namespaces.read` lists every namespace the caller reaches: all of
-        them for an administrator, or for a caller holding
-        `namespaces.write`; the ones its owner is a member of for anybody
-        else. A key bound to a namespace sees exactly its own, whatever its
-        scopes. A namespace being deleted is listed, with its state, until
-        nothing of it is left.
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-      responses:
-        "200":
-          description: The namespaces, by name.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NamespaceList" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    post:
-      operationId: createNamespace
-      tags: [Namespaces]
-      summary: Create a namespace
-      description: >-
-        A control plane starts with no namespace, and this is how the first
-        one is made: until there is one, nothing can be. Needs
-        `namespaces.write`, which only a global key or a person holds, and in
-        practice only administrators should. The namespace is made with no
-        members: who belongs to it is said afterwards, at
-        `/v1/namespaces/{namespace}/members`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/NamespaceRequest" }
-      responses:
-        "201":
-          description: Created.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Namespace" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: >-
-            The name is a namespace's, or was one's: a deleted namespace's
-            name is never given to another, so that a key or a log line that
-            names it can never come to mean a different tenant.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    get:
-      operationId: getNamespace
-      tags: [Namespaces]
-      summary: Read one namespace
-      description: >-
-        `namespaces.read`, for a namespace the caller reaches; or any key
-        bound to it. A namespace the caller does not reach is answered as one
-        that is not there. With its quota, and `held`: what its sandboxes
-        and volumes hold of it now.
-      responses:
-        "200":
-          description: The namespace, with what it holds.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Namespace" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          description: >-
-            What its sandboxes and volumes hold could not be read on this
-            host, and the message says what the disk said.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-    delete:
-      operationId: deleteNamespace
-      tags: [Namespaces]
-      summary: Delete a namespace
-      description: |
-        `namespaces.write` on a global key or a session. No namespace is
-        special: any of them can be deleted.
-
-        **Refused, `409`, while it holds anything**, and the answer counts
-        what by kind, unless `force=true`: every machine and volume in it
-        goes, and a mistyped name should not be what costs that. An empty
-        namespace is deleted without it.
-
-        Deleting is a state, not a statement. The answer is `202` with the
-        namespace `deleting`, and from that moment every route under it
-        answers `404` and every key bound to it `401`. This daemon then
-        destroys its sandboxes, builds, tunnels and volumes, and removes
-        everything kept for it — its images, its shared brokers and its CA.
-        Once nothing of it is left, its members and keys go and it is in no
-        answer at all; its name stays its own, and is never another's. A
-        daemon restarted part way through finishes what it started.
-
-        Asked again while it is being deleted, it is the same `202`.
-      parameters:
-        - name: force
-          in: query
-          required: false
-          description: Delete everything it holds, rather than refuse to.
-          schema: { type: boolean, default: false }
-      responses:
-        "202":
-          description: Being deleted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Namespace" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: >-
-            It holds something, and `force` was not given: what, counted by
-            kind.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NamespaceNotEmpty" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/quota:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    put:
-      operationId: setNamespaceQuota
-      tags: [Namespaces]
-      summary: Set a namespace's quota
-      description: |
-        `namespaces.write` on a global key or a session: a namespace's
-        ceiling is the platform's to set, and never its members', whatever
-        their scopes there.
-
-        **The quota is replaced whole**: a ceiling left out is none, so `{}`
-        takes every ceiling away. What each counts is `NamespaceQuota`'s.
-
-        **A field it does not have is refused** `400`, naming it, and
-        nothing changes: `{"cpus": 12, "memory": "48Gi"}` read as `{"cpus":
-        12}` would take the memory and disk ceilings away and answer `200`.
-
-        A namespace being deleted is answered `404`: what it holds is going
-        whatever its quota says.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/NamespaceQuota" }
-      responses:
-        "200":
-          description: The namespace, with its quota as it now is and what it holds.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Namespace" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "500":
-          description: >-
-            The quota is set, and what its sandboxes and volumes hold could
-            not be read on this host: the message says what the disk said.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-  /v1/namespaces/{namespace}/keys:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    get:
-      operationId: listNamespaceKeys
-      tags: [Keys]
-      summary: The keys bound to a namespace
-      description: >-
-        `keys.admin` in this namespace. The caller's own keys bound to it;
-        an administrator's call lists everybody's, and may ask for one
-        person's. Global keys are not here (`GET /v1/keys`).
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Cursor"
-        - name: owner
-          in: query
-          description: >-
-            Only this person's keys. A caller who is not an administrator
-            may name only themselves.
-          schema: { type: string, format: email }
-      responses:
-        "200":
-          description: The keys, without their secrets.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/KeyPage" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    post:
-      operationId: createNamespaceKey
-      tags: [Keys]
-      summary: Mint a key bound to a namespace
-      description: >-
-        A key that reaches this namespace, for its life, and nothing outside
-        it. As `POST /v1/keys`, with what the caller holds here: it needs
-        `keys.admin` in this namespace and grants only scopes it holds here.
-        The owner must be a member of the namespace, or an administrator.
-        Such a key can never hold `namespaces.read` or `namespaces.write`,
-        which are about every namespace; and a key bound to a namespace
-        mints only keys bound to the same one.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/KeyRequest" }
-      responses:
-        "201":
-          description: Minted.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/KeyCreated" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/keys/{keyId}:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-      - name: keyId
-        in: path
-        required: true
-        schema: { type: string }
-    delete:
-      operationId: revokeNamespaceKey
-      tags: [Keys]
-      summary: Revoke a key bound to a namespace
-      description: >-
-        As `DELETE /v1/keys/{keyId}`, for a key bound to this namespace. One
-        that is not bound to it is not one here: revoking it here revokes
-        nothing.
-      responses:
-        "204":
-          description: Revoked, or was already.
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/members:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-    get:
-      operationId: listNamespaceMembers
-      tags: [Members]
-      summary: List a namespace's members
-      description: >-
-        `namespaces.read` on a global key or a session, for a namespace the
-        caller reaches; or `members.admin` in this namespace, held through a
-        membership or by a key bound to it.
-      responses:
-        "200":
-          description: The members, by address.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MemberList" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/namespaces/{namespace}/members/{email}:
-    parameters:
-      - $ref: "#/components/parameters/NamespaceInPath"
-      - name: email
-        in: path
-        required: true
-        description: The member's address, as they sign in with it.
-        schema: { type: string, format: email }
-    put:
-      operationId: putNamespaceMember
-      tags: [Members]
-      summary: Add or change a member
-      description: |
-        `namespaces.write`, or `members.admin` in this namespace.
-
-        **A row cannot let anybody in.** The person must already be let in
-        by this daemon's configuration (`access.admins`, `access.users`), and
-        what they may do in the namespace is these scopes intersected with
-        what the configuration lets them do, at every request: a membership
-        only ever narrows it (`Member.effectiveScopes`).
-
-        A member may be given only scopes the caller holds here; any other is
-        refused `403`. `namespaces.read` and `namespaces.write` are about
-        every namespace, and are never a member's.
-
-        A namespace whose members a directory writes is read-only here, and
-        answers `409` naming the directory.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [scopes]
-              properties:
-                scopes:
-                  type: array
-                  minItems: 1
-                  description: A scope named twice is held once.
-                  items: { $ref: "#/components/schemas/Scope" }
-      responses:
-        "200":
-          description: The member, as they now are.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Member" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: A directory writes this namespace's members, and is where they are changed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      operationId: deleteNamespaceMember
-      tags: [Members]
-      summary: Remove a member
-      description: >-
-        `namespaces.write`, or `members.admin` in this namespace. Their keys
-        bound to this namespace stop working at their next request, and are
-        kept, unusable, for the record.
-      responses:
-        "204":
-          description: Removed.
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: A directory writes this namespace's members, and is where they are changed.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
 components:
   securitySchemes:
     apiKey:
@@ -5169,11 +4628,6 @@ components:
       in: query
       description: How far back to go. `7d` when it is not said.
       schema: { $ref: "#/components/schemas/CostWindow" }
-    NamespaceInPath:
-      name: namespace
-      in: path
-      required: true
-      schema: { $ref: "#/components/schemas/NamespaceName" }
     Limit:
       name: limit
       in: query
@@ -5213,7 +4667,7 @@ components:
       in: path
       required: true
       description: >-
-        As returned by `POST /v1/namespaces/{namespace}/images` — derived from the manifest digest, not
+        As returned by `POST /v1/images` — derived from the manifest digest, not
         the reference. Two tags pointing at the same content are one id.
       schema: { type: string }
       example: img_9f2a1c4e7b30
@@ -5221,7 +4675,7 @@ components:
       name: buildId
       in: path
       required: true
-      description: As returned by `POST /v1/namespaces/{namespace}/builds`.
+      description: As returned by `POST /v1/builds`.
       schema: { type: string }
       example: bld_4c1e9a7f2b06
     RuleName:
@@ -5261,7 +4715,7 @@ components:
       in: path
       required: true
       description: >-
-        As minted by `POST /v1/namespaces/{namespace}/sandboxes`: a UUID, never reused on this host.
+        As minted by `POST /v1/sandboxes`: a UUID, never reused on this host.
         What a person calls the sandbox is `labels.name`, and this is not it —
         so anything that is not a UUID is a `400` saying so, rather than a
         `404` that reads as a sandbox that might exist under that name.
@@ -5326,7 +4780,7 @@ components:
   responses:
     Unauthorized:
       description: >-
-        No key or session, or one this daemon will not accept — missing,
+        No key or session, or one this server will not accept — missing,
         expired, revoked, or belonging to somebody it no longer lets in. One
         answer for all of them on purpose: telling a caller which it is tells
         somebody holding a stolen key whether it is worth keeping.
@@ -5346,8 +4800,7 @@ components:
       description: >-
         The key is valid and does not hold the scope this route needs — or it
         acts only on its `own` sandboxes (`KeyReach`) and this route speaks
-        for the whole host, or it is bound to a namespace and this route is
-        about the whole control plane, or the sandbox is `sealed` and this
+        for the whole host, or the sandbox is `sealed` and this
         route would run something in it or write to it (code `sealed`).
         Distinct from `401`, which is a key that is missing, expired or
         revoked.
@@ -5359,17 +4812,14 @@ components:
         No such thing here. For a key that acts only on its `own` sandboxes
         (`KeyReach`), a sandbox it did not make is no such thing: the answer
         is this one, with the same body, whether the sandbox is somebody
-        else's or was never there. So is a namespace the caller does not
-        reach, one being deleted and one that is not there — and a sandbox,
-        a volume or a build in another namespace than the one the path names,
-        to every caller.
+        else's or was never there.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     TunnelNotKept:
       description: >-
         The change could not be written down on this host, so it was not
-        made: a tunnel a restart of the daemon would forget is one nothing
+        made: a tunnel a restart of the server would forget is one nothing
         could take away again. The message says what the disk said.
       content:
         application/json:
@@ -5464,21 +4914,21 @@ components:
         instance:
           type: string
           description: >-
-            This daemon's name among those on this host (`-instance`, `main`
+            This server's name among those on this host (`-instance`, `main`
             unless it was given another): one to six lowercase letters and
             digits. Its state directory is bound to it, and everything it makes
             on the host outside a sandbox's namespace is named by it — its
             table (`runyard_sandboxes_<instance>`), its sandboxes' namespaces
             (`runyard-<instance>-<id>`) and their links (`ry<instance>-<slot>`)
-            — so that several daemons, each with a name, a state directory, an
+            — so that several servers, each with a name, a state directory, an
             address and a subnet of its own, run side by side on one host.
           example: main
         protocol:
           type: integer
           description: >-
             The wire protocol this build speaks. Checked at startup. 2 is the
-            first where a sandbox's id is a UUID this daemon mints and creation
-            is `POST /v1/namespaces/{namespace}/sandboxes`; a caller written against 1 names its
+            first where a sandbox's id is a UUID this server mints and creation
+            is `POST /v1/sandboxes`; a caller written against 1 names its
             sandboxes, and every such call is now a `400`. 3 is the first where
             `spec.brokers` is a list of objects rather than of names, so a
             one-off upstream can be written into a spec; a list of strings is
@@ -5568,7 +5018,7 @@ components:
         A sandbox's firewall is in its own namespace, but what it is allowed to
         send to the internet crosses this host's own stack, where every
         firewall on this host runs and a drop in any of them is final. So what
-        this daemon changed to let it out is said here, and so is anything it
+        this server changed to let it out is said here, and so is anything it
         found in the way that it did not change — a firewall somebody else
         chose is reported rather than edited.
       required: [enabled, forwarding, warnings]
@@ -5581,7 +5031,7 @@ components:
         subnet:
           type: string
           description: >-
-            The range each sandbox's /30 is drawn from: the daemon's
+            The range each sandbox's /30 is drawn from: the server's
             `-subnet`, `172.30.0.0/16` unless it was given another.
           example: 172.30.0.0/16
         forwarding:
@@ -5718,15 +5168,9 @@ components:
 
     Build:
       type: object
-      required: [id, namespace, repository, recipe, state, steps, createdAt]
+      required: [id, repository, recipe, state, steps, createdAt]
       properties:
         id: { type: string, example: bld_4c1e9a7f2b06 }
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          readOnly: true
-          description: >-
-            The namespace it is in, as its path says: written in the body too,
-            so that a build copied out of its URL still says where it is.
         repository: { type: string, example: coder }
         recipe: { type: string }
         args:
@@ -5764,7 +5208,7 @@ components:
         | `running` | pulling its `FROM`, running its steps, or pushing |
         | `succeeded` | pushed and cached: `image` and `imageId` say what |
         | `failed` | it will not succeed; `error` says why |
-        | `cancelled` | stopped by `DELETE`, or by the daemon going down |
+        | `cancelled` | stopped by `DELETE`, or by the server going down |
       enum: [queued, running, succeeded, failed, cancelled]
 
     BuildStep:
@@ -5796,7 +5240,7 @@ components:
         cached:
           type: boolean
           description: >-
-            It was not run: an earlier build in the namespace ran the same
+            It was not run: an earlier build ran the same
             step over the same image and the same steps before it, and its
             layer is reused. A step changed by the recipe, and every one
             after it, runs again; one that fetches from the network is not
@@ -5821,7 +5265,7 @@ components:
 
         Nothing here names a host path, a device or a credential, except
         `secrets`, which is write-only and never read back. The rest are this
-        daemon's configuration; the test for whether a field belongs is
+        server's configuration; the test for whether a field belongs is
         whether it is a property of the MACHINE rather than of the host it
         happens to be on.
       required: [image]
@@ -5902,7 +5346,7 @@ components:
             the sandbox's disk.
 
             The values are kept on this host, beside the machine and readable
-            by this daemon alone, only to boot it again; they go when the
+            by this server alone, only to boot it again; they go when the
             sandbox is deleted. They are handed to the guest over the host's
             own channel to its agent, never on its spec disk, its network or
             its command line.
@@ -5950,8 +5394,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/SandboxBrokerSpec" }
           description: |
-            What this sandbox may reach: its namespace's shared brokers by
-            name, and one-off
+            What this sandbox may reach: the shared brokers by name, and
+            one-off
             brokers with their upstream written out. See the Brokers section
             for the difference.
 
@@ -5974,7 +5418,7 @@ components:
         principal:
           allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
           description: |
-            The principal of this namespace the sandbox is, fixed for its
+            The principal the sandbox is, fixed for its
             life: its certificate carries the principal after its own URI, so
             a broker sees the same principal whichever sandbox calls. Absent
             is none, as a sandbox always was.
@@ -5990,11 +5434,11 @@ components:
           additionalProperties: { type: string }
           description: >-
             The caller's own, stored and echoed and never interpreted. What this
-            daemon routes on is elsewhere; this is what the caller uses to find
+            server routes on is elsewhere; this is what the caller uses to find
             a machine again.
 
             `name` is the one with a convention: it is what the console shows in
-            place of the id, and `GET /v1/namespaces/{namespace}/sandboxes?label=name=…` finds it. It
+            place of the id, and `GET /v1/sandboxes?label=name=…` finds it. It
             is still only a label — not unique, not checked, and not the
             sandbox's identity, which is the id.
           example: { name: pr-1234-review, owner: runyard, session: "1234" }
@@ -6004,7 +5448,7 @@ components:
       description: >-
         Letters, digits, `_`, `.` and `-`, starting with a letter or a digit:
         it goes into a certificate's URI as it is, so nothing in it is ever
-        escaped. Unique in its namespace.
+        escaped. Unique on this server.
       pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
       example: 3f1c9a7e2b6d4058a1c3e9f7b2d4a6c8
 
@@ -6023,12 +5467,9 @@ components:
 
     Principal:
       type: object
-      required: [id, namespace, labels, createdAt]
+      required: [id, labels, createdAt]
       properties:
         id: { $ref: "#/components/schemas/PrincipalId" }
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          readOnly: true
         labels:
           type: object
           additionalProperties: { type: string }
@@ -6055,6 +5496,21 @@ components:
       properties:
         principal: { $ref: "#/components/schemas/PrincipalId" }
 
+    VolumeClone:
+      type: object
+      description: What `POST .../volumes/{volumeName}/clone` makes.
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          allOf: [{ $ref: "#/components/schemas/VolumeName" }]
+          description: The new volume's name, which no volume has.
+        principal:
+          allOf: [{ $ref: "#/components/schemas/PrincipalId" }]
+          description: >-
+            The principal the clone is bound to. Absent, the one the source
+            is bound to, or none.
+
     VolumeName:
       type: string
       description: >-
@@ -6065,15 +5521,9 @@ components:
 
     Volume:
       type: object
-      required: [name, namespace, digest, bytes, allocatedBytes, createdAt, lastUsedAt]
+      required: [name, digest, bytes, allocatedBytes, createdAt, lastUsedAt]
       properties:
         name: { $ref: "#/components/schemas/VolumeName" }
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          readOnly: true
-          description: >-
-            The namespace it is in, as its path says: written in the body too,
-            so that a volume copied out of its URL still says where it is.
         digest:
           type: string
           description: >-
@@ -6127,7 +5577,7 @@ components:
         route:
           type: string
           description: The route it came through.
-          example: POST /v1/namespaces/{namespace}/sandboxes/{sandboxId}/commands
+          example: POST /v1/sandboxes/{sandboxId}/commands
     Creator:
       type: object
       description: >-
@@ -6635,7 +6085,7 @@ components:
           description: >-
             The sandbox's network namespace, for an operator: `ip netns exec
             <namespace> nft list ruleset` is its firewall as the kernel has it.
-            Named for this daemon's instance and the sandbox.
+            Named for this server's instance and the sandbox.
           example: runyard-main-0192f7a4-5b1e-7c3d-9a2f-3b8c1d2e4f60
         tap:
           type: string
@@ -6646,7 +6096,7 @@ components:
           description: >-
             The sandbox's only device in the host's own namespace: its link to
             the host, for an operator reading `ip link` there. Named for this
-            daemon's instance and the sandbox's /30, in hexadecimal.
+            server's instance and the sandbox's /30, in hexadecimal.
           example: rymain-100
         guest: { type: string, example: 172.30.4.2 }
         host:
@@ -6709,19 +6159,13 @@ components:
 
     Sandbox:
       type: object
-      required: [id, namespace, state, spec, createdAt]
+      required: [id, state, spec, createdAt]
       properties:
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          readOnly: true
-          description: >-
-            The namespace it is in, as its path says: written in the body too,
-            so that a sandbox copied out of its URL still says where it is.
         id:
           type: string
           format: uuid
           description: >-
-            Minted by this daemon and never reused on this host, so it names
+            Minted by this server and never reused on this host, so it names
             one machine for the whole of its life and no other machine after
             it. It is what the sandbox's identity is made of.
           example: 0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53
@@ -6799,7 +6243,7 @@ components:
               type: integer
               description: >-
                 The guest API version the agent says it speaks: what this
-                daemon talks to it in, and nothing more.
+                server talks to it in, and nothing more.
             bootMs:
               type: integer
               description: >-
@@ -6861,10 +6305,10 @@ components:
     BrokerKind:
       type: string
       description: >-
-        `shared` is the namespace's shared broker of that name. `one_off` is an
+        `shared` is the shared broker of that name. `one_off` is an
         upstream declared for this sandbox alone. `client` is one a caller of
         this API is serving right now, with `GET
-        /v1/namespaces/{namespace}/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
+        /v1/sandboxes/{id}/brokers/{name}/serve`, and is gone when it stops.
       enum: [shared, one_off, client]
       # Named, because the generator's own name for the last one is `Client`,
       # which is what it calls the client it generates.
@@ -6892,7 +6336,7 @@ components:
           default: true
           description: >-
             Whether what the sandbox does through it is recorded
-            (`GET /v1/namespaces/{namespace}/activity`). `false` carries its
+            (`GET /v1/activity`). `false` carries its
             connections exactly as `true` does and records none of them, nor
             any refused: for a broker whose caller keeps its own record of
             every exchange, which a second one would only duplicate.
@@ -6910,7 +6354,7 @@ components:
           default: true
           description: >-
             Whether what the sandbox does through it is recorded
-            (`GET /v1/namespaces/{namespace}/activity`). `false` carries its
+            (`GET /v1/activity`). `false` carries its
             connections exactly as `true` does and records none of them, nor
             any refused: for a broker whose caller keeps its own record of
             every exchange, which a second one would only duplicate.
@@ -6956,7 +6400,7 @@ components:
         trustedUrl:
           type: string
           description: >-
-            The broker's trusted plane, which only this daemon reaches, with a
+            The broker's trusted plane, which only this server reaches, with a
             principal's trusted certificate: `https`, with no user or password,
             verified with `ca` as `url` is. With `auth: jwt` it may be `http`
             too, and is reached with a token made from that certificate, as
@@ -6969,11 +6413,11 @@ components:
       description: >-
         How the upstream is told which sandbox is calling. `certificate`, what
         an upstream is when nothing says otherwise: the sandbox's client
-        certificate on a TLS connection this daemon dials, carrying what the
+        certificate on a TLS connection this server dials, carrying what the
         sandbox sent as it wrote it — each request of an HTTP/1.x connection
         sent on in turn, so that each is recorded (`GET
-        /v1/namespaces/{namespace}/activity`), and any other connection's
-        bytes as they were sent. `jwt`: this daemon serves the
+        /v1/activity`), and any other connection's
+        bytes as they were sent. `jwt`: this server serves the
         sandbox's connection as HTTP/1.1 and sends each request on with
         `Authorization: Bearer <token>`, over whatever the sandbox sent, and
         presents no certificate. The token is a JWS, ES256, whose header's
@@ -6989,7 +6433,7 @@ components:
 
     Broker:
       type: object
-      description: A shared broker, as its namespace declares it.
+      description: A shared broker, as it was declared.
       required: [name, url]
       properties:
         name: { $ref: "#/components/schemas/BrokerName" }
@@ -7308,7 +6752,7 @@ components:
           type: integer
           description: >-
             How far apart the points are meant to be. A gap wider than this is
-            time the daemon was not running.
+            time the server was not running.
           example: 10
         points:
           type: array
@@ -7321,7 +6765,7 @@ components:
       description: >-
         One reading of the host. A field the host could not be read for is
         absent, and the CPU share is absent on the first reading after the
-        daemon starts: it is a difference between two.
+        server starts: it is a difference between two.
       properties:
         at: { type: string, format: date-time }
         cpus:
@@ -7385,7 +6829,7 @@ components:
     CostRates:
       type: object
       description: >-
-        What an hour of each thing costs now, in `currency`, as the daemon's
+        What an hour of each thing costs now, in `currency`, as the server's
         configuration names it.
       required: [currency, vcpuHour, memoryGiBHour, diskGiBHour, tunnelHour]
       properties:
@@ -7468,9 +6912,8 @@ components:
         One thing that cost anything in the window, or was held in it: what
         it was when it was last seen, what it used and cost, and, while it is
         held, what it costs an hour.
-      required: [namespace, kind, id, labels, live, perHour, firstSeenAt, lastSeenAt, use, charge, cost]
+      required: [kind, id, labels, live, perHour, firstSeenAt, lastSeenAt, use, charge, cost]
       properties:
-        namespace: { $ref: "#/components/schemas/NamespaceName" }
         kind: { $ref: "#/components/schemas/CostKind" }
         id:
           type: string
@@ -7505,20 +6948,12 @@ components:
         charge: { $ref: "#/components/schemas/CostCharge" }
         cost: { type: number, format: double, description: What it cost over the window. }
 
-    NamespaceCost:
-      type: object
-      required: [namespace, total, perHour]
-      properties:
-        namespace: { $ref: "#/components/schemas/NamespaceName" }
-        total: { $ref: "#/components/schemas/CostAmounts" }
-        perHour: { type: number, format: double, description: What it costs an hour now. }
-
     CostReport:
       type: object
       description: >-
         What was spent over a window, step by step and thing by thing, and
         what is spent an hour now.
-      required: [currency, rates, window, from, to, step, total, running, series, resources, namespaces]
+      required: [currency, rates, window, from, to, step, total, running, series, resources]
       properties:
         currency: { type: string, example: USD }
         rates: { $ref: "#/components/schemas/CostRates" }
@@ -7545,10 +6980,6 @@ components:
             Everything that cost anything in the window, or was held in it,
             live or not, the most expensive first: at most 500.
           items: { $ref: "#/components/schemas/CostResource" }
-        namespaces:
-          type: array
-          description: Each namespace's, the most expensive first.
-          items: { $ref: "#/components/schemas/NamespaceCost" }
 
     MetricsWindow:
       type: string
@@ -7900,18 +7331,15 @@ components:
         | `images.read` | see the image cache |
         | `images.write` | pull and delete images, and build them |
         | `network.write` | change a running sandbox's egress policy and its brokers |
-        | `brokers.admin` | declare, replace and withdraw a namespace's shared brokers |
+        | `brokers.admin` | declare, replace and withdraw the shared brokers |
         | `principals.read` | see principals, and read brokers' trusted documents for them |
         | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
-        | `activity.read` | read what a namespace's sandboxes did through their brokers, bodies included |
+        | `activity.read` | read what the sandboxes did through their brokers, bodies included |
         | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
         | `files.read` | read bytes out of a sandbox, including its process and socket tables |
         | `files.write` | write bytes into a sandbox |
         | `exec` | run commands and processes inside a sandbox |
         | `keys.admin` | mint and revoke its owner's keys, within its own scopes — an administrator's, anybody's |
-        | `namespaces.read` | list namespaces and read one, with its members: global keys and people only |
-        | `namespaces.write` | create namespaces, and manage any namespace's members: global keys and people only |
-        | `members.admin` | manage the members of one namespace: held through a membership, or by a key bound to it, and never by a global key |
 
         `exec` is separate from everything because it is arbitrary code in the
         sandbox, which a caller that only starts and stops machines has no need
@@ -7935,12 +7363,6 @@ components:
         carries what a sandbox sent and was answered — an API's JSON, a
         tool's arguments — which a caller that only watches machines has no
         need of.
-
-        `namespaces.read` and `namespaces.write` are about every namespace,
-        and a key bound to one can never hold them. `members.admin` is
-        about one, and only a person in it, or a key bound to it, holds it;
-        it never lets its holder give anybody more than the holder has, or
-        than this daemon's configuration lets that person do.
       enum:
         - sandboxes.read
         - sandboxes.write
@@ -7956,9 +7378,6 @@ components:
         - files.write
         - exec
         - keys.admin
-        - namespaces.read
-        - namespaces.write
-        - members.admin
 
     KeyRequest:
       type: object
@@ -8024,16 +7443,16 @@ components:
         To an `own` key:
 
         - **A sandbox that is not its own is one that does not exist.** Every
-          route under `/v1/namespaces/{namespace}/sandboxes/{sandboxId}` answers `404`, with one
+          route under `/v1/sandboxes/{sandboxId}` answers `404`, with one
           body, for somebody else's sandbox and for an id nothing has — before
           anything else about the request is looked at, so no other answer
           tells the two apart.
-        - **A list holds only its own**: `GET /v1/namespaces/{namespace}/sandboxes`, `/v1/namespaces/{namespace}/volumes`
-          and `/v1/namespaces/{namespace}/tunnels`, and the counts of them in `GET /v1/namespaces/{namespace}/counts`.
+        - **A list holds only its own**: `GET /v1/sandboxes`, `/v1/volumes`
+          and `/v1/tunnels`, and the counts of them in `GET /v1/counts`.
         - **A volume is its own when a sandbox it made first laid it down**
           (`Volume.createdBy`). A sandbox it makes may name a volume of its
           own or a name no volume has; any other is a `403`, which says
-          nothing of the volume. `DELETE /v1/namespaces/{namespace}/volumes/{name}` on one that is
+          nothing of the volume. `DELETE /v1/volumes/{name}` on one that is
           not its own answers as for a name no volume has.
         - **And a volume it laid down is its alone to attach.** No other
           caller boots a sandbox from it — not another key, not one that
@@ -8043,8 +7462,7 @@ components:
           could drop it still can, which is how its name is had again.
         - **What speaks for the whole host is refused**, `403`: what the host
           has been using and has promised (`GET /v1/host/…`), and declaring
-          or withdrawing a shared broker, which moves every sandbox in its
-          namespace given it.
+          or withdrawing a shared broker, which moves every sandbox given it.
         - **How many sandboxes use an image or a shared broker is left out**:
           most of them are not its own.
 
@@ -8076,9 +7494,6 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Scope" }
         sandboxes: { $ref: "#/components/schemas/KeyReach" }
-        namespace:
-          allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-          description: The namespace it is bound to. Absent for a global key.
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         lastUsedAt:
@@ -8197,7 +7612,7 @@ components:
         sandboxId:
           type: string
           format: uuid
-          description: The sandbox it publishes a port of. Set in `GET /v1/namespaces/{namespace}/tunnels`.
+          description: The sandbox it publishes a port of. Set in `GET /v1/tunnels`.
         port: { type: integer, example: 3000 }
         description: { type: string }
         access: { $ref: "#/components/schemas/TunnelAccess" }
@@ -8352,14 +7767,13 @@ components:
         after it, closed when the connection was; `stream`, a connection that
         was not HTTP, carried as bytes — or one refused before anything of it
         was read.
-      required: [id, seq, namespace, type, startedAt, endedAt, outcome, bytesIn, bytesOut]
+      required: [id, seq, type, startedAt, endedAt, outcome, bytesIn, bytesOut]
       properties:
         id: { $ref: "#/components/schemas/BrokerActivityID" }
         seq:
           type: integer
           format: int64
-          description: Its place in the namespace's feed.
-        namespace: { type: string }
+          description: Its place in the feed.
         sandbox:
           type: string
           format: uuid
@@ -8390,7 +7804,7 @@ components:
             naming a broker — with nothing sent anywhere; `unreachable`, a
             broker that could not be reached or would not take it; `broken`,
             cut part of the way; `lost`, standing for records that came faster
-            than the daemon could keep them, how many in `reason`.
+            than the server could keep them, how many in `reason`.
         reason:
           type: string
           description: Why, for anything but `ok`. A sentence, never a credential.
@@ -8483,7 +7897,7 @@ components:
       type: object
       description: |
         This host's relay: the separate service that carries visitors from the
-        gateway into sandboxes, and keeps doing so while this daemon restarts.
+        gateway into sandboxes, and keeps doing so while this server restarts.
       required: [reachable, docked]
       properties:
         reachable:
@@ -8537,7 +7951,7 @@ components:
           minimum: 0
           description: >-
             The volumes, held by a sandbox or not, which the disk is of — as
-            `GET /v1/namespaces/{namespace}/volumes` lists them.
+            `GET /v1/volumes` lists them.
           example: 9
         diskBytes:
           type: integer
@@ -8605,11 +8019,11 @@ components:
       type: object
       description: >-
         Each is what its own list would hold, filters left off: every sandbox
-        `GET /v1/namespaces/{namespace}/sandboxes` lists, every tunnel `GET /v1/namespaces/{namespace}/tunnels` does, and so
+        `GET /v1/sandboxes` lists, every tunnel `GET /v1/tunnels` does, and so
         on. Absent is a count this key may not read. For a key that acts only
         on its `own` sandboxes the sandboxes, tunnels and volumes are its own,
-        as those lists are, and the images and shared brokers are the
-        namespace's, as theirs are.
+        as those lists are, and the images and shared brokers are all of
+        them, as theirs are.
       properties:
         sandboxes: { type: integer, minimum: 0 }
         tunnels: { type: integer, minimum: 0 }
@@ -8618,7 +8032,7 @@ components:
         brokers:
           type: integer
           minimum: 0
-          description: The namespace's shared brokers, as `GET /v1/namespaces/{namespace}/brokers` lists them.
+          description: The shared brokers, as `GET /v1/brokers` lists them.
 
     HostTunnels:
       allOf:
@@ -8649,7 +8063,7 @@ components:
 
     AuthMethods:
       type: object
-      description: How a person may sign in to this daemon's console.
+      description: How a person may sign in to this server's console.
       required: [google, password]
       properties:
         google:
@@ -8663,7 +8077,7 @@ components:
 
     PasswordSignIn:
       type: object
-      description: An address, and the password the daemon's htpasswd file holds for it.
+      description: An address, and the password the server's htpasswd file holds for it.
       required: [email, password]
       additionalProperties: false
       properties:
@@ -8678,206 +8092,13 @@ components:
 
         | value | what happened |
         |---|---|
-        | `not_allowed` | Google vouched for the address, and this daemon does not let it in |
+        | `not_allowed` | Google vouched for the address, and this server does not let it in |
         | `unverified` | the account's address is not one Google has verified, so it is nobody's |
         | `expired` | the sign-in was not started here, was used already, or took longer than ten minutes |
         | `cancelled` | the person did not finish signing in with Google |
         | `failed` | Google's answer could not be checked, or the database did not answer |
       enum: [not_allowed, unverified, expired, cancelled, failed]
       x-enum-varnames: [SignInNotAllowed, SignInUnverified, SignInExpired, SignInCancelled, SignInFailed]
-
-    NamespaceName:
-      type: string
-      pattern: "^[a-z][a-z0-9-]{0,38}[a-z0-9]$"
-      description: >-
-        A namespace's name, which is also its id: 2 to 40 lowercase letters,
-        digits and hyphens, starting with a letter and ending with a letter
-        or a digit, so that it is safe in a hostname. Unique per control
-        plane, and never reused: a deleted namespace's name stays its own.
-      example: acme
-
-    NamespaceRequest:
-      type: object
-      required: [name]
-      properties:
-        name: { $ref: "#/components/schemas/NamespaceName" }
-        title:
-          type: string
-          maxLength: 200
-          description: What a person reads in a list. The name, when left out.
-        labels:
-          type: object
-          additionalProperties: { type: string }
-          description: The caller's own, stored and echoed and never interpreted.
-        quota: { $ref: "#/components/schemas/NamespaceQuota" }
-
-    NamespaceQuota:
-      type: object
-      additionalProperties: false
-      description: |
-        What a namespace's sandboxes may hold of the host together, each a
-        ceiling of its own. **A ceiling left out is none**, which is what a
-        namespace has until one is set; `0` is a ceiling, at which nothing
-        more of it may be held. Set by `PUT /v1/namespaces/{namespace}/quota`,
-        or when the namespace is made.
-
-        What a sandbox holds is what it is charged for (`GET
-        /v1/namespaces/{namespace}/costs`):
-
-        | | held by a sandbox that is |
-        |---|---|
-        | `cpus` | `creating`, `booting`, `ready` or `unreachable` — not `paused`, whose vCPUs are stopped |
-        | `memoryBytes` | those, and `paused`, which keeps its memory |
-        | `diskBytes` | any state but gone: its volume, at the size it may grow to. A volume no sandbox holds counts too, until it is deleted, and one not laid down yet counts at the size its sandbox asked for |
-
-        A create, a start or a resume that would take the namespace past a
-        ceiling is refused `403` `quota_exceeded`, and the message names the
-        ceiling, what is held, and by how much it would be passed. Only what
-        each adds is measured — a create adds all three, a start vCPUs and
-        memory, a resume vCPUs — so a ceiling lowered below what is held
-        stops nothing: it refuses what would add to it.
-      properties:
-        cpus:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The vCPUs its sandboxes may hold, together.
-          example: 16
-        memoryBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The memory its sandboxes may hold, together.
-          example: 68719476736
-        diskBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The disk its sandboxes and volumes may hold, together.
-          example: 1099511627776
-
-    Namespace:
-      type: object
-      required: [name, labels, state, createdAt, createdBy, quota]
-      properties:
-        name: { $ref: "#/components/schemas/NamespaceName" }
-        title: { type: string }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-        state:
-          type: string
-          enum: [active, deleting]
-          x-enum-varnames: [NamespaceActive, NamespaceDeleting]
-          description: >-
-            `deleting` from the moment a delete is asked for: from then on
-            nothing under it answers, every key bound to it is refused, and
-            what it holds is being destroyed. Once nothing is left it is in
-            no answer at all, and its name stays its own.
-        createdAt: { type: string, format: date-time }
-        createdBy:
-          type: string
-          format: email
-          description: Who made it.
-        quota: { $ref: "#/components/schemas/NamespaceQuota" }
-        held: { $ref: "#/components/schemas/NamespaceHeld" }
-
-    NamespaceHeld:
-      type: object
-      description: |
-        What a namespace's sandboxes and volumes hold of the host now, beside
-        its `quota`: on a read of one namespace and on the answer to setting
-        its quota, and absent from a list and from a create. Counted exactly
-        as its quota is admitted against — the table under `NamespaceQuota`: `cpus` for sandboxes `creating`, `booting`, `ready`
-        or `unreachable`; `memoryBytes` for those and `paused` ones;
-        `diskBytes` for every volume, held by a sandbox in any state or by
-        none, at the size it may grow to.
-
-        It may be above a ceiling: a ceiling lowered below what is held
-        stops nothing, and refuses what would add to it.
-      required: [cpus, memoryBytes, diskBytes]
-      properties:
-        cpus:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The vCPUs its sandboxes hold, together.
-          example: 2
-        memoryBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The memory its sandboxes hold, together.
-          example: 4294967296
-        diskBytes:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The disk its sandboxes and volumes hold, together.
-          example: 21474836480
-
-    NamespaceNotEmpty:
-      type: object
-      required: [error, holds]
-      properties:
-        error:
-          type: object
-          required: [code, message]
-          properties:
-            code: { $ref: "#/components/schemas/ErrorCode" }
-            message: { type: string }
-        holds: { $ref: "#/components/schemas/NamespaceHoldings" }
-
-    NamespaceHoldings:
-      type: object
-      description: >-
-        What a namespace holds, counted by kind: everything a forced delete
-        destroys. Its tunnels are its sandboxes', and go with them.
-      required: [sandboxes, volumes, images, builds, brokers, tunnels]
-      properties:
-        sandboxes: { type: integer, minimum: 0 }
-        volumes: { type: integer, minimum: 0 }
-        images: { type: integer, minimum: 0 }
-        builds: { type: integer, minimum: 0 }
-        brokers: { type: integer, minimum: 0 }
-        tunnels: { type: integer, minimum: 0 }
-
-    NamespaceList:
-      type: object
-      required: [namespaces]
-      properties:
-        namespaces:
-          type: array
-          items: { $ref: "#/components/schemas/Namespace" }
-        nextCursor:
-          type: string
-          description: Pass as `cursor` to continue. Absent means the end.
-
-    MemberList:
-      type: object
-      required: [members]
-      properties:
-        members:
-          type: array
-          items: { $ref: "#/components/schemas/Member" }
-
-    Member:
-      type: object
-      required: [email, scopes, effectiveScopes, addedAt]
-      properties:
-        email: { type: string, format: email }
-        scopes:
-          type: array
-          description: What the membership says they may do here.
-          items: { $ref: "#/components/schemas/Scope" }
-        effectiveScopes:
-          type: array
-          description: >-
-            `scopes` intersected with what this daemon's configuration lets
-            the person do, now: what they may actually do here. Empty for
-            somebody the configuration no longer lets in.
-          items: { $ref: "#/components/schemas/Scope" }
-        addedAt: { type: string, format: date-time }
 
     Me:
       type: object
@@ -8892,13 +8113,13 @@ components:
         picture:
           type: string
           description: >-
-            Where this daemon serves the picture Google gave, when the person
+            Where this server serves the picture Google gave, when the person
             has signed in and has one: `GET /v1/me/picture`, with the
             picture's version, so that the address changes when it does.
           example: /v1/me/picture?v=5f1c0e9a2b7d4c31
         admin:
           type: boolean
-          description: Named on this daemon's command line as an administrator, and so holding every scope.
+          description: Named on this server's command line as an administrator, and so holding every scope.
         scopes:
           type: array
           description: >-
@@ -8917,20 +8138,6 @@ components:
             id: { type: string }
             name: { type: string }
             sandboxes: { $ref: "#/components/schemas/KeyReach" }
-            namespace:
-              allOf: [{ $ref: "#/components/schemas/NamespaceName" }]
-              description: >-
-                The namespace the key is bound to. Absent for a global key.
-                A client holding a key bound to a namespace learns it here,
-                once, rather than being told it a second time.
-        namespaces:
-          type: array
-          description: >-
-            The namespaces this caller reaches, by name: exactly one for a key
-            bound to a namespace; for a global key or a person, the ones they
-            are a member of, or all of them for an administrator. None being
-            deleted.
-          items: { $ref: "#/components/schemas/NamespaceName" }
         sessionExpiresAt:
           type: string
           format: date-time
@@ -8946,9 +8153,6 @@ components:
         that name something about this HOST rather than about the request, and
         each has its own next move: pull something else, go to a different host,
         come back later. A shared `bad_request` cannot tell them apart.
-        `quota_exceeded` is the namespace's own ceiling (`NamespaceQuota`),
-        which is the same on every host: its next move is to free something,
-        or to have the quota raised.
       enum:
         - bad_request
         - unauthorized
@@ -8962,6 +8166,7 @@ components:
         - recipe_invalid
         - builds_unconfigured
         - volume_in_use
+        - volume_exists
         - volume_principal
         - broker_in_use
         - principal_in_use
@@ -8973,7 +8178,6 @@ components:
         - gapped
         - sandbox_unreachable
         - sandbox_failed
-        - quota_exceeded
         - capacity_exceeded
         - timeout
         - upstream_error

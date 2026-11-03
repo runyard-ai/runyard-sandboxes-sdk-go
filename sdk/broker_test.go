@@ -18,16 +18,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 )
 
 // brokered is a ready sandbox with the host's shared broker `claude`, and
-// the daemon it is on. The broker the tests serve, `llm`, is given by serving
+// the server it is on. The broker the tests serve, `llm`, is given by serving
 // it.
-func brokered(t *testing.T) (*fakedaemon.Daemon, *Sandbox) {
+func brokered(t *testing.T) (*fakeserver.Server, *Sandbox) {
 	t.Helper()
-	d, client := fake(t, fakedaemon.WithBrokers("claude"))
+	d, client := fake(t, fakeserver.WithBrokers("claude"))
 	sandbox, err := client.Create(t.Context(), "served", Spec{
 		Image:   "alpine",
 		Brokers: &[]genv1.SandboxBrokerSpec{{Name: "claude"}},
@@ -51,7 +51,7 @@ func serve(t *testing.T, sandbox *Sandbox) *BrokerListener {
 }
 
 // workload is a connection the workload makes to the broker's port.
-func workload(t *testing.T, d *fakedaemon.Daemon, sandbox *Sandbox) net.Conn {
+func workload(t *testing.T, d *fakeserver.Server, sandbox *Sandbox) net.Conn {
 	t.Helper()
 	conn, err := d.DialBroker(sandbox.ID.String(), "llm")
 	if err != nil {
@@ -121,7 +121,7 @@ func noise(seed byte, n int) []byte {
 }
 
 // Serving is what gives the sandbox the broker: the listener says where it
-// is, the daemon lists it for as long as the listener lasts, and the handle —
+// is, the server lists it for as long as the listener lasts, and the handle —
 // what the sandbox was when it was made — does not have it.
 func TestServingGivesTheSandboxABrokerAndSaysWhereItIs(t *testing.T) {
 	d, sandbox := brokered(t)
@@ -136,7 +136,7 @@ func TestServingGivesTheSandboxABrokerAndSaysWhereItIs(t *testing.T) {
 	}
 	llm, has := listed()["llm"]
 	if !has || llm.Kind != genv1.BrokerKindClient || llm.Port != listener.Port() || llm.Port == sandbox.Brokers["claude"] || llm.Port == 0 {
-		t.Errorf("the daemon lists %+v, %v; the listener says port %d", llm, has, listener.Port())
+		t.Errorf("the server lists %+v, %v; the listener says port %d", llm, has, listener.Port())
 	}
 	if listener.URL() != fmt.Sprintf("http://127.0.0.1:%d", llm.Port) {
 		t.Errorf("the listener says the broker is at %s", listener.URL())
@@ -156,7 +156,7 @@ func TestServingGivesTheSandboxABrokerAndSaysWhereItIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if after := listed(); len(after) != 1 || after["claude"].Kind != genv1.BrokerKindShared {
-		t.Errorf("once the listener is closed, the daemon lists %+v", after)
+		t.Errorf("once the listener is closed, the server lists %+v", after)
 	}
 	// Where it was is still what the listener says: it is what it was given.
 	if listener.Port() != llm.Port {
@@ -164,7 +164,7 @@ func TestServingGivesTheSandboxABrokerAndSaysWhereItIs(t *testing.T) {
 	}
 }
 
-// A daemon that gives a broker and does not say where has given nothing a
+// A server that gives a broker and does not say where has given nothing a
 // workload can be pointed at: the serve is refused, and hung up.
 func TestAnAnswerThatDoesNotSayThePortIsRefused(t *testing.T) {
 	for name, port := range map[string]string{"nothing": "", "not a number": "the usual", "no port": "0", "more than a port": "65536"} {
@@ -554,20 +554,20 @@ func TestAConnectionNobodyAcceptedIsNotHandedOverOnceTheSessionIsOver(t *testing
 			}
 			return true
 		},
-		"the daemon vanished": func(t *testing.T, listener *BrokerListener, socket *websocket.Conn) bool {
+		"the server vanished": func(t *testing.T, listener *BrokerListener, socket *websocket.Conn) bool {
 			t.Helper()
 			_ = socket.CloseNow()
 			session, ok := listener.session.(*yamux.Session)
 			if !ok {
 				t.Fatalf("its session is a %T", listener.session)
 			}
-			soon(t, session.CloseChan(), "the session did not end with its daemon")
+			soon(t, session.CloseChan(), "the session did not end with its server")
 			return false
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, sandbox := brokered(t)
-			sockets, sessions := daemonEnd(t, d)
+			sockets, sessions := serverEnd(t, d)
 			listener := serve(t, sandbox)
 			defer func() { _ = listener.Close() }()
 			socket, session := <-sockets, <-sessions
@@ -672,11 +672,11 @@ func quiet() *yamux.Config {
 	return config
 }
 
-// daemonEnd answers the next serve in the daemon's place, and hands the test
-// the daemon's end of it: the socket, and the session on it. What the test
-// does to them is what a daemon that goes wrong does. The handler holds the
+// serverEnd answers the next serve in the server's place, and hands the test
+// the server's end of it: the socket, and the session on it. What the test
+// does to them is what a server that goes wrong does. The handler holds the
 // connection until the test has ended.
-func daemonEnd(t *testing.T, d *fakedaemon.Daemon) (<-chan *websocket.Conn, <-chan *yamux.Session) {
+func serverEnd(t *testing.T, d *fakeserver.Server) (<-chan *websocket.Conn, <-chan *yamux.Session) {
 	t.Helper()
 	sockets, sessions := make(chan *websocket.Conn, 1), make(chan *yamux.Session, 1)
 	over, ended := make(chan struct{}), make(chan struct{})
@@ -712,9 +712,9 @@ func daemonEnd(t *testing.T, d *fakedaemon.Daemon) (<-chan *websocket.Conn, <-ch
 	return sockets, sessions
 }
 
-func TestADaemonThatVanishesEndsTheListenerAndWhatIsOpen(t *testing.T) {
+func TestAServerThatVanishesEndsTheListenerAndWhatIsOpen(t *testing.T) {
 	d, sandbox := brokered(t)
-	sockets, sessions := daemonEnd(t, d)
+	sockets, sessions := serverEnd(t, d)
 	listener := serve(t, sandbox)
 	defer func() { _ = listener.Close() }()
 	socket, session := <-sockets, <-sessions
@@ -729,7 +729,7 @@ func TestADaemonThatVanishesEndsTheListenerAndWhatIsOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = accepted.Close() }()
-	// No goodbye: the connection is simply gone, as a daemon killed is.
+	// No goodbye: the connection is simply gone, as a server killed is.
 	if err := socket.CloseNow(); err != nil {
 		t.Fatal(err)
 	}
@@ -740,10 +740,10 @@ func TestADaemonThatVanishesEndsTheListenerAndWhatIsOpen(t *testing.T) {
 		t.Errorf("read %q, %v", read, err)
 	}
 	if _, err := accepted.Write([]byte("x")); err == nil {
-		t.Error("a write to a daemon that is gone")
+		t.Error("a write to a server that is gone")
 	}
 	_, err = listener.Accept()
-	if err == nil || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the line to the daemon was lost") {
+	if err == nil || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the line to the server was lost") {
 		t.Errorf("accept: %v", err)
 	}
 	// The listener is done, and stays done.
@@ -759,9 +759,9 @@ func TestADaemonThatVanishesEndsTheListenerAndWhatIsOpen(t *testing.T) {
 	}
 }
 
-func TestADaemonThatSpeaksNonsenseEndsTheListener(t *testing.T) {
+func TestAServerThatSpeaksNonsenseEndsTheListener(t *testing.T) {
 	d, sandbox := brokered(t)
-	sockets, _ := daemonEnd(t, d)
+	sockets, _ := serverEnd(t, d)
 	listener := serve(t, sandbox)
 	defer func() { _ = listener.Close() }()
 	// Text, where the frames of a session are binary.
@@ -773,31 +773,31 @@ func TestADaemonThatSpeaksNonsenseEndsTheListener(t *testing.T) {
 	}
 }
 
-func TestAServeTheDaemonRefusesIsItsError(t *testing.T) {
+func TestAServeTheServerRefusesIsItsError(t *testing.T) {
 	for _, c := range []struct {
 		name   string
-		serve  func(*fakedaemon.Daemon, *Sandbox) error
+		serve  func(*fakeserver.Server, *Sandbox) error
 		status int
 		code   string
 	}{
-		{"a name that is not a broker's", func(_ *fakedaemon.Daemon, s *Sandbox) error {
+		{"a name that is not a broker's", func(_ *fakeserver.Server, s *Sandbox) error {
 			_, err := s.ServeBroker(t.Context(), "Not_A_Name")
 			return err
 		}, http.StatusBadRequest, "bad_request"},
-		{"a sandbox that is not there", func(_ *fakedaemon.Daemon, s *Sandbox) error {
-			_, err := (&Sandbox{ID: uuid.New(), Namespace: s.Namespace, client: s.client}).ServeBroker(t.Context(), "llm")
+		{"a sandbox that is not there", func(_ *fakeserver.Server, s *Sandbox) error {
+			_, err := (&Sandbox{ID: uuid.New(), client: s.client}).ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusNotFound, "not_found"},
-		{"a sandbox that is not running", func(d *fakedaemon.Daemon, s *Sandbox) error {
+		{"a sandbox that is not running", func(d *fakeserver.Server, s *Sandbox) error {
 			d.Settle(s.ID, genv1.SandboxStateStopped, "")
 			_, err := s.ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusConflict, "conflict"},
-		{"the name of a broker it has", func(_ *fakedaemon.Daemon, s *Sandbox) error {
+		{"the name of a broker it has", func(_ *fakeserver.Server, s *Sandbox) error {
 			_, err := s.ServeBroker(t.Context(), "claude")
 			return err
 		}, http.StatusConflict, "conflict"},
-		{"a name another caller serves", func(_ *fakedaemon.Daemon, s *Sandbox) error {
+		{"a name another caller serves", func(_ *fakeserver.Server, s *Sandbox) error {
 			first, err := s.ServeBroker(t.Context(), "llm")
 			if err != nil {
 				return fmt.Errorf("the first to serve it: %w", err)
@@ -806,22 +806,22 @@ func TestAServeTheDaemonRefusesIsItsError(t *testing.T) {
 			_, err = s.ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusConflict, "conflict"},
-		{"a machine that cannot be told", func(d *fakedaemon.Daemon, s *Sandbox) error {
-			d.Intercept("serveSandboxBroker", fakedaemon.Refuse(http.StatusServiceUnavailable, genv1.ErrorCodeSandboxUnreachable, "the sandbox's agent does not answer"))
+		{"a machine that cannot be told", func(d *fakeserver.Server, s *Sandbox) error {
+			d.Intercept("serveSandboxBroker", fakeserver.Refuse(http.StatusServiceUnavailable, genv1.ErrorCodeSandboxUnreachable, "the sandbox's agent does not answer"))
 			_, err := s.ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusServiceUnavailable, "sandbox_unreachable"},
-		{"another key", func(_ *fakedaemon.Daemon, s *Sandbox) error {
+		{"another key", func(_ *fakeserver.Server, s *Sandbox) error {
 			s.client.key = "other"
 			_, err := s.ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusUnauthorized, "unauthorized"},
-		{"a key without the scope", func(d *fakedaemon.Daemon, s *Sandbox) error {
-			d.Intercept("serveSandboxBroker", fakedaemon.Refuse(http.StatusForbidden, genv1.ErrorCodeForbidden, "this key lacks network.write"))
+		{"a key without the scope", func(d *fakeserver.Server, s *Sandbox) error {
+			d.Intercept("serveSandboxBroker", fakeserver.Refuse(http.StatusForbidden, genv1.ErrorCodeForbidden, "this key lacks network.write"))
 			_, err := s.ServeBroker(t.Context(), "llm")
 			return err
 		}, http.StatusForbidden, "forbidden"},
-		{"a sandbox that is gone", func(_ *fakedaemon.Daemon, s *Sandbox) error {
+		{"a sandbox that is gone", func(_ *fakeserver.Server, s *Sandbox) error {
 			if err := s.Close(t.Context()); err != nil {
 				return err
 			}
@@ -842,17 +842,17 @@ func TestAServeTheDaemonRefusesIsItsError(t *testing.T) {
 		})
 	}
 
-	t.Run("in the daemon's words", func(t *testing.T) {
+	t.Run("in the server's words", func(t *testing.T) {
 		d, sandbox := brokered(t)
-		d.Intercept("serveSandboxBroker", fakedaemon.Refuse(http.StatusConflict, genv1.ErrorCodeConflict, "this sandbox already has a broker llm"))
+		d.Intercept("serveSandboxBroker", fakeserver.Refuse(http.StatusConflict, genv1.ErrorCodeConflict, "this sandbox already has a broker llm"))
 		_, err := sandbox.ServeBroker(t.Context(), "llm")
 		if refused, ok := errors.AsType[*Error](err); !ok || *refused != (Error{Status: http.StatusConflict, Code: "conflict", Message: "this sandbox already has a broker llm"}) {
 			t.Fatalf("%#v", err)
 		}
 	})
-	t.Run("by something that is not the daemon", func(t *testing.T) {
+	t.Run("by something that is not the server", func(t *testing.T) {
 		d, sandbox := brokered(t)
-		d.Intercept("serveSandboxBroker", fakedaemon.Answer(http.StatusBadGateway, "text/html", "<h1>Bad Gateway</h1>"))
+		d.Intercept("serveSandboxBroker", fakeserver.Answer(http.StatusBadGateway, "text/html", "<h1>Bad Gateway</h1>"))
 		_, err := sandbox.ServeBroker(t.Context(), "llm")
 		if refused, ok := errors.AsType[*Error](err); !ok || *refused != (Error{Status: http.StatusBadGateway, Message: "<h1>Bad Gateway</h1>"}) {
 			t.Fatalf("%#v", err)
@@ -870,9 +870,9 @@ func TestAServeNobodyAnswersIsAnError(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 	})
-	t.Run("a daemon that hangs up", func(t *testing.T) {
+	t.Run("a server that hangs up", func(t *testing.T) {
 		d, sandbox := brokered(t)
-		d.Intercept("serveSandboxBroker", fakedaemon.HangUp())
+		d.Intercept("serveSandboxBroker", fakeserver.HangUp())
 		if _, err := sandbox.ServeBroker(t.Context(), "llm"); err == nil || !strings.Contains(err.Error(), "serving broker llm of") {
 			t.Fatalf("%v", err)
 		}
@@ -930,30 +930,30 @@ func TestANameIsRefusedASecondCallerUntilTheFirstHasLeft(t *testing.T) {
 	}
 }
 
-// What takes the broker away from the daemon's side: each is the daemon
+// What takes the broker away from the server's side: each is the server
 // hanging up, which Accept says, and what is open is cut.
-func TestTheDaemonHangsUpWhenItTakesTheBrokerAway(t *testing.T) {
+func TestTheServerHangsUpWhenItTakesTheBrokerAway(t *testing.T) {
 	for _, c := range []struct {
 		name string
-		end  func(*testing.T, *fakedaemon.Daemon, *Sandbox)
+		end  func(*testing.T, *fakeserver.Server, *Sandbox)
 		// after is what serving it again is refused with, or nothing.
 		after string
 	}{
-		{"the sandbox is deleted", func(t *testing.T, _ *fakedaemon.Daemon, s *Sandbox) {
+		{"the sandbox is deleted", func(t *testing.T, _ *fakeserver.Server, s *Sandbox) {
 			t.Helper()
 			if err := s.Close(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}, "not_found"},
-		{"the sandbox is stopped", func(_ *testing.T, d *fakedaemon.Daemon, s *Sandbox) {
+		{"the sandbox is stopped", func(_ *testing.T, d *fakeserver.Server, s *Sandbox) {
 			d.Settle(s.ID, genv1.SandboxStateStopped, "")
 		}, "conflict"},
-		{"the sandbox is paused", func(_ *testing.T, d *fakedaemon.Daemon, s *Sandbox) {
+		{"the sandbox is paused", func(_ *testing.T, d *fakeserver.Server, s *Sandbox) {
 			d.Settle(s.ID, genv1.SandboxStatePaused, "")
 		}, "conflict"},
-		{"the broker is detached", func(t *testing.T, _ *fakedaemon.Daemon, s *Sandbox) {
+		{"the broker is detached", func(t *testing.T, _ *fakeserver.Server, s *Sandbox) {
 			t.Helper()
-			res, err := s.client.API().DetachSandboxBrokerWithResponse(t.Context(), fakedaemon.DefaultNamespace, s.ID, "llm")
+			res, err := s.client.API().DetachSandboxBrokerWithResponse(t.Context(), s.ID, "llm")
 			if err != nil || res.StatusCode() != http.StatusNoContent {
 				t.Fatalf("%v %s", err, res.Body)
 			}
@@ -977,7 +977,7 @@ func TestTheDaemonHangsUpWhenItTakesTheBrokerAway(t *testing.T) {
 				accepts <- err
 			})
 			err = soon(t, accepts, "the listener was not ended")
-			if err == nil || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the daemon hung up") {
+			if err == nil || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the server hung up") {
 				t.Errorf("accept: %v", err)
 			}
 			if _, err := io.ReadAll(accepted); err == nil || errors.Is(err, net.ErrClosed) {
@@ -1030,7 +1030,7 @@ func TestTheContextBoundsTheHandshakeAndNothingAfterIt(t *testing.T) {
 			t.Fatalf("%v", err)
 		}
 		if d.Calls("serveSandboxBroker") != 0 {
-			t.Error("the daemon was asked")
+			t.Error("the server was asked")
 		}
 	})
 	t.Run("ended after it", func(t *testing.T) {
@@ -1078,7 +1078,7 @@ func TestAnAcceptThatFailsEndsTheSession(t *testing.T) {
 	session := &noSession{}
 	listener := &BrokerListener{session: session, addr: "sandbox/llm"}
 	_, err := listener.Accept()
-	if !errors.Is(err, yamux.ErrConnectionWriteTimeout) || !strings.Contains(err.Error(), "the line to the daemon was lost") {
+	if !errors.Is(err, yamux.ErrConnectionWriteTimeout) || !strings.Contains(err.Error(), "the line to the server was lost") {
 		t.Fatalf("%v", err)
 	}
 	if !session.closed {
@@ -1087,9 +1087,9 @@ func TestAnAcceptThatFailsEndsTheSession(t *testing.T) {
 }
 
 // The session's keepalives are on, at the client's interval, with twice that
-// to answer in: they are the only way a daemon that went without closing
+// to answer in: they are the only way a server that went without closing
 // anything is ever noticed.
-func TestTheSessionAsksWhetherTheDaemonIsStillThere(t *testing.T) {
+func TestTheSessionAsksWhetherTheServerIsStillThere(t *testing.T) {
 	client, err := New("http://127.0.0.1:1")
 	if err != nil {
 		t.Fatal(err)
@@ -1106,10 +1106,10 @@ func TestTheSessionAsksWhetherTheDaemonIsStillThere(t *testing.T) {
 	}
 }
 
-// A daemon that goes silent without closing anything — a network that
+// A server that goes silent without closing anything — a network that
 // dropped — is noticed by the keepalives it does not answer, and the listener
 // is done.
-func TestADaemonThatGoesSilentIsNoticed(t *testing.T) {
+func TestAServerThatGoesSilentIsNoticed(t *testing.T) {
 	d, sandbox := brokered(t)
 	over, ended := make(chan struct{}), make(chan struct{})
 	d.Intercept("serveSandboxBroker", func(w http.ResponseWriter, r *http.Request, _ http.HandlerFunc) {
@@ -1126,7 +1126,7 @@ func TestADaemonThatGoesSilentIsNoticed(t *testing.T) {
 	})
 	sandbox.client.brokerKeepAlive = 10 * time.Millisecond
 	listener := serve(t, sandbox)
-	// The daemon's end first, so that closing the listener is not left
+	// The server's end first, so that closing the listener is not left
 	// waiting for a goodbye from it.
 	defer func() { _ = listener.Close() }()
 	defer func() {
@@ -1138,15 +1138,15 @@ func TestADaemonThatGoesSilentIsNoticed(t *testing.T) {
 		_, err := listener.Accept()
 		accepted <- err
 	})
-	err := soon(t, accepted, "a daemon that went silent was not noticed")
-	if !errors.Is(err, yamux.ErrKeepAliveTimeout) || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the line to the daemon was lost") {
+	err := soon(t, accepted, "a server that went silent was not noticed")
+	if !errors.Is(err, yamux.ErrKeepAliveTimeout) || errors.Is(err, net.ErrClosed) || !strings.Contains(err.Error(), "the line to the server was lost") {
 		t.Fatalf("accept: %v", err)
 	}
 }
 
-// Closing says goodbye: the daemon reads that this caller stopped serving —
+// Closing says goodbye: the server reads that this caller stopped serving —
 // a normal closure, 1000 — rather than finding the line gone.
-func TestClosingTheListenerTellsTheDaemon(t *testing.T) {
+func TestClosingTheListenerTellsTheServer(t *testing.T) {
 	// More than once: a close that only sometimes says so is one that does
 	// not.
 	for range 20 {
@@ -1173,8 +1173,8 @@ func TestClosingTheListenerTellsTheDaemon(t *testing.T) {
 		if err := listener.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if status := soon(t, closed, "the daemon did not see the caller leave"); status != websocket.StatusNormalClosure {
-			t.Fatalf("the daemon read a close with %d, want 1000", status)
+		if status := soon(t, closed, "the server did not see the caller leave"); status != websocket.StatusNormalClosure {
+			t.Fatalf("the server read a close with %d, want 1000", status)
 		}
 	}
 }
@@ -1229,10 +1229,10 @@ func TestShutdownOfAnHTTPServerOnTheListenerCutsWhatIsInFlight(t *testing.T) {
 }
 
 // A caller that keeps its own record of a broker's requests serves it
-// Unrecorded, and the daemon has it so; any other is recorded, as the daemon
+// Unrecorded, and the server has it so; any other is recorded, as the server
 // says of a broker given no word.
 func TestABrokerIsServedRecordedUnlessItsCallerSaysNot(t *testing.T) {
-	recordOf := func(d *fakedaemon.Daemon, sandbox *Sandbox, name string) bool {
+	recordOf := func(d *fakeserver.Server, sandbox *Sandbox, name string) bool {
 		t.Helper()
 		for _, s := range d.Sandboxes() {
 			if s.Id != sandbox.ID || s.Brokers == nil {
@@ -1244,7 +1244,7 @@ func TestABrokerIsServedRecordedUnlessItsCallerSaysNot(t *testing.T) {
 				}
 			}
 		}
-		t.Fatalf("the daemon does not have the broker %s", name)
+		t.Fatalf("the server does not have the broker %s", name)
 		return false
 	}
 	for _, c := range []struct {
@@ -1263,7 +1263,7 @@ func TestABrokerIsServedRecordedUnlessItsCallerSaysNot(t *testing.T) {
 			}
 			defer func() { _ = listener.Close() }()
 			if got := recordOf(d, sandbox, "llm"); got != c.record {
-				t.Errorf("the daemon has record %v, want %v", got, c.record)
+				t.Errorf("the server has record %v, want %v", got, c.record)
 			}
 		})
 	}

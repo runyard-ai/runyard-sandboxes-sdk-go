@@ -12,13 +12,13 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 )
 
-// terminalOn is a ready sandbox on a daemon whose terminals do what run does.
-func terminalOn(t *testing.T, run func(context.Context, genv1.SandboxID, *fakedaemon.Terminal) int) (*fakedaemon.Daemon, *Sandbox) {
+// terminalOn is a ready sandbox on a server whose terminals do what run does.
+func terminalOn(t *testing.T, run func(context.Context, genv1.SandboxID, *fakeserver.Terminal) int) (*fakeserver.Server, *Sandbox) {
 	t.Helper()
-	d := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithTerminal(run))
+	d := fakeserver.New(t, fakeserver.WithKey("k"), fakeserver.WithTerminal(run))
 	client, err := New(d.URL, WithKey("k"))
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func terminalOn(t *testing.T, run func(context.Context, genv1.SandboxID, *fakeda
 }
 
 // echo answers each line typed with what it heard, and exits with 3 on "bye".
-func echo(_ context.Context, _ genv1.SandboxID, tty *fakedaemon.Terminal) int {
+func echo(_ context.Context, _ genv1.SandboxID, tty *fakeserver.Terminal) int {
 	lines := bufio.NewScanner(tty.In)
 	for lines.Scan() {
 		if lines.Text() == "bye" {
@@ -77,8 +77,8 @@ func TestATerminalCarriesKeysInAndTheScreenOut(t *testing.T) {
 }
 
 func TestATerminalRunsWhatItIsAskedAtItsSize(t *testing.T) {
-	var asked fakedaemon.Terminal
-	_, sandbox := terminalOn(t, func(_ context.Context, _ genv1.SandboxID, tty *fakedaemon.Terminal) int {
+	var asked fakeserver.Terminal
+	_, sandbox := terminalOn(t, func(_ context.Context, _ genv1.SandboxID, tty *fakeserver.Terminal) int {
 		asked = *tty
 		size := <-tty.Resizes
 		_, _ = io.WriteString(tty.Out, strings.Repeat("x", size[0]*size[1]))
@@ -103,7 +103,7 @@ func TestATerminalRunsWhatItIsAskedAtItsSize(t *testing.T) {
 
 func TestATerminalOfNoSizeIsTheHostsDefault(t *testing.T) {
 	var cols, rows int
-	_, sandbox := terminalOn(t, func(_ context.Context, _ genv1.SandboxID, tty *fakedaemon.Terminal) int {
+	_, sandbox := terminalOn(t, func(_ context.Context, _ genv1.SandboxID, tty *fakeserver.Terminal) int {
 		cols, rows = tty.Cols, tty.Rows
 		return 0
 	})
@@ -123,7 +123,7 @@ func TestATerminalOfNoSizeIsTheHostsDefault(t *testing.T) {
 // Closing it is hanging up, which ends what runs.
 func TestClosingATerminalHangsItUp(t *testing.T) {
 	ended := make(chan struct{})
-	_, sandbox := terminalOn(t, func(ctx context.Context, _ genv1.SandboxID, _ *fakedaemon.Terminal) int {
+	_, sandbox := terminalOn(t, func(ctx context.Context, _ genv1.SandboxID, _ *fakeserver.Terminal) int {
 		<-ctx.Done()
 		close(ended)
 		return 129
@@ -144,28 +144,28 @@ func TestClosingATerminalHangsItUp(t *testing.T) {
 	}
 }
 
-func TestATerminalTheDaemonRefusesIsItsError(t *testing.T) {
+func TestATerminalTheServerRefusesIsItsError(t *testing.T) {
 	t.Run("not running", func(t *testing.T) {
 		// Created, and held creating: Create would wait for it, so the
 		// generated client makes it, and the handle is made of its answer.
-		d := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithTerminal(echo), fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-			return fakedaemon.Outcome{State: genv1.SandboxStateCreating}
+		d := fakeserver.New(t, fakeserver.WithKey("k"), fakeserver.WithTerminal(echo), fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+			return fakeserver.Outcome{State: genv1.SandboxStateCreating}
 		}))
 		client, err := New(d.URL, WithKey("k"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := client.API().CreateSandboxWithResponse(t.Context(), fakedaemon.DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{Image: "x"})
+		res, err := client.API().CreateSandboxWithResponse(t.Context(), &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{Image: "x"})
 		if err != nil || res.JSON202 == nil {
 			t.Fatalf("%v %s", err, res.Body)
 		}
-		_, err = client.handle(fakedaemon.DefaultNamespace, *res.JSON202).Terminal(t.Context(), TerminalOptions{})
+		_, err = client.handle(*res.JSON202).Terminal(t.Context(), TerminalOptions{})
 		if CodeOf(err) != "conflict" {
 			t.Fatalf("%v", err)
 		}
 	})
 	t.Run("without terminals", func(t *testing.T) {
-		d := fakedaemon.New(t, fakedaemon.WithKey("k"))
+		d := fakeserver.New(t, fakeserver.WithKey("k"))
 		client, err := New(d.URL, WithKey("k"))
 		if err != nil {
 			t.Fatal(err)

@@ -1,4 +1,4 @@
-package fakedaemon
+package fakeserver
 
 import (
 	"context"
@@ -19,14 +19,14 @@ import (
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 )
 
-// brokered is a daemon with one ready sandbox that has the host's shared
+// brokered is a server with one ready sandbox that has the host's shared
 // broker `claude` and a one-off, `billing`, a client for it, and the
 // sandbox's id. A broker a caller serves is given by serving it.
-func brokered(t *testing.T, opts ...Option) (*Daemon, *genv1.ClientWithResponses, genv1.SandboxID) {
+func brokered(t *testing.T, opts ...Option) (*Server, *genv1.ClientWithResponses, genv1.SandboxID) {
 	t.Helper()
 	d := New(t, append([]Option{WithKey("k"), WithBrokers("claude")}, opts...)...)
 	client := typed(t, d, "k")
-	created, err := client.CreateSandboxWithResponse(t.Context(), DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "brokered"}, genv1.SandboxSpec{
+	created, err := client.CreateSandboxWithResponse(t.Context(), &genv1.CreateSandboxParams{IdempotencyKey: "brokered"}, genv1.SandboxSpec{
 		Image: "alpine",
 		Brokers: &[]genv1.SandboxBrokerSpec{
 			{Name: "claude"},
@@ -39,8 +39,8 @@ func brokered(t *testing.T, opts ...Option) (*Daemon, *genv1.ClientWithResponses
 	return d, client, created.JSON202.Id
 }
 
-func servePath(d *Daemon, id, name string) string {
-	return d.URL + "/v1/namespaces/default/sandboxes/" + id + "/brokers/" + name + "/serve"
+func servePath(d *Server, id, name string) string {
+	return d.URL + "/v1/sandboxes/" + id + "/brokers/" + name + "/serve"
 }
 
 // answer is what a handshake asking to serve a broker was answered: a socket
@@ -72,7 +72,7 @@ func handshake(t *testing.T, url string, options *websocket.DialOptions) answer 
 
 // serving serves a broker `llm` in the sandbox for the length of the test, as
 // a caller does: the handshake, and a session whose streams this end accepts.
-func serving(t *testing.T, d *Daemon, id genv1.SandboxID) *yamux.Session {
+func serving(t *testing.T, d *Server, id genv1.SandboxID) *yamux.Session {
 	t.Helper()
 	session := serve(t, d, id)
 	t.Cleanup(func() { _ = session.Close() })
@@ -80,7 +80,7 @@ func serving(t *testing.T, d *Daemon, id genv1.SandboxID) *yamux.Session {
 }
 
 // serve is serving, left to the test to end.
-func serve(t *testing.T, d *Daemon, id genv1.SandboxID) *yamux.Session {
+func serve(t *testing.T, d *Server, id genv1.SandboxID) *yamux.Session {
 	t.Helper()
 	got := handshake(t, servePath(d, id.String(), "llm"), nil)
 	if got.conn == nil {
@@ -99,8 +99,8 @@ func serve(t *testing.T, d *Daemon, id genv1.SandboxID) *yamux.Session {
 	return session
 }
 
-// wait is how long a test waits for something the daemon should have done
-// before it says the daemon did not: never reached when it did.
+// wait is how long a test waits for something the server should have done
+// before it says the server did not: never reached when it did.
 const wait = 5 * time.Second
 
 // hungUp fails the test unless the session is ended from the other side.
@@ -115,7 +115,7 @@ func hungUp(t *testing.T, session *yamux.Session) {
 
 // bare is a serving caller's bare WebSocket: nothing reads it but the test,
 // so it answers no ping, and what it is closed with is the test's to read.
-func bare(t *testing.T, d *Daemon, id genv1.SandboxID) *websocket.Conn {
+func bare(t *testing.T, d *Server, id genv1.SandboxID) *websocket.Conn {
 	t.Helper()
 	got := handshake(t, servePath(d, id.String(), "llm"), nil)
 	if got.conn == nil {
@@ -125,7 +125,7 @@ func bare(t *testing.T, d *Daemon, id genv1.SandboxID) *websocket.Conn {
 	return got.conn
 }
 
-// closedWith is the status a caller's WebSocket is closed with by the daemon,
+// closedWith is the status a caller's WebSocket is closed with by the server,
 // read past whatever frames came before it.
 func closedWith(t *testing.T, conn *websocket.Conn) websocket.StatusCode {
 	t.Helper()
@@ -150,7 +150,7 @@ func closeStatus(ctx context.Context, conn *websocket.Conn) (websocket.StatusCod
 
 // gone waits until the sandbox has no broker `llm` a caller serves, and fails
 // if it goes on having one.
-func gone(t *testing.T, d *Daemon, id genv1.SandboxID) {
+func gone(t *testing.T, d *Server, id genv1.SandboxID) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), wait)
 	defer cancel()
@@ -161,11 +161,11 @@ func gone(t *testing.T, d *Daemon, id genv1.SandboxID) {
 
 func brokersOn(t *testing.T, client *genv1.ClientWithResponses, id genv1.SandboxID) map[string]genv1.SandboxBroker {
 	t.Helper()
-	listed, err := client.ListSandboxBrokersWithResponse(t.Context(), DefaultNamespace, id)
+	listed, err := client.ListSandboxBrokersWithResponse(t.Context(), id)
 	if err != nil || listed.JSON200 == nil {
 		t.Fatalf("its brokers = %v %s", err, listed.Body)
 	}
-	got, err := client.GetSandboxWithResponse(t.Context(), DefaultNamespace, id)
+	got, err := client.GetSandboxWithResponse(t.Context(), id)
 	if err != nil || got.JSON200 == nil || got.JSON200.Brokers == nil {
 		t.Fatalf("the sandbox = %v %s", err, got.Body)
 	}
@@ -208,7 +208,7 @@ func TestACreateIsRefusedABrokerItCannotBeGiven(t *testing.T) {
 		"a shared broker not declared": {genv1.SandboxBrokerSpec{Name: "nobody"}, http.StatusUnprocessableEntity, genv1.ErrorCodeUnsupportedSpec},
 	} {
 		t.Run(name, func(t *testing.T) {
-			res, err := client.CreateSandboxWithResponse(t.Context(), DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: name}, genv1.SandboxSpec{Image: "x", Brokers: &[]genv1.SandboxBrokerSpec{c.broker}})
+			res, err := client.CreateSandboxWithResponse(t.Context(), &genv1.CreateSandboxParams{IdempotencyKey: name}, genv1.SandboxSpec{Image: "x", Brokers: &[]genv1.SandboxBrokerSpec{c.broker}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -232,7 +232,7 @@ func TestABrokerIsAttachedReplacedAndDetached(t *testing.T) {
 	}
 
 	// A new one is on a port nothing of the sandbox's has.
-	attached, err := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "tools", upstream("https://tools.example.com/"))
+	attached, err := client.AttachSandboxBrokerWithResponse(ctx, id, "tools", upstream("https://tools.example.com/"))
 	if err != nil || attached.JSON200 == nil || attached.JSON200.Kind != genv1.BrokerKindOneOff {
 		t.Fatalf("attach = %v %s", err, attached.Body)
 	}
@@ -242,25 +242,25 @@ func TestABrokerIsAttachedReplacedAndDetached(t *testing.T) {
 		}
 	}
 	// One it has keeps its port, wherever it goes now.
-	again, err := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "tools", upstream("https://other.example.com/"))
+	again, err := client.AttachSandboxBrokerWithResponse(ctx, id, "tools", upstream("https://other.example.com/"))
 	if err != nil || again.JSON200 == nil || valueOf(again.JSON200.Url) != "https://other.example.com/" || again.JSON200.Port != attached.JSON200.Port {
 		t.Fatalf("attached again = %v %s", err, again.Body)
 	}
 	// An empty body is the host's shared broker of that name, if it has one.
-	shared, err := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "claude", genv1.SandboxBrokerAttach{})
+	shared, err := client.AttachSandboxBrokerWithResponse(ctx, id, "claude", genv1.SandboxBrokerAttach{})
 	if err != nil || shared.JSON200 == nil || shared.JSON200.Kind != genv1.BrokerKindShared || shared.JSON200.Port != before["claude"].Port {
 		t.Fatalf("the shared broker, again = %v %s", err, shared.Body)
 	}
-	if nobody, _ := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "nobody", genv1.SandboxBrokerAttach{}); nobody.JSON422 == nil || nobody.JSON422.Error.Code != genv1.ErrorCodeUnsupportedSpec {
+	if nobody, _ := client.AttachSandboxBrokerWithResponse(ctx, id, "nobody", genv1.SandboxBrokerAttach{}); nobody.JSON422 == nil || nobody.JSON422.Error.Code != genv1.ErrorCodeUnsupportedSpec {
 		t.Fatalf("a shared broker nobody declared = %d %s", nobody.StatusCode(), nobody.Body)
 	}
-	// A field the contract does not have is not read, as the daemon does not
+	// A field the contract does not have is not read, as the server does not
 	// read it: a body that misspells `upstream` is an empty one, and what it
 	// gives is the shared broker of that name — or nothing, when there is
 	// none.
 	misspelt := func(name string) *genv1.AttachSandboxBrokerResponse {
 		t.Helper()
-		res, err := client.AttachSandboxBrokerWithBodyWithResponse(ctx, DefaultNamespace, id, name, "application/json", strings.NewReader(`{"upstrem":{"url":"https://x.example.com/"}}`))
+		res, err := client.AttachSandboxBrokerWithBodyWithResponse(ctx, id, name, "application/json", strings.NewReader(`{"upstrem":{"url":"https://x.example.com/"}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,10 +274,10 @@ func TestABrokerIsAttachedReplacedAndDetached(t *testing.T) {
 	}
 	for name, refused := range map[string]func() (*genv1.AttachSandboxBrokerResponse, error){
 		"a name that is not one": func() (*genv1.AttachSandboxBrokerResponse, error) {
-			return client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "Not_A_Name", upstream("https://x.example.com/"))
+			return client.AttachSandboxBrokerWithResponse(ctx, id, "Not_A_Name", upstream("https://x.example.com/"))
 		},
 		"a body that is not JSON": func() (*genv1.AttachSandboxBrokerResponse, error) {
-			return client.AttachSandboxBrokerWithBodyWithResponse(ctx, DefaultNamespace, id, "tools", "application/json", strings.NewReader(`{"upstream":`))
+			return client.AttachSandboxBrokerWithBodyWithResponse(ctx, id, "tools", "application/json", strings.NewReader(`{"upstream":`))
 		},
 	} {
 		if res, err := refused(); err != nil || res.JSON400 == nil {
@@ -285,7 +285,7 @@ func TestABrokerIsAttachedReplacedAndDetached(t *testing.T) {
 		}
 	}
 
-	// The spec is kept in step, as the daemon keeps it for the next boot.
+	// The spec is kept in step, as the server keeps it for the next boot.
 	spec := map[string]genv1.SandboxBrokerSpec{}
 	for _, broker := range *d.Sandboxes()[0].Spec.Brokers {
 		spec[broker.Name] = broker
@@ -294,31 +294,31 @@ func TestABrokerIsAttachedReplacedAndDetached(t *testing.T) {
 		t.Errorf("the spec's brokers are %+v", spec)
 	}
 
-	if detached, err := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "tools"); err != nil || detached.StatusCode() != http.StatusNoContent {
+	if detached, err := client.DetachSandboxBrokerWithResponse(ctx, id, "tools"); err != nil || detached.StatusCode() != http.StatusNoContent {
 		t.Fatalf("detach = %v %s", err, detached.Body)
 	}
 	if _, has := brokersOn(t, client, id)["tools"]; has || len(*d.Sandboxes()[0].Spec.Brokers) != 2 {
 		t.Error("a detached broker is still the sandbox's")
 	}
 	// Detaching one it does not have succeeds.
-	if again, err := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "tools"); err != nil || again.StatusCode() != http.StatusNoContent {
+	if again, err := client.DetachSandboxBrokerWithResponse(ctx, id, "tools"); err != nil || again.StatusCode() != http.StatusNoContent {
 		t.Fatalf("detach, again = %v %s", err, again.Body)
 	}
-	if bad, _ := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "Not_A_Name"); bad.JSON400 == nil {
+	if bad, _ := client.DetachSandboxBrokerWithResponse(ctx, id, "Not_A_Name"); bad.JSON400 == nil {
 		t.Errorf("detaching a name that is not one = %d", bad.StatusCode())
 	}
 }
 
-// What is refused, and in which order, is the daemon's: what is wrong with
+// What is refused, and in which order, is the server's: what is wrong with
 // the request before anything about the sandbox, and whether the sandbox can
 // be changed now only once there is something to change.
-func TestABrokerChangeIsRefusedInTheDaemonsOrder(t *testing.T) {
+func TestABrokerChangeIsRefusedInTheServersOrder(t *testing.T) {
 	ctx := t.Context()
 	held := func(t *testing.T, state genv1.SandboxState) (*genv1.ClientWithResponses, genv1.SandboxID) {
 		t.Helper()
 		d := New(t, WithKey("k"), WithBrokers("claude"), WithBoot(func(genv1.SandboxSpec) Outcome { return Outcome{State: genv1.SandboxStateCreating} }))
 		client := typed(t, d, "k")
-		created, err := client.CreateSandboxWithResponse(ctx, DefaultNamespace, &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{
+		created, err := client.CreateSandboxWithResponse(ctx, &genv1.CreateSandboxParams{IdempotencyKey: "held"}, genv1.SandboxSpec{
 			Image: "x", Brokers: &[]genv1.SandboxBrokerSpec{{Name: "billing", Upstream: &genv1.BrokerUpstream{Url: "https://billing.example.com/"}}},
 		})
 		if err != nil || created.JSON202 == nil {
@@ -335,7 +335,7 @@ func TestABrokerChangeIsRefusedInTheDaemonsOrder(t *testing.T) {
 		t.Run("while it is "+string(state), func(t *testing.T) {
 			client, id := held(t, state)
 			// Its brokers are read, whatever it is doing.
-			if listed, _ := client.ListSandboxBrokersWithResponse(ctx, DefaultNamespace, id); listed.JSON200 == nil || len(listed.JSON200.Items) != 1 {
+			if listed, _ := client.ListSandboxBrokersWithResponse(ctx, id); listed.JSON200 == nil || len(listed.JSON200.Items) != 1 {
 				t.Errorf("its brokers = %d %s", listed.StatusCode(), listed.Body)
 			}
 			for name, c := range map[string]struct {
@@ -349,19 +349,19 @@ func TestABrokerChangeIsRefusedInTheDaemonsOrder(t *testing.T) {
 				"a shared broker nobody declared":    {"nobody", genv1.SandboxBrokerAttach{}, http.StatusUnprocessableEntity},
 				"a shared broker the host does have": {"claude", genv1.SandboxBrokerAttach{}, http.StatusConflict},
 			} {
-				if res, err := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, c.broker, c.body); err != nil || res.StatusCode() != c.status {
+				if res, err := client.AttachSandboxBrokerWithResponse(ctx, id, c.broker, c.body); err != nil || res.StatusCode() != c.status {
 					t.Errorf("attaching %s = %v %d %s, want %d", name, err, res.StatusCode(), res.Body, c.status)
 				}
 			}
 			// Taking away what it has is a change, and waits; taking away
 			// what it does not have changes nothing, and is done.
-			if res, _ := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "billing"); res.JSON409 == nil || res.JSON409.Error.Code != genv1.ErrorCodeConflict {
+			if res, _ := client.DetachSandboxBrokerWithResponse(ctx, id, "billing"); res.JSON409 == nil || res.JSON409.Error.Code != genv1.ErrorCodeConflict {
 				t.Errorf("detaching the broker it has = %d %s, want 409 conflict", res.StatusCode(), res.Body)
 			}
-			if res, _ := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, id, "tools"); res.StatusCode() != http.StatusNoContent {
+			if res, _ := client.DetachSandboxBrokerWithResponse(ctx, id, "tools"); res.StatusCode() != http.StatusNoContent {
 				t.Errorf("detaching a broker it does not have = %d %s, want 204", res.StatusCode(), res.Body)
 			}
-			if listed, _ := client.ListSandboxBrokersWithResponse(ctx, DefaultNamespace, id); listed.JSON200 == nil || len(listed.JSON200.Items) != 1 || listed.JSON200.Items[0].Name != "billing" {
+			if listed, _ := client.ListSandboxBrokersWithResponse(ctx, id); listed.JSON200 == nil || len(listed.JSON200.Items) != 1 || listed.JSON200.Items[0].Name != "billing" {
 				t.Errorf("after all that was refused, its brokers = %s", listed.Body)
 			}
 		})
@@ -370,24 +370,24 @@ func TestABrokerChangeIsRefusedInTheDaemonsOrder(t *testing.T) {
 	t.Run("of a sandbox that is not there", func(t *testing.T) {
 		client, _ := held(t, genv1.SandboxStateReady)
 		missing := genv1.SandboxID{}
-		if res, _ := client.ListSandboxBrokersWithResponse(ctx, DefaultNamespace, missing); res.JSON404 == nil {
+		if res, _ := client.ListSandboxBrokersWithResponse(ctx, missing); res.JSON404 == nil {
 			t.Errorf("the brokers of no sandbox = %d", res.StatusCode())
 		}
-		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, missing, "tools", oneOff); res.JSON404 == nil {
+		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, missing, "tools", oneOff); res.JSON404 == nil {
 			t.Errorf("attaching to no sandbox = %d", res.StatusCode())
 		}
-		if res, _ := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, missing, "tools"); res.JSON404 == nil {
+		if res, _ := client.DetachSandboxBrokerWithResponse(ctx, missing, "tools"); res.JSON404 == nil {
 			t.Errorf("detaching from no sandbox = %d", res.StatusCode())
 		}
 		// The name is judged before the sandbox is looked for.
-		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, missing, "Not_A_Name", oneOff); res.JSON400 == nil {
+		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, missing, "Not_A_Name", oneOff); res.JSON400 == nil {
 			t.Errorf("attaching a name that is not one to no sandbox = %d, want 400", res.StatusCode())
 		}
-		if res, _ := client.DetachSandboxBrokerWithResponse(ctx, DefaultNamespace, missing, "Not_A_Name"); res.JSON400 == nil {
+		if res, _ := client.DetachSandboxBrokerWithResponse(ctx, missing, "Not_A_Name"); res.JSON400 == nil {
 			t.Errorf("detaching a name that is not one from no sandbox = %d, want 400", res.StatusCode())
 		}
 		// And the sandbox before what it could be given.
-		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, DefaultNamespace, missing, "nobody", genv1.SandboxBrokerAttach{}); res.JSON404 == nil {
+		if res, _ := client.AttachSandboxBrokerWithResponse(ctx, missing, "nobody", genv1.SandboxBrokerAttach{}); res.JSON404 == nil {
 			t.Errorf("attaching a broker nobody declared to no sandbox = %d, want 404", res.StatusCode())
 		}
 	})
@@ -531,8 +531,8 @@ func TestAHandshakeMayOfferItsKeyAsASubprotocol(t *testing.T) {
 		return 0
 	}))
 	for route, protocol := range map[string]string{
-		servePath(d, id.String(), "llm"):                                        brokerProtocol,
-		d.URL + "/v1/namespaces/default/sandboxes/" + id.String() + "/terminal": terminalProtocol,
+		servePath(d, id.String(), "llm"):                     brokerProtocol,
+		d.URL + "/v1/sandboxes/" + id.String() + "/terminal": terminalProtocol,
 	} {
 		got := handshake(t, route, &websocket.DialOptions{Subprotocols: []string{protocol, bearerProtocol + "k"}})
 		if got.conn == nil {
@@ -545,7 +545,7 @@ func TestAHandshakeMayOfferItsKeyAsASubprotocol(t *testing.T) {
 	}
 	// And nowhere but on a handshake: the same header on a plain request is
 	// no key at all.
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, d.URL+"/v1/namespaces/default/sandboxes", http.NoBody)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, d.URL+"/v1/sandboxes", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestANameACallerServesIsNotAttached(t *testing.T) {
 		"an upstream":       {Upstream: &genv1.BrokerUpstream{Url: "https://llm.example.com/"}},
 		"the shared broker": {},
 	} {
-		res, err := client.AttachSandboxBrokerWithResponse(t.Context(), DefaultNamespace, id, "llm", body)
+		res, err := client.AttachSandboxBrokerWithResponse(t.Context(), id, "llm", body)
 		// The shared one of that name is not declared, which is said first:
 		// what cannot be given is judged before the sandbox is.
 		want := http.StatusConflict
@@ -743,23 +743,23 @@ func TestANameACallerServesIsNotAttached(t *testing.T) {
 }
 
 // takings is what takes a broker from the caller serving it.
-var takings = map[string]func(*testing.T, *Daemon, *genv1.ClientWithResponses, genv1.SandboxID){
-	"the sandbox is deleted": func(t *testing.T, _ *Daemon, client *genv1.ClientWithResponses, id genv1.SandboxID) {
+var takings = map[string]func(*testing.T, *Server, *genv1.ClientWithResponses, genv1.SandboxID){
+	"the sandbox is deleted": func(t *testing.T, _ *Server, client *genv1.ClientWithResponses, id genv1.SandboxID) {
 		t.Helper()
-		if res, err := client.DeleteSandboxWithResponse(t.Context(), DefaultNamespace, id, &genv1.DeleteSandboxParams{}); err != nil || res.StatusCode() != http.StatusNoContent {
+		if res, err := client.DeleteSandboxWithResponse(t.Context(), id, &genv1.DeleteSandboxParams{}); err != nil || res.StatusCode() != http.StatusNoContent {
 			t.Fatalf("%v %s", err, res.Body)
 		}
 	},
-	"the broker is detached": func(t *testing.T, _ *Daemon, client *genv1.ClientWithResponses, id genv1.SandboxID) {
+	"the broker is detached": func(t *testing.T, _ *Server, client *genv1.ClientWithResponses, id genv1.SandboxID) {
 		t.Helper()
-		if res, err := client.DetachSandboxBrokerWithResponse(t.Context(), DefaultNamespace, id, "llm"); err != nil || res.StatusCode() != http.StatusNoContent {
+		if res, err := client.DetachSandboxBrokerWithResponse(t.Context(), id, "llm"); err != nil || res.StatusCode() != http.StatusNoContent {
 			t.Fatalf("%v %s", err, res.Body)
 		}
 	},
-	"the sandbox is stopped": func(_ *testing.T, d *Daemon, _ *genv1.ClientWithResponses, id genv1.SandboxID) {
+	"the sandbox is stopped": func(_ *testing.T, d *Server, _ *genv1.ClientWithResponses, id genv1.SandboxID) {
 		d.Settle(id, genv1.SandboxStateStopped, "")
 	},
-	"the sandbox is paused": func(_ *testing.T, d *Daemon, _ *genv1.ClientWithResponses, id genv1.SandboxID) {
+	"the sandbox is paused": func(_ *testing.T, d *Server, _ *genv1.ClientWithResponses, id genv1.SandboxID) {
 		d.Settle(id, genv1.SandboxStatePaused, "")
 	},
 }
@@ -786,7 +786,7 @@ func TestACallerIsHungUpOnAndItsBrokerGoneWhenItIsTakenAway(t *testing.T) {
 			if _, err := d.DialBroker(id.String(), "llm"); err == nil {
 				t.Error("a connection to a broker that is gone")
 			}
-			if listed, _ := client.ListSandboxBrokersWithResponse(t.Context(), DefaultNamespace, id); listed.JSON200 != nil {
+			if listed, _ := client.ListSandboxBrokersWithResponse(t.Context(), id); listed.JSON200 != nil {
 				for _, broker := range listed.JSON200.Items {
 					if broker.Name == "llm" {
 						t.Errorf("the sandbox still lists %+v", broker)
@@ -805,9 +805,9 @@ func TestACallerIsHungUpOnAndItsBrokerGoneWhenItIsTakenAway(t *testing.T) {
 	}
 }
 
-// A caller this daemon hangs up on is told it is going away — 1001 — which is
+// A caller this server hangs up on is told it is going away — 1001 — which is
 // how it tells being hung up on from a line that was lost.
-func TestACallerHungUpOnIsToldTheDaemonIsGoingAway(t *testing.T) {
+func TestACallerHungUpOnIsToldTheServerIsGoingAway(t *testing.T) {
 	for name, take := range takings {
 		t.Run(name, func(t *testing.T) {
 			d, client, id := brokered(t)
@@ -818,7 +818,7 @@ func TestACallerHungUpOnIsToldTheDaemonIsGoingAway(t *testing.T) {
 			}
 		})
 	}
-	t.Run("the daemon is closed", func(t *testing.T) {
+	t.Run("the server is closed", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), wait)
 		defer cancel()
 		type ending struct {
@@ -832,8 +832,8 @@ func TestACallerHungUpOnIsToldTheDaemonIsGoingAway(t *testing.T) {
 			if got.conn == nil {
 				inner.Fatalf("%d %s", got.status, got.code)
 			}
-			// Read while the daemon closes, which is this subtest ending:
-			// so on the outer test, whose end does not wait for the daemon's.
+			// Read while the server closes, which is this subtest ending:
+			// so on the outer test, whose end does not wait for the server's.
 			spawn.Go(t, func() {
 				defer func() { _ = got.conn.CloseNow() }()
 				status, closed := closeStatus(ctx, got.conn)
@@ -901,14 +901,14 @@ func TestACallerThatGoesSilentLosesItsBroker(t *testing.T) {
 	}
 }
 
-// A broker still served when the test ends is taken away by its daemon.
+// A broker still served when the test ends is taken away by its server.
 func TestACallerLeftAtTheEndIsHungUpOn(t *testing.T) {
 	hungUpOn := make(chan bool, 1)
 	t.Run("leaves it serving", func(inner *testing.T) {
 		d, _, id := brokered(inner)
 		session := serve(inner, d, id)
 		// Watched from the outer test, whose end does not wait for the
-		// daemon's: a daemon that hung up on nobody would wait for this
+		// server's: a server that hung up on nobody would wait for this
 		// session for ever, so it is ended here once that is known.
 		spawn.Go(t, func() {
 			defer func() { _ = session.Close() }()
@@ -921,7 +921,7 @@ func TestACallerLeftAtTheEndIsHungUpOn(t *testing.T) {
 		})
 	})
 	if !<-hungUpOn {
-		t.Fatalf("the daemon closed and did not hang up on the caller serving a broker: their session was still open after %s", wait)
+		t.Fatalf("the server closed and did not hang up on the caller serving a broker: their session was still open after %s", wait)
 	}
 }
 

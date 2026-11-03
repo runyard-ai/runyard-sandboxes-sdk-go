@@ -1,10 +1,10 @@
 // The Go SDK for runyard-sandboxes, and the code generated from the API's
 // OpenAPI document (openapi/sandboxes.yaml) that it is built on.
 //
-// It is developed inside runyard-sandboxes, beside the daemon it talks to, and
+// It is developed inside runyard-sandboxes, beside the server it talks to, and
 // published to github.com/runyard-ai/runyard-sandboxes-sdk-go with each
-// release: the same version, so SDK v0.9.0 is the client of daemon v0.9.0. It
-// requires nothing of the daemon's.
+// release: the same version, so SDK v0.9.0 is the client of server v0.9.0. It
+// requires nothing of the server's.
 module github.com/runyard-ai/runyard-sandboxes-sdk-go
 
 go 1.26

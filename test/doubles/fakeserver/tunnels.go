@@ -1,4 +1,4 @@
-package fakedaemon
+package fakeserver
 
 import (
 	"crypto/rand"
@@ -13,7 +13,7 @@ import (
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
 )
 
-// The tunnels plane: tunnels kept on the sandbox, as the daemon keeps them,
+// The tunnels plane: tunnels kept on the sandbox, as the server keeps them,
 // served — there is no relay or gateway here — by a relay that is always
 // docked at a gateway on tunnels.invalid, in the namespace "fake". What a
 // visitor did is what a test recorded with RecordVisit, and who an admin let
@@ -40,8 +40,8 @@ const (
 	TunnelNamespace = "fake"
 )
 
-// Tunnels is a sandbox's tunnels now, as the daemon would report them.
-func (d *Daemon) Tunnels(id genv1.SandboxID) []genv1.Tunnel {
+// Tunnels is a sandbox's tunnels now, as the server would report them.
+func (d *Server) Tunnels(id genv1.SandboxID) []genv1.Tunnel {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.sandboxes[id]
@@ -57,7 +57,7 @@ func (d *Daemon) Tunnels(id genv1.SandboxID) []genv1.Tunnel {
 
 // RecordVisit is a request a visitor made to a tunnel, as the gateway would
 // have recorded it: the newest is answered first.
-func (d *Daemon) RecordVisit(id genv1.SandboxID, name string, request genv1.TunnelRequest) {
+func (d *Server) RecordVisit(id genv1.SandboxID, name string, request genv1.TunnelRequest) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -69,7 +69,7 @@ func (d *Daemon) RecordVisit(id genv1.SandboxID, name string, request genv1.Tunn
 
 // AddTunnelGuest is a person one of a tunnel's admins let in from its share
 // page, as the gateway would keep them: listed after those let in before.
-func (d *Daemon) AddTunnelGuest(id genv1.SandboxID, name, email, by string) {
+func (d *Server) AddTunnelGuest(id genv1.SandboxID, name, email, by string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.sandboxes[id]; ok {
@@ -88,11 +88,11 @@ func findTunnel(s *sandbox, name string) *tunnel {
 	return nil
 }
 
-// viewOf is a tunnel as the daemon answers it, with its status as it is now.
-func (d *Daemon) viewOf(s *sandbox, t *tunnel) genv1.Tunnel {
+// viewOf is a tunnel as the server answers it, with its status as it is now.
+func (d *Server) viewOf(s *sandbox, t *tunnel) genv1.Tunnel {
 	view := t.record
 	view.Tokens = append([]genv1.TunnelToken{}, t.record.Tokens...)
-	// The daemon spells the Share button out whole, defaults and all.
+	// The server spells the Share button out whole, defaults and all.
 	hidden, corner := t.record.Overlay.Hidden != nil && *t.record.Overlay.Hidden, genv1.BottomRight
 	if t.record.Overlay.Corner != nil {
 		corner = *t.record.Overlay.Corner
@@ -124,7 +124,7 @@ func randomOf(n int, alphabet string) string {
 	return string(raw)
 }
 
-func (d *Daemon) validTunnel(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (d *Server) validTunnel(w http.ResponseWriter, r *http.Request) (string, bool) {
 	name := r.PathValue("tunnel")
 	if !tunnelName.MatchString(name) || regexp.MustCompile(`--`).MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("%q is not a tunnel's name", name))
@@ -134,7 +134,7 @@ func (d *Daemon) validTunnel(w http.ResponseWriter, r *http.Request) (string, bo
 }
 
 // tunnelOf is the tunnel a request names, answered 404 when there is none.
-func (d *Daemon) tunnelOf(w http.ResponseWriter, r *http.Request) (*sandbox, *tunnel, bool) {
+func (d *Server) tunnelOf(w http.ResponseWriter, r *http.Request) (*sandbox, *tunnel, bool) {
 	name, ok := d.validTunnel(w, r)
 	if !ok {
 		return nil, nil, false
@@ -151,14 +151,13 @@ func (d *Daemon) tunnelOf(w http.ResponseWriter, r *http.Request) (*sandbox, *tu
 	return s, t, true
 }
 
-// listHostTunnels pages as the daemon does: oldest first by createdAt, then
+// listHostTunnels pages as the server does: oldest first by createdAt, then
 // by slug, from the position a cursor names.
-func (d *Daemon) listHostTunnels(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listHostTunnels(w http.ResponseWriter, r *http.Request) {
 	limit, after, ok := hostTunnelsPage(w, r)
 	if !ok {
 		return
 	}
-	in := r.PathValue("namespace")
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	gateway, agent, namespace := "https://gateway.invalid", TunnelNamespace, TunnelNamespace
@@ -169,7 +168,7 @@ func (d *Daemon) listHostTunnels(w http.ResponseWriter, r *http.Request) {
 	var all []genv1.Tunnel
 	for _, id := range d.order {
 		s, ok := d.sandboxes[id]
-		if !ok || !s.in(in) {
+		if !ok {
 			continue
 		}
 		for _, t := range s.tunnels {
@@ -199,7 +198,7 @@ func tunnelKey(t genv1.Tunnel) string {
 	return t.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z") + "/" + t.Slug
 }
 
-// hostTunnelsPage reads `limit` and `cursor`, refusing what the daemon would.
+// hostTunnelsPage reads `limit` and `cursor`, refusing what the server would.
 func hostTunnelsPage(w http.ResponseWriter, r *http.Request) (limit int, after string, ok bool) {
 	query := r.URL.Query()
 	if raw := query.Get("limit"); raw != "" {
@@ -213,7 +212,7 @@ func hostTunnelsPage(w http.ResponseWriter, r *http.Request) (limit int, after s
 	if raw := query.Get("cursor"); raw != "" {
 		decoded, err := base64.RawURLEncoding.DecodeString(raw)
 		if err != nil || !strings.Contains(string(decoded), "/") {
-			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "that cursor is not one this daemon gave out")
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "that cursor is not one this server gave out")
 			return 0, "", false
 		}
 		after = string(decoded)
@@ -221,7 +220,7 @@ func hostTunnelsPage(w http.ResponseWriter, r *http.Request) (limit int, after s
 	return limit, after, true
 }
 
-func (d *Daemon) listTunnels(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listTunnels(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.lookup(w, r)
@@ -235,7 +234,7 @@ func (d *Daemon) listTunnels(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string][]genv1.Tunnel{"items": items})
 }
 
-func (d *Daemon) getTunnel(w http.ResponseWriter, r *http.Request) {
+func (d *Server) getTunnel(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, t, ok := d.tunnelOf(w, r); ok {
@@ -243,7 +242,7 @@ func (d *Daemon) getTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) putTunnel(w http.ResponseWriter, r *http.Request) {
+func (d *Server) putTunnel(w http.ResponseWriter, r *http.Request) {
 	name, ok := d.validTunnel(w, r)
 	if !ok {
 		return
@@ -300,7 +299,7 @@ func (d *Daemon) putTunnel(w http.ResponseWriter, r *http.Request) {
 	reply(w, status, d.viewOf(s, t))
 }
 
-func (d *Daemon) deleteTunnel(w http.ResponseWriter, r *http.Request) {
+func (d *Server) deleteTunnel(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, t, ok := d.tunnelOf(w, r)
@@ -316,7 +315,7 @@ func (d *Daemon) deleteTunnel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (d *Daemon) pausingTunnel(paused bool) http.HandlerFunc {
+func (d *Server) pausingTunnel(paused bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
@@ -327,7 +326,7 @@ func (d *Daemon) pausingTunnel(paused bool) http.HandlerFunc {
 	}
 }
 
-func (d *Daemon) createTunnelToken(w http.ResponseWriter, r *http.Request) {
+func (d *Server) createTunnelToken(w http.ResponseWriter, r *http.Request) {
 	var body genv1.TunnelTokenRequest
 	if err := strictly(r, &body); err != nil || body.Comment == "" {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a token is asked for with a comment")
@@ -356,7 +355,7 @@ func (d *Daemon) createTunnelToken(w http.ResponseWriter, r *http.Request) {
 		Token: "tgt_" + id + "_" + randomOf(32, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")})
 }
 
-func (d *Daemon) revokeTunnelToken(w http.ResponseWriter, r *http.Request) {
+func (d *Server) revokeTunnelToken(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("token")
 	if !tokenID.MatchString(id) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("%q is not a token's id", id))
@@ -386,7 +385,7 @@ func (d *Daemon) revokeTunnelToken(w http.ResponseWriter, r *http.Request) {
 	refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, fmt.Sprintf("the tunnel has no token %q", id))
 }
 
-func (d *Daemon) tunnelActivity(w http.ResponseWriter, r *http.Request) {
+func (d *Server) tunnelActivity(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	_, t, ok := d.tunnelOf(w, r)
@@ -400,7 +399,7 @@ func (d *Daemon) tunnelActivity(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, genv1.TunnelActivityPage{Items: items})
 }
 
-func (d *Daemon) listTunnelGuests(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listTunnelGuests(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if _, t, ok := d.tunnelOf(w, r); ok {
@@ -408,7 +407,7 @@ func (d *Daemon) listTunnelGuests(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (d *Daemon) revokeTunnelGuest(w http.ResponseWriter, r *http.Request) {
+func (d *Server) revokeTunnelGuest(w http.ResponseWriter, r *http.Request) {
 	email := r.PathValue("email")
 	if email == "" || len(email) > 254 || !strings.Contains(email, "@") {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, fmt.Sprintf("%q is not an address", email))

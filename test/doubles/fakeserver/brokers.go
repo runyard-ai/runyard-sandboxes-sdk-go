@@ -1,4 +1,4 @@
-package fakedaemon
+package fakeserver
 
 import (
 	"context"
@@ -45,16 +45,16 @@ const (
 const firstBrokerPort = 4100
 
 // brokerKeepAlive is how often a caller serving a broker is asked whether it
-// is still there, as the daemon asks unless it is told otherwise.
+// is still there, as the server asks unless it is told otherwise.
 const brokerKeepAlive = 5 * time.Second
 
 // WithBrokerKeepAlive is how often a caller serving a broker is asked whether
 // it is still there, and it is given twice that to answer: by the keepalives
 // of its session, and when a second caller asks for its broker's name. It is
-// the daemon's `brokers.keepAlive`, for a test about a caller that has gone
+// the server's `brokers.keepAlive`, for a test about a caller that has gone
 // silent which does not want to wait a quarter of a minute to see it noticed.
 func WithBrokerKeepAlive(every time.Duration) Option {
-	return func(d *Daemon) { d.brokerKeepAlive = every }
+	return func(d *Server) { d.brokerKeepAlive = every }
 }
 
 // caller is whoever holds a client broker: the broker is theirs from the
@@ -65,7 +65,7 @@ type caller struct {
 	session *yamux.Session
 	// left is done once the broker has been taken from this caller, and leave
 	// makes it so: the broker detached, the sandbox stopped or deleted, the
-	// daemon closed, or the name another caller's once this one did not
+	// server closed, or the name another caller's once this one did not
 	// answer for it. Its handler hangs up when it is.
 	left  context.Context
 	leave context.CancelFunc
@@ -104,8 +104,8 @@ func nextPort(s *sandbox) int {
 // brokerOf is a spec's broker as the sandbox has it, on a port, or what is
 // wrong with it. unknown is a shared broker this host does not declare, which
 // is refused as a spec this host cannot give rather than as one that is wrong.
-func (d *Daemon) brokerOf(name string, upstream *genv1.BrokerUpstream, record *bool, port int) (broker genv1.SandboxBroker, wrong string, unknown bool) {
-	// Recorded unless it says not, as the daemon has it.
+func (d *Server) brokerOf(name string, upstream *genv1.BrokerUpstream, record *bool, port int) (broker genv1.SandboxBroker, wrong string, unknown bool) {
+	// Recorded unless it says not, as the server has it.
 	broker = genv1.SandboxBroker{Name: name, Port: port, Record: record == nil || *record}
 	switch {
 	case !brokerName.MatchString(name):
@@ -146,7 +146,7 @@ func setBrokers(s *sandbox, brokers []genv1.SandboxBroker) {
 // takeAway takes a client broker from the sandbox, and from whoever held it,
 // if anybody did. Their handler is what hangs up, and says so to them: with
 // the lock held here, nothing waits for a caller to answer.
-func (d *Daemon) takeAway(s *sandbox, name string) {
+func (d *Server) takeAway(s *sandbox, name string) {
 	holder, ok := s.callers[name]
 	if !ok {
 		return
@@ -159,13 +159,13 @@ func (d *Daemon) takeAway(s *sandbox, name string) {
 
 // takeAwayAll takes every client broker a sandbox has: it is being stopped,
 // paused or deleted, and a client broker is a running machine's.
-func (d *Daemon) takeAwayAll(s *sandbox) {
+func (d *Server) takeAwayAll(s *sandbox) {
 	for name := range s.callers {
 		d.takeAway(s, name)
 	}
 }
 
-func (d *Daemon) listSandboxBrokers(w http.ResponseWriter, r *http.Request) {
+func (d *Server) listSandboxBrokers(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if s, ok := d.lookup(w, r); ok {
@@ -191,16 +191,16 @@ func brokersChangeable(w http.ResponseWriter, s *sandbox) bool {
 // caller's, and is refused.
 //
 // What is wrong with what was asked is said before anything about the
-// sandbox, as the daemon says it: a name that is not one before whether the
+// sandbox, as the server says it: a name that is not one before whether the
 // sandbox exists, and a broker that cannot be given before whether the
 // sandbox can be changed now.
-func (d *Daemon) attachSandboxBroker(w http.ResponseWriter, r *http.Request) {
+func (d *Server) attachSandboxBroker(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("broker")
 	if !brokerName.MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, notABrokerName)
 		return
 	}
-	// Not strictly: the daemon reads what it knows of a body and ignores the
+	// Not strictly: the server reads what it knows of a body and ignores the
 	// rest, so one with a field misspelt is an empty one — the shared broker.
 	var body genv1.SandboxBrokerAttach
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -245,7 +245,7 @@ func (d *Daemon) attachSandboxBroker(w http.ResponseWriter, r *http.Request) {
 // it when it is one a caller serves. One the sandbox does not have is
 // detached all the same, whatever state the sandbox is in: there is nothing
 // to change.
-func (d *Daemon) detachSandboxBroker(w http.ResponseWriter, r *http.Request) {
+func (d *Server) detachSandboxBroker(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("broker")
 	if !brokerName.MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, notABrokerName)
@@ -271,7 +271,7 @@ func (d *Daemon) detachSandboxBroker(w http.ResponseWriter, r *http.Request) {
 // makes the caller its far end, for as long as its WebSocket lasts: when
 // that ends, the broker is gone. Everything that can refuse does so before
 // the upgrade, as an answer the caller can read.
-func (d *Daemon) serveSandboxBroker(w http.ResponseWriter, r *http.Request) {
+func (d *Server) serveSandboxBroker(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("broker")
 	if !brokerName.MatchString(name) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, notABrokerName)
@@ -300,8 +300,8 @@ func (d *Daemon) serveSandboxBroker(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Accept has answered
 	}
-	// This end opens the streams, and the caller accepts them: the daemon's
-	// session, with the daemon's times. Its keepalives are how a caller that
+	// This end opens the streams, and the caller accepts them: the server's
+	// session, with the server's times. Its keepalives are how a caller that
 	// went silent is found out, and a stream nobody accepts for 75 seconds —
 	// yamux's own time for one — ends the serve. The error is the
 	// configuration's, and this one cannot be wrong.
@@ -343,7 +343,7 @@ func (d *Daemon) serveSandboxBroker(w http.ResponseWriter, r *http.Request) {
 // refusal: no such sandbox, one that is not running, a request that is not
 // the handshake, a name the sandbox already has. In that order, which is the
 // contract's.
-func (d *Daemon) give(w http.ResponseWriter, r *http.Request, name string) (*sandbox, *caller, int, bool) {
+func (d *Server) give(w http.ResponseWriter, r *http.Request, name string) (*sandbox, *caller, int, bool) {
 	for {
 		d.mu.Lock()
 		s, ok := d.lookup(w, r)
@@ -413,7 +413,7 @@ func (d *Daemon) give(w http.ResponseWriter, r *http.Request, name string) (*san
 
 // brokersChanged tells whoever waits in BrokerServed or DialBroker, or for a
 // caller that left to have gone, to look again. Called with the lock held.
-func (d *Daemon) brokersChanged() {
+func (d *Server) brokersChanged() {
 	close(d.changed)
 	d.changed = make(chan struct{})
 }
@@ -424,7 +424,7 @@ func (d *Daemon) brokersChanged() {
 // workload would try again: a program under test starts serving when it gets
 // to it, and its broker is gone a moment after it closed. The error is ctx's,
 // when that ends first.
-func (d *Daemon) BrokerServed(ctx context.Context, sandboxID, name string, served bool) error {
+func (d *Server) BrokerServed(ctx context.Context, sandboxID, name string, served bool) error {
 	for {
 		d.mu.Lock()
 		is := false
@@ -447,7 +447,7 @@ func (d *Daemon) BrokerServed(ctx context.Context, sandboxID, name string, serve
 }
 
 // goingAway is the WebSocket as the session holds it, which says it is going
-// before it hangs up — 1001, as the daemon does — so the caller reads that
+// before it hangs up — 1001, as the server does — so the caller reads that
 // its broker was taken away, not that the line broke. Not the net.Conn's own
 // Close, which says 1000 and cancels the read in flight as it does.
 type goingAway struct {
@@ -466,10 +466,10 @@ func (g goingAway) Close() error {
 //
 // An error when no caller is serving a broker of that name: there is no port
 // for a workload to connect to.
-func (d *Daemon) DialBroker(sandboxID, name string) (net.Conn, error) {
+func (d *Server) DialBroker(sandboxID, name string) (net.Conn, error) {
 	id, err := uuid.Parse(sandboxID)
 	if err != nil {
-		return nil, fmt.Errorf("fakedaemon: %q is not a sandbox id", sandboxID)
+		return nil, fmt.Errorf("fakeserver: %q is not a sandbox id", sandboxID)
 	}
 	var session *yamux.Session
 	for session == nil {
@@ -478,9 +478,9 @@ func (d *Daemon) DialBroker(sandboxID, name string) (net.Conn, error) {
 		var letIn <-chan struct{}
 		switch {
 		case !ok:
-			err = fmt.Errorf("fakedaemon: no sandbox %s", id)
+			err = fmt.Errorf("fakeserver: no sandbox %s", id)
 		case s.callers[name] == nil:
-			err = fmt.Errorf("fakedaemon: no caller is serving a broker %s in sandbox %s", name, id)
+			err = fmt.Errorf("fakeserver: no caller is serving a broker %s in sandbox %s", name, id)
 		case s.callers[name].session == nil:
 			// Its handshake was answered and its session is being made: a
 			// caller whose ServeBroker has returned is serving, and a
@@ -499,7 +499,7 @@ func (d *Daemon) DialBroker(sandboxID, name string) (net.Conn, error) {
 	}
 	stream, err := session.OpenStream()
 	if err != nil {
-		return nil, fmt.Errorf("fakedaemon: connecting to broker %s of sandbox %s: %w", name, id, err)
+		return nil, fmt.Errorf("fakeserver: connecting to broker %s of sandbox %s: %w", name, id, err)
 	}
 	return &workloadConn{Stream: stream}, nil
 }
@@ -511,9 +511,9 @@ type workloadConn struct {
 	closed atomic.Bool
 }
 
-// errCut is a connection whose broker went with its caller: the daemon cuts
+// errCut is a connection whose broker went with its caller: the server cuts
 // it.
-var errCut = errors.New("fakedaemon: the broker's connection was cut: its caller has gone, and the broker with it")
+var errCut = errors.New("fakeserver: the broker's connection was cut: its caller has gone, and the broker with it")
 
 // Read is the stream's, but for the end of its session: yamux reads that as
 // the other end having finished — io.EOF — and an answer cut short would pass
@@ -545,9 +545,9 @@ func (c *workloadConn) Close() error {
 	return c.Stream.Close()
 }
 
-// takeAwayEvery ends every client broker, as a daemon going down does. Their
+// takeAwayEvery ends every client broker, as a server going down does. Their
 // handlers are waited for with the terminals'.
-func (d *Daemon) takeAwayEvery() {
+func (d *Server) takeAwayEvery() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, s := range d.sandboxes {

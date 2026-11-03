@@ -67,7 +67,7 @@ func (s *Sandbox) Terminal(ctx context.Context, opts TerminalOptions) (*Terminal
 	if opts.User != "" {
 		query.Set("user", opts.User)
 	}
-	address := s.client.baseURL + "/v1/namespaces/" + url.PathEscape(s.Namespace) + "/sandboxes/" + url.PathEscape(s.ID.String()) + "/terminal"
+	address := s.client.baseURL + "/v1/sandboxes/" + url.PathEscape(s.ID.String()) + "/terminal"
 	if len(query) > 0 {
 		address += "?" + query.Encode()
 	}
@@ -85,7 +85,7 @@ func (s *Sandbox) Terminal(ctx context.Context, opts TerminalOptions) (*Terminal
 }
 
 // upgrade makes the WebSocket handshake of a route, offering its subprotocol,
-// and is the socket and the headers it was answered with. A daemon that
+// and is the socket and the headers it was answered with. A server that
 // refuses does so before the upgrade, as it refuses any request: that comes
 // back as the *Error it is.
 func (c *Client) upgrade(ctx context.Context, address, protocol string) (*websocket.Conn, http.Header, error) {
@@ -159,7 +159,7 @@ func (t *Terminal) Read(p []byte) (int, error) {
 			t.exitCode = c.ExitCode
 			t.mu.Unlock()
 		}
-		// Any other kind is from a newer daemon, and nothing a reader of the
+		// Any other kind is from a newer server, and nothing a reader of the
 		// screen acts on.
 	}
 }

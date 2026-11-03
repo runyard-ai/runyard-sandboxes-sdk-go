@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
-	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakedaemon"
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/fakeserver"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/test/doubles/spawn"
 	"go.uber.org/goleak"
 )
@@ -24,12 +24,12 @@ func claude(_ context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.
 	return genv1.CommandResult{Stdout: "\nA microVM is a small virtual machine.\n\n", DurationMs: 3471}
 }
 
-func daemon(t *testing.T, opts ...fakedaemon.Option) *fakedaemon.Daemon {
+func server(t *testing.T, opts ...fakeserver.Option) *fakeserver.Server {
 	t.Helper()
-	return fakedaemon.New(t, append([]fakedaemon.Option{fakedaemon.WithKey("k"), fakedaemon.WithBrokers("claude"), fakedaemon.WithRun(claude)}, opts...)...)
+	return fakeserver.New(t, append([]fakeserver.Option{fakeserver.WithKey("k"), fakeserver.WithBrokers("claude"), fakeserver.WithRun(claude)}, opts...)...)
 }
 
-func invoke(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, string) {
+func invoke(t *testing.T, d *fakeserver.Server, extra ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := run(append([]string{"-addr", d.URL, "-key", "k"}, extra...), &stdout, &stderr)
@@ -37,7 +37,7 @@ func invoke(t *testing.T, d *fakedaemon.Daemon, extra ...string) (int, string, s
 }
 
 func TestAPromptIsAnsweredInASandboxThatIsThenDropped(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := invoke(t, d, "-prompt", `what's "quoted"?`, "-name", "asker")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -62,7 +62,7 @@ func TestAPromptIsAnsweredInASandboxThatIsThenDropped(t *testing.T) {
 
 // requireDropped is the property every failure below shares: whatever
 // happened, the machine that was made is not on the host afterwards.
-func requireDropped(t *testing.T, d *fakedaemon.Daemon, made int) {
+func requireDropped(t *testing.T, d *fakeserver.Server, made int) {
 	t.Helper()
 	if left := d.Sandboxes(); len(left) != 0 {
 		t.Fatalf("%d sandboxes were left on the host", len(left))
@@ -90,49 +90,49 @@ func withoutBrokers(w http.ResponseWriter, r *http.Request, serve http.HandlerFu
 
 func TestEveryWayItFailsSaysWhyAndLeavesNothingBehind(t *testing.T) {
 	for name, tc := range map[string]struct {
-		opts      []fakedaemon.Option
-		intercept map[string]fakedaemon.Interceptor
+		opts      []fakeserver.Option
+		intercept map[string]fakeserver.Interceptor
 		args      []string
 		want      string
 		made      int
 	}{
 		"the host cannot be asked": {
-			intercept: map[string]fakedaemon.Interceptor{"getInfo": fakedaemon.Refuse(403, genv1.ErrorCodeForbidden, "no")},
+			intercept: map[string]fakeserver.Interceptor{"getInfo": fakeserver.Refuse(403, genv1.ErrorCodeForbidden, "no")},
 			want:      "asking the host what it is",
 		},
 		"the create is refused": {
-			intercept: map[string]fakedaemon.Interceptor{"createSandbox": fakedaemon.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight")},
+			intercept: map[string]fakeserver.Interceptor{"createSandbox": fakeserver.Refuse(507, genv1.ErrorCodeCapacityExceeded, "eight of eight")},
 			want:      "capacity_exceeded: eight of eight",
 		},
 		// It used to be left on the host: the error came back, the handle
 		// was not looked at, and nothing said a machine was there.
 		"the sandbox fails": {
-			opts: []fakedaemon.Option{fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-				return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked"}
+			opts: []fakeserver.Option{fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+				return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked"}
 			})},
 			want: "the kernel panicked",
 			made: 1,
 		},
 		"the sandbox fails, with -keep": {
-			opts: []fakedaemon.Option{fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-				return fakedaemon.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked"}
+			opts: []fakeserver.Option{fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+				return fakeserver.Outcome{State: genv1.SandboxStateFailed, Error: "the kernel panicked"}
 			})},
 			args: []string{"-keep"},
 			want: "the kernel panicked",
 			made: 1,
 		},
 		"the broker is not in the answer": {
-			intercept: map[string]fakedaemon.Interceptor{"getSandbox": withoutBrokers},
+			intercept: map[string]fakeserver.Interceptor{"getSandbox": withoutBrokers},
 			want:      `made without the "claude" broker`,
 			made:      1,
 		},
 		"the command is refused": {
-			intercept: map[string]fakedaemon.Interceptor{"runCommand": fakedaemon.Refuse(503, genv1.ErrorCodeSandboxUnreachable, "the agent is not answering")},
+			intercept: map[string]fakeserver.Interceptor{"runCommand": fakeserver.Refuse(503, genv1.ErrorCodeSandboxUnreachable, "the agent is not answering")},
 			want:      "asking Claude: runyard-sandboxes: sandbox_unreachable",
 			made:      1,
 		},
 		"claude exits non-zero": {
-			opts: []fakedaemon.Option{fakedaemon.WithRun(func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult {
+			opts: []fakeserver.Option{fakeserver.WithRun(func(context.Context, genv1.SandboxID, genv1.CommandRequest) genv1.CommandResult {
 				return genv1.CommandResult{ExitCode: 1, Stdout: "API Error: ", Stderr: "401 invalid x-api-key", DurationMs: 900}
 			})},
 			want: "claude exited 1 after 900ms: API Error: 401 invalid x-api-key",
@@ -140,7 +140,7 @@ func TestEveryWayItFailsSaysWhyAndLeavesNothingBehind(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := daemon(t, tc.opts...)
+			d := server(t, tc.opts...)
 			for op, intercept := range tc.intercept {
 				d.InterceptAll(op, intercept)
 			}
@@ -154,7 +154,7 @@ func TestEveryWayItFailsSaysWhyAndLeavesNothingBehind(t *testing.T) {
 }
 
 func TestAHostWithoutTheBrokerIsToldBeforeAnythingIsMade(t *testing.T) {
-	d := fakedaemon.New(t, fakedaemon.WithKey("k"), fakedaemon.WithBrokers("github"))
+	d := fakeserver.New(t, fakeserver.WithKey("k"), fakeserver.WithBrokers("github"))
 	code, _, stderr := invoke(t, d)
 	if code != 1 || !strings.Contains(stderr, `declares no shared broker "claude"`) || !strings.Contains(stderr, "examples/claude/README.md") {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -162,15 +162,15 @@ func TestAHostWithoutTheBrokerIsToldBeforeAnythingIsMade(t *testing.T) {
 	if calls := d.Calls("createSandbox"); calls != 0 {
 		t.Fatalf("%d creates were sent to a host that cannot serve them", calls)
 	}
-	bare := fakedaemon.New(t, fakedaemon.WithKey("k"))
+	bare := fakeserver.New(t, fakeserver.WithKey("k"))
 	if code, _, stderr := invoke(t, bare); code != 1 || !strings.Contains(stderr, "declares no shared broker") {
 		t.Fatalf("a host with no brokers at all: exit %d: %s", code, stderr)
 	}
 }
 
 func TestADropThatFailsIsTheProgramsFailure(t *testing.T) {
-	d := daemon(t)
-	d.InterceptAll("deleteSandbox", fakedaemon.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
+	d := server(t)
+	d.InterceptAll("deleteSandbox", fakeserver.Refuse(500, genv1.ErrorCodeInternal, "the ruleset would not come down"))
 	code, stdout, stderr := invoke(t, d)
 	if code != 1 || !strings.Contains(stderr, "dropping") || !strings.Contains(stderr, "the ruleset would not come down") {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -182,7 +182,7 @@ func TestADropThatFailsIsTheProgramsFailure(t *testing.T) {
 
 // -keep leaves a working sandbox up and says where to open it.
 func TestKeepLeavesTheSandboxUpAndSaysWhereItIs(t *testing.T) {
-	d := daemon(t)
+	d := server(t)
 	code, stdout, stderr := invoke(t, d, "-keep", "-prompt", "", "-console", "http://localhost:9000/")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
@@ -194,14 +194,14 @@ func TestKeepLeavesTheSandboxUpAndSaysWhereItIs(t *testing.T) {
 	if !strings.Contains(stdout, "open   http://localhost:9000/console#/sandboxes/"+left[0].Id.String()) {
 		t.Fatalf("the console link is wrong:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "DELETE /v1/namespaces/"+fakedaemon.DefaultNamespace+"/sandboxes/"+left[0].Id.String()) {
+	if !strings.Contains(stdout, "DELETE /v1/sandboxes/"+left[0].Id.String()) {
 		t.Fatalf("the path that deletes it is wrong:\n%s", stdout)
 	}
 	if len(d.Commands()) != 0 || strings.Contains(stdout, "> ") {
 		t.Fatalf("an empty prompt was asked:\n%s", stdout)
 	}
 
-	other := daemon(t)
+	other := server(t)
 	if _, stdout, _ := invoke(t, other, "-keep", "-prompt", ""); !strings.Contains(stdout, "open   "+other.URL+"/console#/sandboxes/") {
 		t.Fatalf("without -console the link is not at -addr:\n%s", stdout)
 	}
@@ -211,8 +211,8 @@ func TestKeepLeavesTheSandboxUpAndSaysWhereItIs(t *testing.T) {
 // dropped either way. The first used to leave it on the host.
 func TestACancelledRunDropsTheSandbox(t *testing.T) {
 	t.Run("while it boots", func(t *testing.T) {
-		d := daemon(t, fakedaemon.WithBoot(func(genv1.SandboxSpec) fakedaemon.Outcome {
-			return fakedaemon.Outcome{State: genv1.SandboxStateCreating}
+		d := server(t, fakeserver.WithBoot(func(genv1.SandboxSpec) fakeserver.Outcome {
+			return fakeserver.Outcome{State: genv1.SandboxStateCreating}
 		}))
 		following := make(chan struct{})
 		d.Intercept("streamSandboxEvents", func(w http.ResponseWriter, r *http.Request, serve http.HandlerFunc) {
@@ -231,7 +231,7 @@ func TestACancelledRunDropsTheSandbox(t *testing.T) {
 	})
 	t.Run("while claude answers", func(t *testing.T) {
 		asked := make(chan struct{})
-		d := daemon(t, fakedaemon.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
+		d := server(t, fakeserver.WithRun(func(ctx context.Context, _ genv1.SandboxID, _ genv1.CommandRequest) genv1.CommandResult {
 			close(asked)
 			<-ctx.Done()
 			return genv1.CommandResult{}
@@ -289,7 +289,7 @@ func TestTheTimeoutIsRoundedUpToWholeSeconds(t *testing.T) {
 			t.Errorf("seconds(%s) = %d, want nil: the host's default", timeout, *got)
 		}
 	}
-	d := daemon(t)
+	d := server(t)
 	if code, _, stderr := invoke(t, d, "-timeout", "300ms"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -307,7 +307,7 @@ func TestTheFlagsAreTheProgramsInterface(t *testing.T) {
 		t.Errorf("a bad duration: exit %d, want 2", code)
 	}
 	stderr.Reset()
-	if code := run([]string{"-addr", "localhost:8099"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a daemon's address") {
+	if code := run([]string{"-addr", "localhost:8099"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not a server's address") {
 		t.Errorf("an address with no scheme: exit %d, %s", code, stderr.String())
 	}
 }

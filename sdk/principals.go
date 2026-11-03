@@ -9,8 +9,7 @@ import (
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
 )
 
-// A principal is an identity that outlives a sandbox, in the client's
-// namespace: an id the client chooses, and labels. It is an identity of its
+// A principal is an identity that outlives a sandbox: an id the client chooses, and labels. It is an identity of its
 // own, standing for nobody: what it may do with somebody's data is what that
 // data's broker grants it. A sandbox made with Spec.Principal is one, and
 // every broker it reaches is told so by its certificate; a volume such a
@@ -19,13 +18,9 @@ import (
 // principal is deleted, PutPrincipal of it is refused with
 // `principal_retired`. See the contract's Principals section.
 
-// Principals is every principal in the client's namespace, by id.
+// Principals is every principal by id.
 func (c *Client) Principals(ctx context.Context) ([]genv1.Principal, error) {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return nil, err
-	}
-	res, err := c.api.ListPrincipalsWithResponse(ctx, namespace)
+	res, err := c.api.ListPrincipalsWithResponse(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -41,11 +36,7 @@ func (c *Client) Principals(ctx context.Context) ([]genv1.Principal, error) {
 // `principal_deleting`, and an id a deleted principal had with
 // `principal_retired`, for good.
 func (c *Client) PutPrincipal(ctx context.Context, id string, p genv1.PrincipalSpec) (genv1.Principal, error) {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return genv1.Principal{}, err
-	}
-	res, err := c.api.PutPrincipalWithResponse(ctx, namespace, id, p)
+	res, err := c.api.PutPrincipalWithResponse(ctx, id, p)
 	if err != nil {
 		return genv1.Principal{}, err
 	}
@@ -58,13 +49,9 @@ func (c *Client) PutPrincipal(ctx context.Context, id string, p genv1.PrincipalS
 	return genv1.Principal{}, refused(res.HTTPResponse, res.Body)
 }
 
-// Principal is one principal of the client's namespace.
+// Principal is one principal.
 func (c *Client) Principal(ctx context.Context, id string) (genv1.Principal, error) {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return genv1.Principal{}, err
-	}
-	res, err := c.api.GetPrincipalWithResponse(ctx, namespace, id)
+	res, err := c.api.GetPrincipalWithResponse(ctx, id)
 	if err != nil {
 		return genv1.Principal{}, err
 	}
@@ -78,11 +65,7 @@ func (c *Client) Principal(ctx context.Context, id string) (genv1.Principal, err
 // again. Deleting one that is not there succeeds; one a sandbox or a volume
 // is bound to is refused with `principal_in_use`.
 func (c *Client) DeletePrincipal(ctx context.Context, id string) error {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return err
-	}
-	res, err := c.api.DeletePrincipalWithResponse(ctx, namespace, id)
+	res, err := c.api.DeletePrincipalWithResponse(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -95,22 +78,18 @@ func (c *Client) DeletePrincipal(ctx context.Context, id string) error {
 //
 // What the BROKER answered — whatever its status, a 404 saying there is none
 // among them — is returned as its status, its Content-Type and its body, with
-// a nil error. A refusal of the daemon's own is the error: no such principal
+// a nil error. A refusal of the server's own is the error: no such principal
 // or broker (`not_found`), a broker with no trusted plane
 // (`no_trusted_plane`), a path that is not one (`bad_request`), and a broker
 // that could not be reached or answered with more than 1 MiB
 // (`upstream_error`).
 func (c *Client) BrokerTrusted(ctx context.Context, principal, broker, path string) (status int, contentType string, body []byte, err error) {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return 0, "", nil, err
-	}
-	res, err := c.api.GetBrokerTrusted(ctx, namespace, principal, broker, path)
+	res, err := c.api.GetBrokerTrusted(ctx, principal, broker, path)
 	if err != nil {
 		return 0, "", nil, err
 	}
 	defer closeBody(res.Body)
-	// The daemon passes on at most a mebibyte; anything past that here is
+	// The server passes on at most a mebibyte; anything past that here is
 	// not a broker's answer, and is not read into memory.
 	body, err = io.ReadAll(io.LimitReader(res.Body, maxTrustedBody+1))
 	if err != nil {
@@ -120,27 +99,49 @@ func (c *Client) BrokerTrusted(ctx context.Context, principal, broker, path stri
 		return 0, "", nil, refused(res, body)
 	}
 	if len(body) > maxTrustedBody {
-		return 0, "", nil, fmt.Errorf("runyard-sandboxes: the daemon passed on more than %d bytes of a trusted document", maxTrustedBody)
+		return 0, "", nil, fmt.Errorf("runyard-sandboxes: the server passed on more than %d bytes of a trusted document", maxTrustedBody)
 	}
 	return res.StatusCode, res.Header.Get("Content-Type"), body, nil
 }
 
 // brokerAnswered marks an answer that is the broker's own, rather than a
-// refusal of the daemon's.
+// refusal of the server's.
 const brokerAnswered = "Runyard-Broker-Answered"
 
-// maxTrustedBody is the most of a trusted document the daemon passes on.
+// maxTrustedBody is the most of a trusted document the server passes on.
 const maxTrustedBody = 1 << 20
+
+// CloneVolume makes a new volume, name, holding what volume holds now, on the
+// host that holds it — copied on write where the host's filesystem allows —
+// and returns it. It is bound to principal, or, when that is empty, to the
+// principal volume is bound to; binding it to another needs
+// `principals.write`.
+//
+// Refused with `volume_in_use` while a running sandbox holds volume (a
+// stopped one's is cloned as it was left), `volume_exists` when name is a
+// volume already, and `not_found` when volume is not on this host — which
+// is how a caller whose fork lands on another host finds out that it must
+// copy what it needs itself.
+func (c *Client) CloneVolume(ctx context.Context, volume, name, principal string) (genv1.Volume, error) {
+	body := genv1.VolumeClone{Name: name}
+	if principal != "" {
+		body.Principal = &principal
+	}
+	res, err := c.api.CloneVolumeWithResponse(ctx, volume, body)
+	if err != nil {
+		return genv1.Volume{}, err
+	}
+	if res.JSON201 == nil {
+		return genv1.Volume{}, refused(res.HTTPResponse, res.Body)
+	}
+	return *res.JSON201, nil
+}
 
 // MoveVolume binds a volume to a principal, from the one it was bound to or
 // from none: from then on only sandboxes bound to that principal attach
 // it. Refused with `volume_in_use` while a sandbox holds it.
 func (c *Client) MoveVolume(ctx context.Context, volume, principal string) error {
-	namespace, err := c.ResolveNamespace(ctx)
-	if err != nil {
-		return err
-	}
-	res, err := c.api.MoveVolumeWithResponse(ctx, namespace, volume, genv1.VolumePrincipal{Principal: principal})
+	res, err := c.api.MoveVolumeWithResponse(ctx, volume, genv1.VolumePrincipal{Principal: principal})
 	if err != nil {
 		return err
 	}

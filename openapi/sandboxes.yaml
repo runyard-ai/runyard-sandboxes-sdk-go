@@ -6601,16 +6601,19 @@ components:
           type: number
           format: double
           description: >-
-            CPU time the hypervisor process has used since it started, user
-            and system together. `cpuPercent` is the rate this grows at.
+            CPU time the hypervisor has used since it started, user and system
+            together: every thread and process of it, as its cgroup counts them
+            where it has one. `cpuPercent` is the rate this grows at.
         memoryBytes:
           type: integer
           format: int64
           description: >-
-            What the hypervisor process holds, which is what the host pays.
-            Memory the guest frees goes back to the host, and so does page
-            cache it has not touched for two minutes, so this follows what the
-            guest uses rather than the most it ever touched.
+            What the hypervisor holds, which is what the host pays: the memory
+            charged to its cgroup where it has one, its process's resident
+            memory where it has not. Memory the guest frees goes back to the
+            host, and so does page cache it has not touched for two minutes, so
+            this follows what the guest uses rather than the most it ever
+            touched.
         diskAllocatedBytes:
           type: integer
           format: int64

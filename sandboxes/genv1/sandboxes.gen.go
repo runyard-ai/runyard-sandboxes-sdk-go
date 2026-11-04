@@ -2123,13 +2123,13 @@ type SandboxHostUsage struct {
 	// CpuPercent How busy the machine's vCPUs were since the last reading, as a share of all of them: `100` is every vCPU the sandbox was given, busy the whole time. The hypervisor's own device threads count too — they are CPU the host spends on this machine — so a saturated machine can read slightly over `100`. Absent until there are two readings to take a difference between.
 	CpuPercent *float64 `json:"cpuPercent,omitempty"`
 
-	// CpuSeconds CPU time the hypervisor process has used since it started, user and system together. `cpuPercent` is the rate this grows at.
+	// CpuSeconds CPU time the hypervisor has used since it started, user and system together: every thread and process of it, as its cgroup counts them where it has one. `cpuPercent` is the rate this grows at.
 	CpuSeconds *float64 `json:"cpuSeconds,omitempty"`
 
 	// DiskAllocatedBytes What the sandbox's own disk has allocated on the host. Not the size it was given: a disk is sparse, and what it costs is what it wrote.
 	DiskAllocatedBytes *int64 `json:"diskAllocatedBytes,omitempty"`
 
-	// MemoryBytes What the hypervisor process holds, which is what the host pays. Memory the guest frees goes back to the host, and so does page cache it has not touched for two minutes, so this follows what the guest uses rather than the most it ever touched.
+	// MemoryBytes What the hypervisor holds, which is what the host pays: the memory charged to its cgroup where it has one, its process's resident memory where it has not. Memory the guest frees goes back to the host, and so does page cache it has not touched for two minutes, so this follows what the guest uses rather than the most it ever touched.
 	MemoryBytes *int64 `json:"memoryBytes,omitempty"`
 
 	// RxBytes Bytes the guest received on its interface since the machine started.

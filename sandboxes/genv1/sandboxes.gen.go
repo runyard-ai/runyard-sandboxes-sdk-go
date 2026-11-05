@@ -506,6 +506,22 @@ type BuildRequest struct {
 	// Args Values for the recipe's `ARG`s, by name. One the recipe does not declare is a `422`.
 	Args *map[string]string `json:"args,omitempty"`
 
+	// Brokers The brokers a step's `--broker` may name beyond the shared ones,
+	// as a sandbox's `brokers` are written: a one-off broker with its
+	// upstream, for a caller that gives its sandboxes brokers of its own
+	// and would have its builds reach them too. A step naming one of
+	// these is given it; a step naming any other is given the shared
+	// broker of that name, as without this list.
+	//
+	// A step is given only the ones it names, and only while it runs: a
+	// broker here that no step names is never put on the machine. The
+	// identity its upstream sees is the build's machine's, as a
+	// sandbox's is its own: bound to no principal, since a build acts
+	// for nobody. Checked as a sandbox's are, before the build is
+	// accepted: one that is not valid is a `400`, and one naming a
+	// shared broker this host does not declare a `422`.
+	Brokers *[]SandboxBrokerSpec `json:"brokers,omitempty"`
+
 	// Recipe The Dockerfile, with what each `RUN` may reach.
 	Recipe string `json:"recipe"`
 

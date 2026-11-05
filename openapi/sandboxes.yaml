@@ -1698,8 +1698,9 @@ paths:
         - `--allow=deb.debian.org,security.debian.org` lets it resolve and
           connect to those names, on ports 80 and 443, as an egress rule of a
           sandbox would. `*.example.com` is every name under it.
-        - `--broker=github` gives it that shared broker, at
-          `$RUNYARD_BROKER_GITHUB_URL`, as a sandbox's broker is given.
+        - `--broker=github` gives it the broker of that name, at
+          `$RUNYARD_BROKER_GITHUB_URL`, as a sandbox's broker is given: the
+          one of that name in `brokers`, or else the shared one.
 
         Both are for that step alone: taken away when it ends.
 
@@ -1742,7 +1743,8 @@ paths:
         "422":
           description: >-
             The recipe is not one this host builds (`recipe_invalid`); the
-            message names the line.
+            message names the line. Or `brokers` names a shared broker this
+            host does not declare (`unsupported_spec`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5165,6 +5167,25 @@ components:
           description: >-
             Values for the recipe's `ARG`s, by name. One the recipe does not
             declare is a `422`.
+        brokers:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/SandboxBrokerSpec" }
+          description: |
+            The brokers a step's `--broker` may name beyond the shared ones,
+            as a sandbox's `brokers` are written: a one-off broker with its
+            upstream, for a caller that gives its sandboxes brokers of its own
+            and would have its builds reach them too. A step naming one of
+            these is given it; a step naming any other is given the shared
+            broker of that name, as without this list.
+
+            A step is given only the ones it names, and only while it runs: a
+            broker here that no step names is never put on the machine. The
+            identity its upstream sees is the build's machine's, as a
+            sandbox's is its own: bound to no principal, since a build acts
+            for nobody. Checked as a sandbox's are, before the build is
+            accepted: one that is not valid is a `400`, and one naming a
+            shared broker this host does not declare a `422`.
 
     Build:
       type: object

@@ -1,0 +1,293 @@
+package fakeserver
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
+)
+
+// A host joins with a token as the runner it names, numbered for a fleet
+// past every name taken, and is drained, undrained, revoked and rejoined as
+// the server does it.
+func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
+	d := New(t, WithKey("k"))
+	client := typed(t, d, "k")
+	ctx := context.Background()
+	mint := func(ask genv1.JoinTokenRequest) genv1.JoinTokenCreated {
+		t.Helper()
+		minted, err := client.CreateJoinTokenWithResponse(ctx, ask)
+		if err != nil || minted.JSON201 == nil {
+			t.Fatalf("mint %+v = %v %s", ask, err, minted.Body)
+		}
+		return *minted.JSON201
+	}
+	one := mint(genv1.JoinTokenRequest{RunnerName: new("factory-03"), Labels: &map[string]string{"site": "factory"},
+		AllowedSources: &[]string{"203.0.113.24/32"}, ExpiresIn: new("30m")})
+	if !strings.HasPrefix(one.Secret, "rjt_"+one.Id+"_") || one.MaxUses != 1 || !one.ExpiresAt.Equal(one.CreatedAt.Add(30*time.Minute)) {
+		t.Errorf("minted %+v", one)
+	}
+	held := mint(genv1.JoinTokenRequest{RunnerName: new("edge-02")})
+	fleet := mint(genv1.JoinTokenRequest{RunnerName: new("edge"), MaxUses: new(2)})
+	plain := mint(genv1.JoinTokenRequest{})
+
+	factory := d.Join(t, one.Secret)
+	if factory.Id != "r-01" || factory.Name != "factory-03" || factory.State != genv1.RunnerStateRunnerPending || factory.Labels["site"] != "factory" ||
+		factory.AllowedSources[0] != "203.0.113.24/32" {
+		t.Errorf("joined %+v", factory)
+	}
+	if first, second := d.Join(t, fleet.Secret), d.Join(t, fleet.Secret); first.Name != "edge-01" || second.Name != "edge-03" {
+		t.Errorf("the fleet is %s and %s, past edge-02, which a token holds", first.Name, second.Name)
+	}
+	if unnamed := d.Join(t, plain.Secret); unnamed.Name != unnamed.Id {
+		t.Errorf("a runner given no name is called %q", unnamed.Name)
+	}
+	if named := d.Join(t, held.Secret); named.Name != "edge-02" {
+		t.Errorf("the token holding edge-02 enrolled %q", named.Name)
+	}
+	listed, err := client.ListRunnersWithResponse(ctx)
+	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Items) != 5 || listed.JSON200.Items[0].Name != "factory-03" {
+		t.Fatalf("listed = %v %s", err, listed.Body)
+	}
+	tokens, err := client.ListJoinTokensWithResponse(ctx)
+	if err != nil || tokens.JSON200 == nil || tokens.JSON200.Items[0].Id != plain.Id || tokens.JSON200.Items[3].Uses != 1 {
+		t.Fatalf("tokens = %v %s", err, tokens.Body)
+	}
+
+	got, err := client.GetRunnerWithResponse(ctx, "r-01")
+	if err != nil || got.JSON200 == nil || got.JSON200.Name != "factory-03" {
+		t.Fatalf("r-01 = %v %s", err, got.Body)
+	}
+	moved, err := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: []string{}})
+	if err != nil || moved.JSON200 == nil || len(moved.JSON200.AllowedSources) != 0 {
+		t.Fatalf("anywhere = %v %s", err, moved.Body)
+	}
+	drained, err := client.DrainRunnerWithResponse(ctx, "r-01", genv1.RunnerDrainRequest{RevokeWhenEmpty: new(true)})
+	if err != nil || drained.JSON202 == nil || drained.JSON202.Kind != genv1.OperationDrain || !drained.JSON202.RevokeWhenEmpty {
+		t.Fatalf("drain = %v %s", err, drained.Body)
+	}
+	if again, _ := client.DrainRunnerWithResponse(ctx, "r-01", genv1.RunnerDrainRequest{}); again.JSON202 == nil || again.JSON202.Id != drained.JSON202.Id {
+		t.Errorf("drained again = %s", again.Body)
+	}
+	undrained, err := client.UndrainRunnerWithResponse(ctx, "r-01")
+	if err != nil || undrained.JSON202 == nil || undrained.JSON202.Step != genv1.OperationCancelled {
+		t.Fatalf("undrain = %v %s", err, undrained.Body)
+	}
+	if state := runnerState(t, client, "r-01"); state != genv1.RunnerStateRunnerPending {
+		t.Errorf("undrained, it is %s", state)
+	}
+	if again, _ := client.UndrainRunnerWithResponse(ctx, "r-01"); again.StatusCode() != http.StatusConflict {
+		t.Errorf("undrained again = %d", again.StatusCode())
+	}
+	if wrong, _ := client.DrainRunnerWithBodyWithResponse(ctx, "r-01", "application/json", strings.NewReader(`{"nope":1}`)); wrong.StatusCode() != http.StatusBadRequest {
+		t.Errorf("a drain asked wrong = %d", wrong.StatusCode())
+	}
+	if held, _ := client.AllowRunnerAddressWithResponse(ctx, "r-01", genv1.AllowAddress{Address: "198.51.100.7"}); held.StatusCode() != http.StatusConflict {
+		t.Errorf("allowing a runner not held = %d", held.StatusCode())
+	}
+
+	// Rejoined, it is itself, pending again.
+	rejoin := mint(genv1.JoinTokenRequest{HostID: new("r-01")})
+	if back := d.Join(t, rejoin.Secret); back.Id != "r-01" || back.Name != "factory-03" || back.State != genv1.RunnerStateRunnerPending {
+		t.Errorf("rejoined as %+v", back)
+	}
+	revoked, err := client.RevokeRunnerWithResponse(ctx, "r-01")
+	if err != nil || revoked.JSON202 == nil || revoked.JSON202.Kind != genv1.OperationRevoke || revoked.JSON202.Step != genv1.OperationDone {
+		t.Fatalf("revoke = %v %s", err, revoked.Body)
+	}
+	if again, _ := client.RevokeRunnerWithResponse(ctx, "r-01"); again.JSON202 == nil || again.JSON202.Id != revoked.JSON202.Id {
+		t.Errorf("revoked again = %s", again.Body)
+	}
+	if state := runnerState(t, client, "r-01"); state != genv1.RunnerStateRunnerRevoked {
+		t.Errorf("revoked, it is %s", state)
+	}
+	for name, status := range map[string]int{
+		"drain":  statusOf(client.DrainRunnerWithResponse(ctx, "r-01", genv1.RunnerDrainRequest{})),
+		"update": statusOf(client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: []string{}})),
+		"rejoin": statusOf(client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{HostID: new("r-01")})),
+	} {
+		if status != http.StatusConflict {
+			t.Errorf("%s a revoked runner = %d", name, status)
+		}
+	}
+	// Its name is free again.
+	mint(genv1.JoinTokenRequest{RunnerName: new("factory-03")})
+}
+
+func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
+	d := New(t)
+	client := typed(t, d, "")
+	ctx := context.Background()
+	taken, err := client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})
+	if err != nil || taken.JSON201 == nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		ask  genv1.JoinTokenRequest
+		want int
+	}{
+		"a life that is not a duration": {genv1.JoinTokenRequest{ExpiresIn: new("a week")}, 400},
+		"a life longer than a day":      {genv1.JoinTokenRequest{ExpiresIn: new("25h")}, 400},
+		"too many uses":                 {genv1.JoinTokenRequest{MaxUses: new(1001)}, 400},
+		"a Rejoin for two":              {genv1.JoinTokenRequest{HostID: new("r-01"), MaxUses: new(2)}, 400},
+		"a name as a hostID is written": {genv1.JoinTokenRequest{RunnerName: new("r-07")}, 400},
+		"a name that is not one":        {genv1.JoinTokenRequest{RunnerName: new("Factory")}, 400},
+		"a fleet's name too long":       {genv1.JoinTokenRequest{RunnerName: new(strings.Repeat("a", 59)), MaxUses: new(2)}, 400},
+		"a Rejoin naming it anew":       {genv1.JoinTokenRequest{HostID: new("r-01"), RunnerName: new("again")}, 400},
+		"a Rejoin for nobody":           {genv1.JoinTokenRequest{HostID: new("r-99")}, 404},
+		"a name a token will give":      {genv1.JoinTokenRequest{RunnerName: new("factory-03")}, 409},
+	} {
+		if got := statusOf(client.CreateJoinTokenWithResponse(ctx, c.ask)); got != c.want {
+			t.Errorf("%s = %d, want %d", name, got, c.want)
+		}
+	}
+	if got := statusOf(client.CreateJoinTokenWithBodyWithResponse(ctx, "application/json", strings.NewReader(`{"uses":1}`))); got != 400 {
+		t.Errorf("a field the request does not have = %d", got)
+	}
+	if got := statusOf(client.RevokeJoinTokenWithResponse(ctx, "missing")); got != 404 {
+		t.Errorf("revoking a token never minted = %d", got)
+	}
+	if got := statusOf(client.RevokeJoinTokenWithResponse(ctx, taken.JSON201.Id)); got != 204 {
+		t.Errorf("revoking = %d", got)
+	}
+	// Revoked, its name is nobody's.
+	if got := statusOf(client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})); got != 201 {
+		t.Errorf("the name of a token revoked = %d", got)
+	}
+	for name, status := range map[string]int{
+		"get":      statusOf(client.GetRunnerWithResponse(ctx, "r-99")),
+		"update":   statusOf(client.UpdateRunnerWithResponse(ctx, "r-99", genv1.RunnerUpdate{AllowedSources: []string{}})),
+		"drain":    statusOf(client.DrainRunnerWithResponse(ctx, "r-99", genv1.RunnerDrainRequest{})),
+		"undrain":  statusOf(client.UndrainRunnerWithResponse(ctx, "r-99")),
+		"revoke":   statusOf(client.RevokeRunnerWithResponse(ctx, "r-99")),
+		"allow":    statusOf(client.AllowRunnerAddressWithResponse(ctx, "r-99", genv1.AllowAddress{Address: "198.51.100.7"})),
+		"approve":  statusOf(client.ApproveRunnerWithResponse(ctx, "r-99", genv1.RunnerApproval{})),
+		"approver": statusOf(client.ListApproversWithResponse(ctx)),
+	} {
+		if want := map[string]int{"approve": 501, "approver": 501}[name]; (want == 0 && status != 404) || (want != 0 && status != want) {
+			t.Errorf("%s of no runner = %d", name, status)
+		}
+	}
+	if got := statusOf(client.UpdateRunnerWithBodyWithResponse(ctx, "r-01", "application/json", strings.NewReader(`{}`))); got != 400 {
+		t.Errorf("an update saying nothing = %d", got)
+	}
+}
+
+// The fake fails the test that joins with what is not a token that enrols.
+func TestTheFakeJoinsNothingWithATokenThatCannotEnrol(t *testing.T) {
+	d := New(t, WithClock(func() time.Time { return time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC) }))
+	client := typed(t, d, "")
+	minted, err := client.CreateJoinTokenWithResponse(context.Background(), genv1.JoinTokenRequest{})
+	if err != nil || minted.JSON201 == nil {
+		t.Fatal(err)
+	}
+	d.Join(t, minted.JSON201.Secret)
+	for name, secret := range map[string]string{"no token": "rjt_x_y", "used up": minted.JSON201.Secret} {
+		failing := &fatal{}
+		func() {
+			defer func() { _ = recover() }()
+			d.Join(failing, secret)
+		}()
+		if !failing.failed {
+			t.Errorf("%s: joined", name)
+		}
+	}
+}
+
+// fatal is a testing.TB whose Fatalf is recorded, and ends the call.
+type fatal struct {
+	testing.TB
+	failed bool
+}
+
+func (f *fatal) Helper() {}
+
+func (f *fatal) Fatalf(string, ...any) {
+	f.failed = true
+	panic("fatal")
+}
+
+func TestTheFakeKeepsRunnerSettings(t *testing.T) {
+	d := New(t)
+	client := typed(t, d, "")
+	ctx := context.Background()
+	got, err := client.GetRunnerSettingsWithResponse(ctx)
+	if err != nil || got.JSON200 == nil || got.JSON200.HardwareKeys != genv1.HardwareKeysPreferred || got.JSON200.Residency.Label != "site" {
+		t.Fatalf("settings = %v %s", err, got.Body)
+	}
+	changed, err := client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{HardwareKeys: new(genv1.HardwareKeysRequired)})
+	if err != nil || changed.JSON200 == nil || changed.JSON200.HardwareKeys != genv1.HardwareKeysRequired || changed.JSON200.Residency.Crossing != genv1.CrossingRefused {
+		t.Fatalf("changed = %v %s", err, changed.Body)
+	}
+	moved, err := client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{Residency: &genv1.Residency{Label: "region", Crossing: genv1.CrossingAllowed}})
+	if err != nil || moved.JSON200 == nil || moved.JSON200.Residency.Label != "region" || moved.JSON200.HardwareKeys != genv1.HardwareKeysRequired {
+		t.Fatalf("residency = %v %s", err, moved.Body)
+	}
+	if got := statusOf(client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{})); got != 400 {
+		t.Errorf("saying nothing = %d", got)
+	}
+}
+
+func TestTheFakeReportsWhatATestSaysWasUsed(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 30, 0, 0, time.UTC)
+	d := New(t, WithClock(func() time.Time { return now }))
+	client := typed(t, d, "")
+	ctx := context.Background()
+	d.Use(Consumed{Runner: "r-01", Sandbox: "s1", Principal: "p", Usage: genv1.Usage{SandboxSeconds: 60, Sandboxes: 1,
+		Models: []genv1.ModelUsage{{Model: "m", Calls: 1, Input: 10}}}})
+	d.Use(Consumed{Runner: "r-01", Sandbox: "s2", Usage: genv1.Usage{SandboxSeconds: 30, Sandboxes: 1, BrokerCalls: 2,
+		Models: []genv1.ModelUsage{{Model: "m", Calls: 1, Input: 5}, {Model: "n", Calls: 1}}}})
+	d.Use(Consumed{Runner: "r-02", Usage: genv1.Usage{VolumeGiBHours: 1}})
+
+	report := func(params *genv1.GetUsageParams) genv1.UsageReport {
+		t.Helper()
+		got, err := client.GetUsageWithResponse(ctx, params)
+		if err != nil || got.JSON200 == nil {
+			t.Fatalf("usage %+v = %v %s", params, err, got.Body)
+		}
+		return *got.JSON200
+	}
+	week := report(nil)
+	if week.Window != genv1.CostWindow7d || week.GroupBy != genv1.UsageByRunner || !week.To.Equal(now) || len(week.Groups) != 2 ||
+		*week.Groups[0].Runner != "r-01" || week.Groups[0].Usage.SandboxSeconds != 90 || week.Total.VolumeGiBHours != 1 ||
+		len(week.Total.Models) != 2 || week.Total.Models[0].Input != 15 {
+		t.Errorf("a week by runner = %+v", week)
+	}
+	bySandbox := report(&genv1.GetUsageParams{GroupBy: new(genv1.UsageBySandbox), Runner: new("r-01")})
+	if len(bySandbox.Groups) != 2 || *bySandbox.Groups[0].Sandbox != "s1" || bySandbox.Total.VolumeGiBHours != 0 {
+		t.Errorf("r-01's by sandbox = %+v", bySandbox)
+	}
+	byPrincipal := report(&genv1.GetUsageParams{GroupBy: new(genv1.UsageByPrincipal)})
+	if len(byPrincipal.Groups) != 2 || byPrincipal.Groups[0].Principal != nil || *byPrincipal.Groups[1].Principal != "p" {
+		t.Errorf("by principal = %+v", byPrincipal)
+	}
+	byHour := report(&genv1.GetUsageParams{Window: new(genv1.CostWindow24h), GroupBy: new(genv1.UsageByHour)})
+	if len(byHour.Groups) != 24 || byHour.Groups[23].Usage.Sandboxes != 2 || byHour.Groups[0].Usage.Sandboxes != 0 || !byHour.From.Equal(now.Truncate(time.Hour).Add(-23*time.Hour)) {
+		t.Errorf("by hour = %d groups, from %s", len(byHour.Groups), byHour.From)
+	}
+	// What is older than the window is not in it.
+	now = now.Add(25 * time.Hour)
+	if day := report(&genv1.GetUsageParams{Window: new(genv1.CostWindow24h)}); len(day.Groups) != 0 || day.Total.Sandboxes != 0 {
+		t.Errorf("a day later = %+v", day)
+	}
+	for name, params := range map[string]*genv1.GetUsageParams{
+		"a window that is not one":   {Window: new(genv1.CostWindow("1y"))},
+		"a grouping that is not one": {GroupBy: new(genv1.UsageGroupBy("tenant"))},
+	} {
+		if got := statusOf(client.GetUsageWithResponse(ctx, params)); got != 400 {
+			t.Errorf("%s = %d", name, got)
+		}
+	}
+}
+
+func runnerState(t *testing.T, client *genv1.ClientWithResponses, id string) genv1.RunnerState {
+	t.Helper()
+	got, err := client.GetRunnerWithResponse(context.Background(), id)
+	if err != nil || got.JSON200 == nil {
+		t.Fatalf("%s = %v %s", id, err, got.Body)
+	}
+	return got.JSON200.State
+}

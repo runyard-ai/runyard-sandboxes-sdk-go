@@ -2443,11 +2443,13 @@ paths:
         by default; `GET /v1/runners/settings`), unless the workspace's
         settings allow a volume to cross them: refused `409 residency`.
 
-        Only a volume no sandbox holds is moved: one a sandbox holds is
-        refused `409 volume_in_use`, and is moved with its sandbox, which
-        is the server's to plan. Meanwhile the volume is attached, cloned
-        and deleted by nobody, and a create naming it is refused `409
-        volume_transferring`. A target with no room for it ends the
+        **A volume a sandbox holds moves with that sandbox**, under its id,
+        and only while it is stopped: one that is not is refused `409
+        volume_in_use`. The target must have room for the sandbox (`507`),
+        which is listed with `transferringTo` meanwhile and stays stopped
+        there. Meanwhile the volume is attached, cloned and deleted by
+        nobody, and a create naming it is refused `409
+        volume_transferring`. A target with no room for the volume ends the
         transfer, which `GET /v1/volumes` then no longer says, and the
         server's log says why.
       requestBody:
@@ -2475,7 +2477,8 @@ paths:
         "409":
           description: >-
             `residency`: the target is on the other side of a residency line.
-            `volume_in_use`: a sandbox holds it, or it is being cloned.
+            `volume_in_use`: a sandbox that is not stopped holds it, or it is
+            being cloned.
             `volume_transferring`: it is being transferred already.
             `conflict`: the target is the runner holding it, or is not one a
             sandbox may be placed on.
@@ -2484,6 +2487,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: The runner holding it, or the target, is not answering.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: >-
+            `capacity_exceeded`: the target has no room for the sandbox that
+            holds the volume, which moves with it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2786,7 +2796,13 @@ paths:
         machine it was in was switched off. What comes back is the filesystem.
 
         Its vCPUs and memory are held again, and measured first against
-        this host's capacity (`507` `capacity_exceeded`).
+        its runner's capacity. **One its runner has no room for is moved**,
+        with its volume, to a runner that has, meets its spec and is within
+        the workspace's residency lines (`GET /v1/runners/settings`), and is
+        started there: answered `202` stopped, with `transferringTo`, and
+        the same id. So is one whose runner is draining to be revoked. Only
+        when no runner can take it is it `507` `capacity_exceeded`, or `409`
+        `runner_draining`. One being moved already is answered as it is.
       responses:
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
@@ -2803,7 +2819,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "202":
-          description: Booting.
+          description: Booting, or being moved to a runner that can start it (`transferringTo`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Sandbox" }
@@ -2813,7 +2829,7 @@ paths:
           description: >-
             The sandbox is not stopped, or (`runner_draining`) its runner is
             draining to be revoked, where waking it would keep the runner from
-            ever emptying.
+            ever emptying, and no other runner can take it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5033,6 +5049,14 @@ paths:
         enrolment from outside `allowedSources` is refused. With `hostID` it
         is a **Rejoin**: it enrols that existing runner again, as itself,
         once.
+
+        `runnerName` is the name the runner it enrols is listed with, as
+        the Add dialog names it: `factory-03`. A token for a fleet names
+        each runner after it, numbered, `factory-01`, `factory-02`, …, and
+        a token that names none names each runner its hostID. A name is
+        one runner's in the workspace: one a runner not revoked has, or
+        that a token still usable will give, is refused. A Rejoin brings
+        the runner back with its name.
       requestBody:
         required: true
         content:
@@ -5052,7 +5076,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
-          description: "`hostID` names a revoked runner, which nothing brings back."
+          description: >-
+            `hostID` names a revoked runner, which nothing brings back, or
+            `runnerName` is a name a runner has or a usable token will give.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -7360,6 +7386,13 @@ components:
           example: 0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53
         state: { $ref: "#/components/schemas/SandboxState" }
         runner: { $ref: "#/components/schemas/PlacedOn" }
+        transferringTo:
+          allOf: [{ $ref: "#/components/schemas/PlacedOn" }]
+          description: >-
+            The runner it is being moved to, with its volume, while it is: by
+            a transfer of the volume it holds, or by a start its runner had
+            no room for, after which it is started there. It is stopped
+            until it is there.
         spec:
           allOf: [{ $ref: "#/components/schemas/SandboxSpec" }]
           description: >-
@@ -8669,12 +8702,20 @@ components:
     Runner:
       type: object
       description: A host this server's machines run on.
-      required: [id, state, labels, version, capacity, keyKind, allowedSources, joinedAt, joinedBy, enrolledFrom, certificateNotAfter, recordKey, brokerKey]
+      required: [id, name, state, labels, version, capacity, keyKind, allowedSources, joinedAt, joinedBy, enrolledFrom, certificateNotAfter, recordKey, brokerKey]
       properties:
         id:
           type: string
           description: Its hostID, unique on this server and never given to another.
           example: r-02
+        name:
+          allOf: [{ $ref: "#/components/schemas/RunnerName" }]
+          description: >-
+            What it is called, from the join token it enrolled with (its
+            `runnerName`), and its hostID when that named none. No other
+            runner that is not revoked has it. A person reads it, and types
+            it to revoke the runner; everything else names a runner by its
+            id.
         state: { $ref: "#/components/schemas/RunnerState" }
         labels:
           type: object
@@ -9082,6 +9123,15 @@ components:
             are running, paused or on their way to either. Absent while it
             has not reported since the drain.
         updatedAt: { type: string, format: date-time }
+    RunnerName:
+      type: string
+      description: >-
+        A runner's name: lowercase letters, digits and hyphens, starting and
+        ending with a letter or a digit, at most 63 of them.
+      pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+      maxLength: 63
+      example: factory-03
+
     JoinTokenRequest:
       type: object
       additionalProperties: false
@@ -9090,6 +9140,13 @@ components:
           type: string
           maxLength: 200
           description: What it is for, as the list of tokens shows it; text a person reads.
+        runnerName:
+          allOf: [{ $ref: "#/components/schemas/RunnerName" }]
+          description: >-
+            The name the runner it enrols is listed with, or, for a token
+            for a fleet, what each runner's numbered name starts with. Not
+            for a Rejoin, which keeps the runner's name. Its hostID when left
+            out. Not `r-` and a number, which is how hostIDs are written.
         labels:
           type: object
           description: The labels each runner it enrols is assigned.
@@ -9123,6 +9180,9 @@ components:
       properties:
         id: { type: string, example: 3f9a1c0b7e2d }
         name: { type: string }
+        runnerName:
+          allOf: [{ $ref: "#/components/schemas/RunnerName" }]
+          description: The name it gives the runner it enrols, or the start of each one's for a fleet.
         labels:
           type: object
           additionalProperties: { type: string }
@@ -9646,7 +9706,10 @@ components:
         after it, closed when the connection was; `stream`, a connection that
         was not HTTP, carried as bytes — or one refused before anything of it
         was read; `read`, somebody reading another record's bodies (`read`);
-        `setting`, somebody changing a workspace setting (`setting`).
+        `setting`, somebody changing a workspace setting (`setting`);
+        `transfer`, a volume's transfer its target refused, since the source's
+        broker key it was given is not the one the target's own bundle names
+        (`reason` says which runners).
 
         A record carries no body: the bodies of an exchange stay on the
         runner that saw it (`runner`), and are read with
@@ -9675,8 +9738,8 @@ components:
           description: What kind of broker it went through, when it reached one.
         type:
           type: string
-          enum: [http, upgrade, stream, read, setting]
-          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting]
+          enum: [http, upgrade, stream, read, setting, transfer]
+          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting, ActivityTypeTransfer]
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
         outcome:

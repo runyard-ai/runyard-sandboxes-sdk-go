@@ -45,11 +45,12 @@ const (
 
 // Defines values for BrokerActivityType.
 const (
-	ActivityTypeHttp    BrokerActivityType = "http"
-	ActivityTypeRead    BrokerActivityType = "read"
-	ActivityTypeSetting BrokerActivityType = "setting"
-	ActivityTypeStream  BrokerActivityType = "stream"
-	ActivityTypeUpgrade BrokerActivityType = "upgrade"
+	ActivityTypeHttp     BrokerActivityType = "http"
+	ActivityTypeRead     BrokerActivityType = "read"
+	ActivityTypeSetting  BrokerActivityType = "setting"
+	ActivityTypeStream   BrokerActivityType = "stream"
+	ActivityTypeTransfer BrokerActivityType = "transfer"
+	ActivityTypeUpgrade  BrokerActivityType = "upgrade"
 )
 
 // Defines values for BrokerAuth.
@@ -492,7 +493,10 @@ type Broker struct {
 // after it, closed when the connection was; `stream`, a connection that
 // was not HTTP, carried as bytes — or one refused before anything of it
 // was read; `read`, somebody reading another record's bodies (`read`);
-// `setting`, somebody changing a workspace setting (`setting`).
+// `setting`, somebody changing a workspace setting (`setting`);
+// `transfer`, a volume's transfer its target refused, since the source's
+// broker key it was given is not the one the target's own bundle names
+// (`reason` says which runners).
 //
 // A record carries no body: the bodies of an exchange stay on the
 // runner that saw it (`runner`), and are read with
@@ -1863,6 +1867,9 @@ type JoinToken struct {
 	Name    *string           `json:"name,omitempty"`
 	Revoked bool              `json:"revoked"`
 
+	// RunnerName The name it gives the runner it enrols, or the start of each one's for a fleet.
+	RunnerName *RunnerName `json:"runnerName,omitempty"`
+
 	// Uses How many enrolments it was used for.
 	Uses int `json:"uses"`
 }
@@ -1883,6 +1890,9 @@ type JoinTokenCreated struct {
 	MaxUses int               `json:"maxUses"`
 	Name    *string           `json:"name,omitempty"`
 	Revoked bool              `json:"revoked"`
+
+	// RunnerName The name it gives the runner it enrols, or the start of each one's for a fleet.
+	RunnerName *RunnerName `json:"runnerName,omitempty"`
 
 	// Secret The whole token, `rjt_<id>_<secret>`. **This is the only time it exists outside the caller.**
 	Secret string `json:"secret"`
@@ -1918,6 +1928,9 @@ type JoinTokenRequest struct {
 
 	// Name What it is for, as the list of tokens shows it; text a person reads.
 	Name *string `json:"name,omitempty"`
+
+	// RunnerName The name the runner it enrols is listed with, or, for a token for a fleet, what each runner's numbered name starts with. Not for a Rejoin, which keeps the runner's name. Its hostID when left out. Not `r-` and a number, which is how hostIDs are written.
+	RunnerName *RunnerName `json:"runnerName,omitempty"`
 }
 
 // Key A key's metadata. Never its secret.
@@ -2486,6 +2499,9 @@ type Runner struct {
 	LastRefusal *RunnerRefusal `json:"lastRefusal,omitempty"`
 	LastSeenAt  *time.Time     `json:"lastSeenAt,omitempty"`
 
+	// Name What it is called, from the join token it enrolled with (its `runnerName`), and its hostID when that named none. No other runner that is not revoked has it. A person reads it, and types it to revoke the runner; everything else names a runner by its id.
+	Name RunnerName `json:"name"`
+
 	// Operation Its latest drain or revoke: the one in progress, or the last one to have ended. Absent when it has had none.
 	Operation *RunnerOperation `json:"operation,omitempty"`
 
@@ -2581,6 +2597,9 @@ type RunnerDrainRequest struct {
 	// RevokeWhenEmpty Revoke the runner by itself once it is empty, for a host being retired. False, for maintenance, unless it says.
 	RevokeWhenEmpty *bool `json:"revokeWhenEmpty,omitempty"`
 }
+
+// RunnerName A runner's name: lowercase letters, digits and hyphens, starting and ending with a letter or a digit, at most 63 of them.
+type RunnerName = string
 
 // RunnerOperation A drain or a revoke, which is a record rather than a process: written down in the transaction that answers it, and carried through to the end by the server whatever restarts in between.
 type RunnerOperation struct {
@@ -2779,6 +2798,9 @@ type Sandbox struct {
 
 	// Tainted The first call that ran something in it or wrote into it, through any route that `spec.sealed` refuses — by a key or by a person, whoever it was. Absent while nothing has, and never taken away: not by sealing it, nor by stopping or starting it.
 	Tainted *Taint `json:"tainted,omitempty"`
+
+	// TransferringTo The runner it is being moved to, with its volume, while it is: by a transfer of the volume it holds, or by a start its runner had no room for, after which it is started there. It is stopped until it is there.
+	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
 }
 
 // SandboxBroker defines model for SandboxBroker.
@@ -16771,6 +16793,7 @@ type TransferVolumeResponse struct {
 	JSON404      *Error
 	JSON409      *Error
 	JSON503      *Error
+	JSON507      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -25202,6 +25225,13 @@ func ParseTransferVolumeResponse(rsp *http.Response) (*TransferVolumeResponse, e
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 

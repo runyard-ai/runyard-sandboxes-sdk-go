@@ -131,6 +131,16 @@ type Server struct {
 	retired map[string]bool
 	// images is the image cache, by id (PutImage).
 	images map[string]*genv1.Image
+	// joinTokens is every join token, oldest first; runners every runner
+	// that joined with one, by id, in runnerOrder; operations how many
+	// drains and revokes there have been.
+	joinTokens     []*joinToken
+	runners        map[string]*genv1.Runner
+	runnerOrder    []string
+	operations     int64
+	runnerSettings *genv1.RunnerSettings
+	// usage is what a test said was consumed (Use).
+	usage []consumed
 	// idempotent is what each create's key made, by key.
 	idempotent   map[string]idempotent
 	keys         []string
@@ -302,6 +312,26 @@ func (d *Server) routes() http.Handler {
 	handle("DELETE /v1/principals/{principal}", "deletePrincipal", d.deletePrincipal)
 	handle("GET /v1/principals/{principal}/brokers/{broker}/trusted/{path}", "getBrokerTrusted", d.getBrokerTrusted)
 	handle("GET /v1/me", "getMe", d.getMe)
+	handle("GET /v1/runners", "listRunners", d.listRunners)
+	handle("GET /v1/runners/{runnerId}", "getRunner", d.getRunner)
+	handle("PATCH /v1/runners/{runnerId}", "updateRunner", d.updateRunner)
+	handle("DELETE /v1/runners/{runnerId}", "revokeRunner", d.operate(genv1.OperationRevoke))
+	handle("POST /v1/runners/{runnerId}/drain", "drainRunner", d.operate(genv1.OperationDrain))
+	handle("POST /v1/runners/{runnerId}/undrain", "undrainRunner", d.undrainRunner)
+	handle("POST /v1/runners/{runnerId}/allow-address", "allowRunnerAddress", d.allowRunnerAddress)
+	handle("POST /v1/runners/{runnerId}/approve", "approveRunner", notInTheFake("judge a passkey's approval"))
+	handle("POST /v1/runners/join-tokens", "createJoinToken", d.createJoinToken)
+	handle("GET /v1/runners/join-tokens", "listJoinTokens", d.listJoinTokens)
+	handle("DELETE /v1/runners/join-tokens/{tokenId}", "revokeJoinToken", d.revokeJoinToken)
+	handle("GET /v1/runners/settings", "getRunnerSettings", d.getRunnerSettings)
+	handle("PATCH /v1/runners/settings", "updateRunnerSettings", d.updateRunnerSettings)
+	handle("GET /v1/approvers", "listApprovers", notInTheFake("keep approvers"))
+	handle("POST /v1/approvers", "addApprover", notInTheFake("keep approvers"))
+	handle("GET /v1/credentials/{subject}", "getSealedCredential", notInTheFake("keep sealed credentials"))
+	handle("PUT /v1/credentials/{subject}", "putSealedCredential", notInTheFake("keep sealed credentials"))
+	handle("DELETE /v1/credentials/{subject}", "deleteSealedCredential", notInTheFake("keep sealed credentials"))
+	handle("POST /v1/volumes/{name}/transfer", "transferVolume", notInTheFake("move volumes between runners"))
+	handle("GET /v1/usage", "getUsage", d.getUsage)
 	return mux
 }
 

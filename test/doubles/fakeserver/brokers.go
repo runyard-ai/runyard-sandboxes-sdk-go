@@ -181,7 +181,7 @@ func brokersChangeable(w http.ResponseWriter, s *sandbox) bool {
 	case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStatePaused:
 		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "it is "+string(s.record.State)+": its brokers change once it is ready")
 		return false
-	case genv1.SandboxStateReady, genv1.SandboxStateStopped, genv1.SandboxStateFailed, genv1.SandboxStateUnreachable, genv1.SandboxStateGone:
+	case genv1.SandboxStateReady, genv1.SandboxStateStopped, genv1.SandboxStateFailed, genv1.SandboxStateUnreachable, genv1.SandboxStateGone, genv1.SandboxStateLost:
 	}
 	return true
 }

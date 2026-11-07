@@ -46,6 +46,8 @@ const (
 // Defines values for BrokerActivityType.
 const (
 	ActivityTypeHttp    BrokerActivityType = "http"
+	ActivityTypeRead    BrokerActivityType = "read"
+	ActivityTypeSetting BrokerActivityType = "setting"
 	ActivityTypeStream  BrokerActivityType = "stream"
 	ActivityTypeUpgrade BrokerActivityType = "upgrade"
 )
@@ -80,6 +82,22 @@ const (
 	BuildStepStateRunning BuildStepState = "running"
 )
 
+// Defines values for BundleApprovalKind.
+const (
+	ApprovalPasskey  BundleApprovalKind = "passkey"
+	ApprovalRotation BundleApprovalKind = "rotation"
+)
+
+// Defines values for BundleLogLineKind.
+const (
+	LogApproved      BundleLogLineKind = "approved"
+	LogApprover      BundleLogLineKind = "approver"
+	LogCredentialKey BundleLogLineKind = "credential_key"
+	LogRejoined      BundleLogLineKind = "rejoined"
+	LogRevoked       BundleLogLineKind = "revoked"
+	LogRotated       BundleLogLineKind = "rotated"
+)
+
 // Defines values for CostKind.
 const (
 	CostKindImage   CostKind = "image"
@@ -108,8 +126,19 @@ const (
 	Dns     EgressRefusalKind = "dns"
 )
 
+// Defines values for ErrorErrorConstraint.
+const (
+	ErrorErrorConstraintBrokers   ErrorErrorConstraint = "brokers"
+	ErrorErrorConstraintFloor     ErrorErrorConstraint = "floor"
+	ErrorErrorConstraintImage     ErrorErrorConstraint = "image"
+	ErrorErrorConstraintPlacement ErrorErrorConstraint = "placement"
+	ErrorErrorConstraintRunner    ErrorErrorConstraint = "runner"
+	ErrorErrorConstraintVolume    ErrorErrorConstraint = "volume"
+)
+
 // Defines values for ErrorCode.
 const (
+	ErrorCodeApprovalInvalid    ErrorCode = "approval_invalid"
 	ErrorCodeBadRequest         ErrorCode = "bad_request"
 	ErrorCodeBrokerInUse        ErrorCode = "broker_in_use"
 	ErrorCodeBuildsUnconfigured ErrorCode = "builds_unconfigured"
@@ -117,6 +146,7 @@ const (
 	ErrorCodeConflict           ErrorCode = "conflict"
 	ErrorCodeForbidden          ErrorCode = "forbidden"
 	ErrorCodeGapped             ErrorCode = "gapped"
+	ErrorCodeGone               ErrorCode = "gone"
 	ErrorCodeImageInUse         ErrorCode = "image_in_use"
 	ErrorCodeImageUnknown       ErrorCode = "image_unknown"
 	ErrorCodeInternal           ErrorCode = "internal"
@@ -127,6 +157,9 @@ const (
 	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
 	ErrorCodePrincipalRetired   ErrorCode = "principal_retired"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
+	ErrorCodeResidency          ErrorCode = "residency"
+	ErrorCodeRunnerDraining     ErrorCode = "runner_draining"
+	ErrorCodeRunnerUnreachable  ErrorCode = "runner_unreachable"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
 	ErrorCodeSandboxUnreachable ErrorCode = "sandbox_unreachable"
 	ErrorCodeSealed             ErrorCode = "sealed"
@@ -134,11 +167,19 @@ const (
 	ErrorCodeTimeout            ErrorCode = "timeout"
 	ErrorCodeTooLarge           ErrorCode = "too_large"
 	ErrorCodeUnauthorized       ErrorCode = "unauthorized"
+	ErrorCodeUnplaceable        ErrorCode = "unplaceable"
 	ErrorCodeUnsupportedSpec    ErrorCode = "unsupported_spec"
 	ErrorCodeUpstreamError      ErrorCode = "upstream_error"
 	ErrorCodeVolumeExists       ErrorCode = "volume_exists"
 	ErrorCodeVolumeInUse        ErrorCode = "volume_in_use"
 	ErrorCodeVolumePrincipal    ErrorCode = "volume_principal"
+	ErrorCodeVolumeTransferring ErrorCode = "volume_transferring"
+)
+
+// Defines values for HardwareKeys.
+const (
+	HardwareKeysPreferred HardwareKeys = "preferred"
+	HardwareKeysRequired  HardwareKeys = "required"
 )
 
 // Defines values for ImageState.
@@ -181,6 +222,62 @@ const (
 	Udp PublishedPortProtocol = "udp"
 )
 
+// Defines values for ResidencyCrossing.
+const (
+	CrossingAllowed ResidencyCrossing = "allowed"
+	CrossingRefused ResidencyCrossing = "refused"
+)
+
+// Defines values for RunnerKeyKind.
+const (
+	KeyKindFile RunnerKeyKind = "file"
+	KeyKindTPM  RunnerKeyKind = "tpm"
+)
+
+// Defines values for RunnerCapacityArch.
+const (
+	ArchAMD64 RunnerCapacityArch = "amd64"
+	ArchARM64 RunnerCapacityArch = "arm64"
+)
+
+// Defines values for RunnerOperationKind.
+const (
+	OperationDrain  RunnerOperationKind = "drain"
+	OperationRevoke RunnerOperationKind = "revoke"
+)
+
+// Defines values for RunnerOperationPending.
+const (
+	PendingBundle    RunnerOperationPending = "bundle"
+	PendingTunnelKey RunnerOperationPending = "tunnel-key"
+)
+
+// Defines values for RunnerOperationStep.
+const (
+	OperationCancelled  RunnerOperationStep = "cancelled"
+	OperationCuttingOff RunnerOperationStep = "cutting-off"
+	OperationDone       RunnerOperationStep = "done"
+	OperationDraining   RunnerOperationStep = "draining"
+	OperationRevoking   RunnerOperationStep = "revoking"
+)
+
+// Defines values for RunnerRefusalCode.
+const (
+	RefusedHeld             RunnerRefusalCode = "held"
+	RefusedSourceNotAllowed RunnerRefusalCode = "source_not_allowed"
+)
+
+// Defines values for RunnerState.
+const (
+	RunnerStateRunnerDraining    RunnerState = "draining"
+	RunnerStateRunnerExpired     RunnerState = "expired"
+	RunnerStateRunnerHeld        RunnerState = "held"
+	RunnerStateRunnerOnline      RunnerState = "online"
+	RunnerStateRunnerPending     RunnerState = "pending"
+	RunnerStateRunnerRevoked     RunnerState = "revoked"
+	RunnerStateRunnerUnreachable RunnerState = "unreachable"
+)
+
 // Defines values for SandboxEventType.
 const (
 	SandboxEventTypeError     SandboxEventType = "error"
@@ -207,6 +304,7 @@ const (
 	SandboxStateCreating    SandboxState = "creating"
 	SandboxStateFailed      SandboxState = "failed"
 	SandboxStateGone        SandboxState = "gone"
+	SandboxStateLost        SandboxState = "lost"
 	SandboxStatePaused      SandboxState = "paused"
 	SandboxStateReady       SandboxState = "ready"
 	SandboxStateStopped     SandboxState = "stopped"
@@ -215,6 +313,7 @@ const (
 
 // Defines values for Scope.
 const (
+	ActivityBodies  Scope = "activity.bodies"
 	ActivityRead    Scope = "activity.read"
 	BrokersAdmin    Scope = "brokers.admin"
 	Exec            Scope = "exec"
@@ -226,9 +325,11 @@ const (
 	NetworkWrite    Scope = "network.write"
 	PrincipalsRead  Scope = "principals.read"
 	PrincipalsWrite Scope = "principals.write"
+	RunnersAdmin    Scope = "runners.admin"
 	SandboxesRead   Scope = "sandboxes.read"
 	SandboxesWrite  Scope = "sandboxes.write"
 	TunnelsWrite    Scope = "tunnels.write"
+	UsageRead       Scope = "usage.read"
 )
 
 // Defines values for SignInError.
@@ -267,6 +368,20 @@ const (
 	Served             TunnelStatusState = "served"
 )
 
+// Defines values for UsageGroupBy.
+const (
+	UsageByHour      UsageGroupBy = "hour"
+	UsageByPrincipal UsageGroupBy = "principal"
+	UsageByRunner    UsageGroupBy = "runner"
+	UsageBySandbox   UsageGroupBy = "sandbox"
+)
+
+// Defines values for VolumeState.
+const (
+	VolumeReady        VolumeState = "ready"
+	VolumeTransferring VolumeState = "transferring"
+)
+
 // Defines values for FormatQuery.
 const (
 	FormatQueryRaw FormatQuery = "raw"
@@ -287,6 +402,61 @@ const (
 
 // ActivityHeaders Each header's values, by its name.
 type ActivityHeaders map[string][]string
+
+// AllowAddress defines model for AllowAddress.
+type AllowAddress struct {
+	// Address The address to allow, which is the held runner's `heldFrom`.
+	Address string `json:"address"`
+}
+
+// Approver defines model for Approver.
+type Approver struct {
+	AddedAt time.Time `json:"addedAt"`
+
+	// AddedBy The id of the approver whose assertion added it; its own, for the first.
+	AddedBy string `json:"addedBy"`
+
+	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
+	Assertion PasskeyAssertion `json:"assertion"`
+
+	// CredentialId The passkey's credential id, which the console asks it for by.
+	CredentialId []byte `json:"credentialId"`
+
+	// Id The SHA-256 of its public key, in hex.
+	Id string `json:"id"`
+
+	// Name Whose passkey it is, as a person reads it.
+	Name string `json:"name"`
+
+	// PublicKey Its public key, DER (SubjectPublicKeyInfo), as `getPublicKey()` gave it. P-256 or Ed25519.
+	PublicKey []byte `json:"publicKey"`
+
+	// RpId The relying party the passkey was made for, which its assertions name.
+	RpId string `json:"rpId"`
+}
+
+// ApproverPage defines model for ApproverPage.
+type ApproverPage struct {
+	Items []Approver `json:"items"`
+}
+
+// ApproverRequest A passkey to add as an approver, and an existing approver's assertion
+// over its addition — or its own, for the first. What is signed is
+//
+// `{"tenant":…,"approver":…,"name":…,"rpId":…,"addedAt":"2026-11-05T10:00:00Z"}`
+//
+// as `RunnerApproval`'s statement is written, `approver` being the new
+// key's id.
+type ApproverRequest struct {
+	AddedAt time.Time `json:"addedAt"`
+
+	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
+	Assertion    PasskeyAssertion `json:"assertion"`
+	CredentialId []byte           `json:"credentialId"`
+	Name         string           `json:"name"`
+	PublicKey    []byte           `json:"publicKey"`
+	RpId         string           `json:"rpId"`
+}
 
 // AuthMethods How a person may sign in to this server's console.
 type AuthMethods struct {
@@ -321,7 +491,12 @@ type Broker struct {
 // and its answer; `upgrade`, a request answered `101` and the bytes
 // after it, closed when the connection was; `stream`, a connection that
 // was not HTTP, carried as bytes — or one refused before anything of it
-// was read.
+// was read; `read`, somebody reading another record's bodies (`read`);
+// `setting`, somebody changing a workspace setting (`setting`).
+//
+// A record carries no body: the bodies of an exchange stay on the
+// runner that saw it (`runner`), and are read with
+// `GET /v1/activity/{activityId}/body`.
 type BrokerActivity struct {
 	// Activity What the broker said the exchange was, in its `Runyard-Activity` header.
 	Activity *string `json:"activity,omitempty"`
@@ -352,6 +527,9 @@ type BrokerActivity struct {
 	// Principal The principal the sandbox was bound to, when it was.
 	Principal *string `json:"principal,omitempty"`
 
+	// Read On a record of type `read`, whose bodies were read and by whom.
+	Read *BrokerActivityRead `json:"read,omitempty"`
+
 	// Reason Why, for anything but `ok`. A sentence, never a credential.
 	Reason *string `json:"reason,omitempty"`
 
@@ -363,13 +541,19 @@ type BrokerActivity struct {
 	// Response What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
 	Response *BrokerActivityResponse `json:"response,omitempty"`
 
+	// Runner The runner that saw the exchange and keeps its bodies. Absent on a record the server made itself (`read`), and on one kept before bodies stayed on runners.
+	Runner *string `json:"runner,omitempty"`
+
 	// Sandbox Whose exchange it was. Absent for a record that stands for others (`lost`).
 	Sandbox *openapi_types.UUID `json:"sandbox,omitempty"`
 
 	// Seq Its place in the feed.
-	Seq       int64              `json:"seq"`
-	StartedAt time.Time          `json:"startedAt"`
-	Type      BrokerActivityType `json:"type"`
+	Seq int64 `json:"seq"`
+
+	// Setting On a record of type `setting`, which setting was changed, from what to what, and by whom.
+	Setting   *BrokerActivitySetting `json:"setting,omitempty"`
+	StartedAt time.Time              `json:"startedAt"`
+	Type      BrokerActivityType     `json:"type"`
 }
 
 // BrokerActivityKind What kind of broker it went through, when it reached one.
@@ -385,6 +569,16 @@ type BrokerActivityOutcome string
 // BrokerActivityType defines model for BrokerActivity.Type.
 type BrokerActivityType string
 
+// BrokerActivityBody An exchange's bodies, as much of each as was kept, base64. Absent
+// where nothing was: a body that was empty, or an exchange that was
+// not HTTP.
+type BrokerActivityBody struct {
+	// Id A ULID, minted where the exchange was seen.
+	Id       BrokerActivityID `json:"id"`
+	Request  *[]byte          `json:"request,omitempty"`
+	Response *[]byte          `json:"response,omitempty"`
+}
+
 // BrokerActivityID A ULID, minted where the exchange was seen.
 type BrokerActivityID = string
 
@@ -396,13 +590,22 @@ type BrokerActivityPage struct {
 	Next int64 `json:"next"`
 }
 
+// BrokerActivityRead On a record of type `read`, whose bodies were read and by whom.
+type BrokerActivityRead struct {
+	// Activity A ULID, minted where the exchange was seen.
+	Activity BrokerActivityID `json:"activity"`
+
+	// By The email of whoever read them: the person, or the key's owner.
+	By string `json:"by"`
+
+	// Key The id of the key they were read with; absent for a person signed in to the console.
+	Key *string `json:"key,omitempty"`
+}
+
 // BrokerActivityRequest What the sandbox sent, as it arrived: the credential the gateway
 // attaches is not in it, and the values of `Authorization`, `Cookie`
 // and `Proxy-Authorization` are never kept.
 type BrokerActivityRequest struct {
-	// Body As much of its body as is kept, base64. Only on a record read by its id.
-	Body *[]byte `json:"body,omitempty"`
-
 	// BodyBytes How long its body was.
 	BodyBytes int64 `json:"bodyBytes"`
 
@@ -418,14 +621,30 @@ type BrokerActivityRequest struct {
 
 // BrokerActivityResponse What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
 type BrokerActivityResponse struct {
-	// Body As much of its body as is kept, base64. Only on a record read by its id.
-	Body          *[]byte `json:"body,omitempty"`
-	BodyBytes     int64   `json:"bodyBytes"`
-	BodyTruncated bool    `json:"bodyTruncated"`
+	BodyBytes     int64 `json:"bodyBytes"`
+	BodyTruncated bool  `json:"bodyTruncated"`
 
 	// Headers Each header's values, by its name.
 	Headers ActivityHeaders `json:"headers"`
 	Status  int             `json:"status"`
+}
+
+// BrokerActivitySetting On a record of type `setting`, which setting was changed, from what to what, and by whom.
+type BrokerActivitySetting struct {
+	// By The email of whoever changed it: the person, or the key's owner.
+	By string `json:"by"`
+
+	// From What it was, as a person reads it.
+	From string `json:"from"`
+
+	// Key The id of the key it was changed with; absent for a person signed in to the console.
+	Key *string `json:"key,omitempty"`
+
+	// Name The setting, as `GET /v1/runners/settings` names it.
+	Name string `json:"name"`
+
+	// To What it is now.
+	To string `json:"to"`
 }
 
 // BrokerAuth How the upstream is told which sandbox is calling. `certificate`, what an upstream is when nothing says otherwise: the sandbox's client certificate on a TLS connection this server dials, carrying what the sandbox sent as it wrote it — each request of an HTTP/1.x connection sent on in turn, so that each is recorded (`GET /v1/activity`), and any other connection's bytes as they were sent. `jwt`: this server serves the sandbox's connection as HTTP/1.1 and sends each request on with `Authorization: Bearer <token>`, over whatever the sandbox sent, and presents no certificate. The token is a JWS, ES256, whose header's `x5c` is the very certificate `certificate` would present, signed with that certificate's key, and whose claims are `aud` (`url`, without a trailing slash), `iat` and `exp` (`iat` + 300). A broker verifies the certificate as it would a client's, then the signature with its key.
@@ -457,6 +676,8 @@ type BrokerUpstream struct {
 	TrustedUrl *string `json:"trustedUrl,omitempty"`
 
 	// Url With `auth: certificate`, `https`, always: the identity is a TLS client certificate, and plain http has nowhere to attach one. Only the host and port are used: the sandbox's request carries its own path. With `auth: jwt`, `https` or `http` — http is in the clear, and is for an upstream on loopback or a private link — and its path is a prefix: a sandbox's `/mcp` goes to this path, without its trailing slash, then `/mcp`.
+	//
+	// `runner`, on a shared broker, is one each runner provides for itself: the name is declared here, tenant-wide, and each runner says in its own configuration (`brokers.provides`) where its own is, with its own credentials. A sandbox given it is placed only on a runner that provides it (`422 unplaceable`, naming the broker, when none does) and reaches the one beside its runner. Such a declaration carries no `ca` and no `trustedUrl`: those are the runner's to say, beside where its broker is.
 	Url string `json:"url"`
 }
 
@@ -477,6 +698,9 @@ type Build struct {
 	ImageId    *string `json:"imageId,omitempty"`
 	Recipe     string  `json:"recipe"`
 	Repository string  `json:"repository"`
+
+	// Runner The runner it runs on: its steps' machine, its registry logins and the registry it pushes to are that runner's.
+	Runner *string `json:"runner,omitempty"`
 
 	// SandboxId The machine its steps run in, while it runs.
 	SandboxId *string    `json:"sandboxId,omitempty"`
@@ -511,6 +735,9 @@ type BuildRequest struct {
 
 	// Repository Where in this host's registry the image is pushed, tagged with the build's id.
 	Repository string `json:"repository"`
+
+	// Runner The runner to build on, by id. Absent, the first answering runner that builds (has a `builds.registry`). To build a recipe on two runners is two builds, one naming each.
+	Runner *string `json:"runner,omitempty"`
 }
 
 // BuildState | state | what it means |
@@ -548,6 +775,85 @@ type BuildStep struct {
 
 // BuildStepState defines model for BuildStep.State.
 type BuildStepState string
+
+// BundleApproval `passkey`: an approver's assertion over the entry's statement, made
+// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
+// fingerprint, approved before it) signed the statement of this entry,
+// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+type BundleApproval struct {
+	ApprovedAt time.Time `json:"approvedAt"`
+
+	// Approver For `passkey`: the approver's id.
+	Approver          *string            `json:"approver,omitempty"`
+	AuthenticatorData *[]byte            `json:"authenticatorData,omitempty"`
+	ClientDataJSON    *[]byte            `json:"clientDataJSON,omitempty"`
+	Kind              BundleApprovalKind `json:"kind"`
+
+	// Previous For `rotation`: the fingerprint of the CA it replaced.
+	Previous  *string `json:"previous,omitempty"`
+	Signature []byte  `json:"signature"`
+}
+
+// BundleApprovalKind defines model for BundleApproval.Kind.
+type BundleApprovalKind string
+
+// BundleEntry One approved runner's sandbox CA, bound to the one hostID it may sign for.
+type BundleEntry struct {
+	// Approval `passkey`: an approver's assertion over the entry's statement, made
+	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
+	// fingerprint, approved before it) signed the statement of this entry,
+	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+	Approval  BundleApproval `json:"approval"`
+	BrokerKey string         `json:"brokerKey"`
+
+	// Certificate Its sandbox CA, PEM.
+	Certificate string `json:"certificate"`
+
+	// Fingerprint The SHA-256 of the certificate's DER, in hex.
+	Fingerprint string            `json:"fingerprint"`
+	HostID      string            `json:"hostID"`
+	Labels      map[string]string `json:"labels"`
+	RecordKey   string            `json:"recordKey"`
+}
+
+// BundleLogLine defines model for BundleLogLine.
+type BundleLogLine struct {
+	At time.Time `json:"at"`
+
+	// Body What happened, JSON, as it was hashed.
+	Body string `json:"body"`
+
+	// Generation The bundle's generation once this was written.
+	Generation int64             `json:"generation"`
+	Hash       string            `json:"hash"`
+	HostID     *string           `json:"hostID,omitempty"`
+	Kind       BundleLogLineKind `json:"kind"`
+	Prev       string            `json:"prev"`
+	Seq        int64             `json:"seq"`
+}
+
+// BundleLogLineKind defines model for BundleLogLine.Kind.
+type BundleLogLineKind string
+
+// BundleLogPage defines model for BundleLogPage.
+type BundleLogPage struct {
+	Items []BundleLogLine `json:"items"`
+}
+
+// CABundle defines model for CABundle.
+type CABundle struct {
+	// CredentialKey The workspace credential key's public half, which a person's
+	// subscription is sealed to: made by the workspace's first approved
+	// runner, `hostID`, and signed with that runner's broker key (ECDSA
+	// over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
+	// Its private half is only ever on runners.
+	CredentialKey *CredentialKey `json:"credentialKey,omitempty"`
+	Entries       []BundleEntry  `json:"entries"`
+
+	// Generation Moved by every approval, rotation and revocation; never goes back.
+	Generation int64  `json:"generation"`
+	Tenant     string `json:"tenant"`
+}
 
 // CommandRequest defines model for CommandRequest.
 type CommandRequest struct {
@@ -752,6 +1058,19 @@ type Creator struct {
 
 	// User The person who was signed in to the console, or the owner of the key the call carried.
 	User openapi_types.Email `json:"user"`
+}
+
+// CredentialKey The workspace credential key's public half, which a person's
+// subscription is sealed to: made by the workspace's first approved
+// runner, `hostID`, and signed with that runner's broker key (ECDSA
+// over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
+// Its private half is only ever on runners.
+type CredentialKey struct {
+	HostID string `json:"hostID"`
+
+	// PublicKey PEM, P-256.
+	PublicKey string `json:"publicKey"`
+	Signature []byte `json:"signature"`
 }
 
 // DirListing defines model for DirListing.
@@ -1047,6 +1366,9 @@ type EgressStatus struct {
 // Error Every failure, in one shape.
 type Error struct {
 	Error struct {
+		// Broker On `unplaceable`, the shared broker holding the sandbox back: one that does not run the hardened identity check (docs/design/runners, "Identity"), as its runners last read its `/.well-known/runyard-broker`.
+		Broker *string `json:"broker,omitempty"`
+
 		// Code Closed, because callers branch on it and a branch over an open string is
 		// a branch with a silent default.
 		//
@@ -1056,10 +1378,36 @@ type Error struct {
 		// come back later. A shared `bad_request` cannot tell them apart.
 		Code ErrorCode `json:"code"`
 
+		// Constraint On `unplaceable`, the constraint no runner meets, as the
+		// message names it (docs/design/runners, "Scheduling"):
+		//
+		// | constraint | what no runner did |
+		// |---|---|
+		// | `volume` | hold the volume `disk.volume` names, and take a sandbox |
+		// | `placement` | have every label `placement.labels` names |
+		// | `image` | pull the image's registry, or have it cached |
+		// | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+		// | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
+		// | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
+		Constraint *ErrorErrorConstraint `json:"constraint,omitempty"`
+
 		// Message For a person reading a log. It may quote something a sandbox produced, so do not render it as anything but text.
 		Message string `json:"message"`
 	} `json:"error"`
 }
+
+// ErrorErrorConstraint On `unplaceable`, the constraint no runner meets, as the
+// message names it (docs/design/runners, "Scheduling"):
+//
+// | constraint | what no runner did |
+// |---|---|
+// | `volume` | hold the volume `disk.volume` names, and take a sandbox |
+// | `placement` | have every label `placement.labels` names |
+// | `image` | pull the image's registry, or have it cached |
+// | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+// | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
+// | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
+type ErrorErrorConstraint string
 
 // ErrorCode Closed, because callers branch on it and a branch over an open string is
 // a branch with a silent default.
@@ -1101,6 +1449,9 @@ type GapError struct {
 	FirstSeq int64 `json:"firstSeq"`
 	LastSeq  int64 `json:"lastSeq"`
 }
+
+// HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
+type HardwareKeys string
 
 // Health defines model for Health.
 type Health struct {
@@ -1167,6 +1518,9 @@ type HostCommitments struct {
 
 	// MemoryBytes Their memory, together.
 	MemoryBytes int64 `json:"memoryBytes"`
+
+	// Runners Each runner's own, beside the total `capacity`, which is theirs added up: what placement reads. A runner that cannot be reached is listed with no `capacity`, and adds nothing to the total.
+	Runners *[]RunnerCommitments `json:"runners,omitempty"`
 
 	// Running The running sandboxes, paused ones included, which the CPUs and memory are of — as `sandboxes.running` in the host's history.
 	Running int `json:"running"`
@@ -1401,6 +1755,9 @@ type Image struct {
 	// Ref The reference this was pulled from, as asked for.
 	Ref string `json:"ref"`
 
+	// Runners The runners holding it, each with its own cache's state. `state` above is `ready` when it is ready on any of them, so a sandbox can boot from it there.
+	Runners *[]ImageRunner `json:"runners,omitempty"`
+
 	// Sandboxes How many sandboxes are booted from it right now. What makes the `409` on `DELETE` predictable rather than a surprise. Left out for a key that acts only on its `own` sandboxes, whose `409` says that the image is in use and not by how many.
 	Sandboxes *int `json:"sandboxes,omitempty"`
 
@@ -1430,6 +1787,35 @@ type ImageRequest struct {
 
 	// Ref An OCI reference: what you would hand `docker pull`. A digest is resolved as written; a tag is resolved now, and re-resolved on every later pull, so a tag pushed over becomes a new image rather than silently changing this one.
 	Ref string `json:"ref"`
+
+	// Runners The runners to pull it on, by id. Absent, every answering runner that can pull from the reference's registry.
+	Runners *[]string `json:"runners,omitempty"`
+}
+
+// ImageRunner One runner's cache of an image.
+type ImageRunner struct {
+	// Digest The manifest digest this runner has: two runners that pulled a tag at different times, or built one recipe each, may differ, and that is how it shows.
+	Digest *string `json:"digest,omitempty"`
+
+	// Error Why it is `failed` there.
+	Error *string `json:"error,omitempty"`
+
+	// Id The runner's id.
+	Id         string     `json:"id"`
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+
+	// Reachable Whether the runner is answering. One that is not is listed as it last reported, as of `observedAt`.
+	Reachable bool `json:"reachable"`
+
+	// Size Its rootfs there, in bytes.
+	Size *int64 `json:"size,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `pulling` | fetching, or flattening layers into a rootfs. No usable disk yet |
+	// | `ready` | a sandbox can boot from it |
+	// | `failed` | it will not become ready; `error` says why |
+	State ImageState `json:"state"`
 }
 
 // ImageState | state | what it means |
@@ -1458,6 +1844,80 @@ type Interface struct {
 
 	// Veth The sandbox's only device in the host's own namespace: its link to the host, for an operator reading `ip link` there. Named for this server's instance and the sandbox's /30, in hexadecimal.
 	Veth string `json:"veth"`
+}
+
+// JoinToken A join token's metadata. Never its secret.
+type JoinToken struct {
+	AllowedSources []string  `json:"allowedSources"`
+	CreatedAt      time.Time `json:"createdAt"`
+
+	// CreatedBy Who minted it: an administrator's address, or `runyard-sandboxes` for the token a server mints for the runner on its own host.
+	CreatedBy string    `json:"createdBy"`
+	ExpiresAt time.Time `json:"expiresAt"`
+
+	// HostID The runner it is bound to, for a Rejoin token.
+	HostID  *string           `json:"hostID,omitempty"`
+	Id      string            `json:"id"`
+	Labels  map[string]string `json:"labels"`
+	MaxUses int               `json:"maxUses"`
+	Name    *string           `json:"name,omitempty"`
+	Revoked bool              `json:"revoked"`
+
+	// Uses How many enrolments it was used for.
+	Uses int `json:"uses"`
+}
+
+// JoinTokenCreated defines model for JoinTokenCreated.
+type JoinTokenCreated struct {
+	AllowedSources []string  `json:"allowedSources"`
+	CreatedAt      time.Time `json:"createdAt"`
+
+	// CreatedBy Who minted it: an administrator's address, or `runyard-sandboxes` for the token a server mints for the runner on its own host.
+	CreatedBy string    `json:"createdBy"`
+	ExpiresAt time.Time `json:"expiresAt"`
+
+	// HostID The runner it is bound to, for a Rejoin token.
+	HostID  *string           `json:"hostID,omitempty"`
+	Id      string            `json:"id"`
+	Labels  map[string]string `json:"labels"`
+	MaxUses int               `json:"maxUses"`
+	Name    *string           `json:"name,omitempty"`
+	Revoked bool              `json:"revoked"`
+
+	// Secret The whole token, `rjt_<id>_<secret>`. **This is the only time it exists outside the caller.**
+	Secret string `json:"secret"`
+
+	// Uses How many enrolments it was used for.
+	Uses int `json:"uses"`
+}
+
+// JoinTokenPage defines model for JoinTokenPage.
+type JoinTokenPage struct {
+	Items []JoinToken `json:"items"`
+
+	// NextCursor Pass as `cursor` to continue. Absent means the end.
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// JoinTokenRequest defines model for JoinTokenRequest.
+type JoinTokenRequest struct {
+	// AllowedSources IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike) it may be used from, which become the runner's. Empty is anywhere.
+	AllowedSources *[]string `json:"allowedSources,omitempty"`
+
+	// ExpiresIn How long it may be used for, as a Go duration, 15 minutes to a day. An hour when left out.
+	ExpiresIn *string `json:"expiresIn,omitempty"`
+
+	// HostID Binds it to this existing runner (Rejoin): it enrols that runner again, as itself, and nothing else, once.
+	HostID *string `json:"hostID,omitempty"`
+
+	// Labels The labels each runner it enrols is assigned.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// MaxUses How many hosts it may enrol. 1 unless it is minted for a fleet.
+	MaxUses *int `json:"maxUses,omitempty"`
+
+	// Name What it is for, as the list of tokens shows it; text a person reads.
+	Name *string `json:"name,omitempty"`
 }
 
 // Key A key's metadata. Never its secret.
@@ -1761,10 +2221,33 @@ type MeVia string
 // MetricsWindow How far back. `15m` and `1h` are a reading every ten seconds; `6h` and `24h` are one point a minute, each the average of the readings in it.
 type MetricsWindow string
 
+// ModelUsage What one model was said to spend, by the LLM broker's annotation on each call once its answer had ended. A call cut short said nothing, and is not here.
+type ModelUsage struct {
+	CacheRead    int64 `json:"cacheRead"`
+	CacheWrite   int64 `json:"cacheWrite"`
+	CacheWrite1h int64 `json:"cacheWrite1h"`
+	Calls        int64 `json:"calls"`
+	Input        int64 `json:"input"`
+
+	// Model The model the calls asked for, as the sandbox named it.
+	Model     string `json:"model"`
+	Output    int64  `json:"output"`
+	Reasoning int64  `json:"reasoning"`
+}
+
 // Page defines model for Page.
 type Page struct {
 	// NextCursor Pass as `cursor` to continue. Absent means the end.
 	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// PasskeyAssertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
+type PasskeyAssertion struct {
+	// Approver The approver's id.
+	Approver          string `json:"approver"`
+	AuthenticatorData []byte `json:"authenticatorData"`
+	ClientDataJSON    []byte `json:"clientDataJSON"`
+	Signature         []byte `json:"signature"`
 }
 
 // PasswordSignIn An address, and the password the server's htpasswd file holds for it.
@@ -1790,6 +2273,41 @@ type PinTtl struct {
 
 	// MinSeconds The shortest an address stays open, whatever the answer's TTL. Absent is 60.
 	MinSeconds *int `json:"minSeconds,omitempty"`
+}
+
+// PlacedOn The runner a sandbox is placed on, or a volume is held by, as this server last heard of it. Absent on a server whose machines run on no runner it lists.
+type PlacedOn struct {
+	// Id The runner's hostID, as `GET /v1/runners/{id}` names it.
+	Id string `json:"id"`
+
+	// ObservedAt When it last reported what it holds. Absent until it has: what is said of a sandbox on a runner that is `unreachable` is as of then.
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `pending` | enrolled, and not approved yet: in no bundle, and given no sandbox |
+	// | `online` | approved, and holding its line |
+	// | `unreachable` | approved, and its line is down |
+	// | `held` | a line from a second address was refused while it held one, until an admin decides |
+	// | `draining` | placed on no more; revoked once empty when asked to be |
+	// | `expired` | its certificate expired; it comes back with a Rejoin token |
+	// | `revoked` | cut off, for good |
+	State RunnerState `json:"state"`
+}
+
+// Placement Where a sandbox may run, among the runners of this server
+// (docs/design/runners, "Scheduling"). Absent is anywhere. Read at
+// create, and at a start that places the sandbox again; never
+// otherwise.
+//
+// Of the runners that meet it, and every other constraint, it is
+// placed on the one with the most left of its scarcest resource once
+// it is placed, a tie going to one with its image cached. None that
+// meets it is `422 unplaceable`, naming what nobody meets; only room
+// short is `507 capacity_exceeded`.
+type Placement struct {
+	// Labels Every one must be a runner's: an assigned label (`GET /v1/runners/{id}`, `labels`) or a fact it reports (`arch`, `kvm`, …), as equal strings. There is no pool: a label is the one way to say where.
+	Labels *map[string]string `json:"labels,omitempty"`
 }
 
 // Principal defines model for Principal.
@@ -1889,6 +2407,18 @@ type PublishedPort struct {
 // PublishedPortProtocol defines model for PublishedPort.Protocol.
 type PublishedPortProtocol string
 
+// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
+type Residency struct {
+	// Crossing `refused`, the default: a volume is never transferred between runners whose values of `label` differ. `allowed`: it moves freely, for a workspace that docked runners for capacity.
+	Crossing ResidencyCrossing `json:"crossing"`
+
+	// Label An assigned label's key. `site` until changed.
+	Label string `json:"label"`
+}
+
+// ResidencyCrossing `refused`, the default: a volume is never transferred between runners whose values of `label` differ. `allowed`: it moves freely, for a workspace that docked runners for capacity.
+type ResidencyCrossing string
+
 // ResolvedName One address pinned open: the name that resolved to it, and the rule that allowed that name. A name two rules allow is listed once for each, with each rule's ports and each rule's expiry.
 type ResolvedName struct {
 	Address string `json:"address"`
@@ -1902,6 +2432,263 @@ type ResolvedName struct {
 
 	// Rule The rule whose ports and `pinTtl` this pin was made with.
 	Rule string `json:"rule"`
+}
+
+// Runner A host this server's machines run on.
+type Runner struct {
+	// AllowedSources The addresses and ranges it may connect from. Empty is anywhere.
+	AllowedSources []string `json:"allowedSources"`
+
+	// Approval `passkey`: an approver's assertion over the entry's statement, made
+	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
+	// fingerprint, approved before it) signed the statement of this entry,
+	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+	Approval *BundleApproval `json:"approval,omitempty"`
+
+	// BrokerKey The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
+	BrokerKey string `json:"brokerKey"`
+
+	// CaFingerprint The SHA-256, in hex, of the sandbox CA it reported, once it has: what an admin compares with `runyard-runner status` on the host before approving it.
+	CaFingerprint *string `json:"caFingerprint,omitempty"`
+
+	// Capacity What the runner reported it brings.
+	Capacity RunnerCapacity `json:"capacity"`
+
+	// CertificateNotAfter When its runner certificate expires, unless renewed first.
+	CertificateNotAfter time.Time `json:"certificateNotAfter"`
+
+	// ConnectedFrom The address its line is held from, when it holds one.
+	ConnectedFrom *string `json:"connectedFrom,omitempty"`
+
+	// EnrolledFrom The address it last enrolled from.
+	EnrolledFrom string `json:"enrolledFrom"`
+
+	// HeldFrom While it is `held`, the second address a request came from: the one `POST /v1/runners/{runnerId}/allow-address` would allow.
+	HeldFrom *string `json:"heldFrom,omitempty"`
+
+	// Id Its hostID, unique on this server and never given to another.
+	Id       string    `json:"id"`
+	JoinedAt time.Time `json:"joinedAt"`
+
+	// JoinedBy Who minted the join token it last enrolled with: an administrator's address, or `runyard-sandboxes` for the token a server mints for the runner on its own host.
+	JoinedBy string `json:"joinedBy"`
+
+	// KeyKind Where its key is held: `tpm` only when a TPM attestation proved it, and `file` otherwise.
+	KeyKind RunnerKeyKind `json:"keyKind"`
+
+	// KeyMaker For a `tpm` key, the maker's CA whose endorsement certificate proved it.
+	KeyMaker *string `json:"keyMaker,omitempty"`
+
+	// Labels Its assigned labels, from the join token it enrolled with.
+	Labels map[string]string `json:"labels"`
+
+	// LastRefusal The last request of this runner's that was refused for where it came from.
+	LastRefusal *RunnerRefusal `json:"lastRefusal,omitempty"`
+	LastSeenAt  *time.Time     `json:"lastSeenAt,omitempty"`
+
+	// Operation Its latest drain or revoke: the one in progress, or the last one to have ended. Absent when it has had none.
+	Operation *RunnerOperation `json:"operation,omitempty"`
+
+	// Provides The shared brokers declared with `url: runner` that it provides for itself, as it last reported: where a sandbox given one may be placed.
+	Provides *[]BrokerName `json:"provides,omitempty"`
+
+	// Reaches The shared brokers it reaches from its own network, as it last reported. One it does not reach answers a sandbox on it with a closed connection.
+	Reaches *[]BrokerName `json:"reaches,omitempty"`
+
+	// RecordKey The public half of the key that signs its activity lines, PEM, as it enrolled with it.
+	RecordKey string `json:"recordKey"`
+
+	// RevokedAt When it was revoked.
+	RevokedAt *time.Time `json:"revokedAt,omitempty"`
+
+	// RevokedBy Who revoked it, or asked for the drain that did.
+	RevokedBy *openapi_types.Email `json:"revokedBy,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `pending` | enrolled, and not approved yet: in no bundle, and given no sandbox |
+	// | `online` | approved, and holding its line |
+	// | `unreachable` | approved, and its line is down |
+	// | `held` | a line from a second address was refused while it held one, until an admin decides |
+	// | `draining` | placed on no more; revoked once empty when asked to be |
+	// | `expired` | its certificate expired; it comes back with a Rejoin token |
+	// | `revoked` | cut off, for good |
+	State RunnerState `json:"state"`
+
+	// Version The runyard-runner it reported at enrolment.
+	Version string `json:"version"`
+}
+
+// RunnerKeyKind Where its key is held: `tpm` only when a TPM attestation proved it, and `file` otherwise.
+type RunnerKeyKind string
+
+// RunnerApproval A passkey's approval of one runner. What it signs, `statement`, is
+// this JSON, with no whitespace, its keys in this order and a label's
+// keys sorted, and `approvedAt` in UTC to the second:
+//
+// `{"tenant":…,"hostID":…,"caFingerprint":…,"labels":{…},"recordKey":…,"brokerKey":…,"approvedAt":"2026-11-05T10:00:00Z"}`
+//
+// — the runner's, as `GET /v1/runners/{id}` shows them, and the
+// server's tenant (`GET /v1/ca/bundle`). The assertion's challenge is
+// the statement's SHA-256.
+type RunnerApproval struct {
+	ApprovedAt time.Time `json:"approvedAt"`
+
+	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
+	Assertion PasskeyAssertion `json:"assertion"`
+}
+
+// RunnerCapacity What the runner reported it brings.
+type RunnerCapacity struct {
+	Arch   *RunnerCapacityArch `json:"arch,omitempty"`
+	Cpus   *int                `json:"cpus,omitempty"`
+	Disk   *string             `json:"disk,omitempty"`
+	Gpus   *int                `json:"gpus,omitempty"`
+	Memory *string             `json:"memory,omitempty"`
+}
+
+// RunnerCapacityArch defines model for RunnerCapacity.Arch.
+type RunnerCapacityArch string
+
+// RunnerCommitments defines model for RunnerCommitments.
+type RunnerCommitments struct {
+	// Capacity Its capacity and what is committed against it, as it answers now.
+	Capacity *HostCapacity `json:"capacity,omitempty"`
+
+	// Id Its hostID.
+	Id string `json:"id"`
+
+	// Labels What `placement.labels` is matched against: its assigned labels, and over them the facts it reports.
+	Labels map[string]string `json:"labels"`
+
+	// ObservedAt When it last reported. Absent until it has.
+	ObservedAt *time.Time `json:"observedAt,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `pending` | enrolled, and not approved yet: in no bundle, and given no sandbox |
+	// | `online` | approved, and holding its line |
+	// | `unreachable` | approved, and its line is down |
+	// | `held` | a line from a second address was refused while it held one, until an admin decides |
+	// | `draining` | placed on no more; revoked once empty when asked to be |
+	// | `expired` | its certificate expired; it comes back with a Rejoin token |
+	// | `revoked` | cut off, for good |
+	State RunnerState `json:"state"`
+}
+
+// RunnerDrainRequest defines model for RunnerDrainRequest.
+type RunnerDrainRequest struct {
+	// RevokeWhenEmpty Revoke the runner by itself once it is empty, for a host being retired. False, for maintenance, unless it says.
+	RevokeWhenEmpty *bool `json:"revokeWhenEmpty,omitempty"`
+}
+
+// RunnerOperation A drain or a revoke, which is a record rather than a process: written down in the transaction that answers it, and carried through to the end by the server whatever restarts in between.
+type RunnerOperation struct {
+	Id int64 `json:"id"`
+
+	// Kind A drain turned into a revoke, by `DELETE` or by emptying, is a revoke.
+	Kind RunnerOperationKind `json:"kind"`
+
+	// Left While it drains, how many of its sandboxes its last report said are running, paused or on their way to either. Absent while it has not reported since the drain.
+	Left *int `json:"left,omitempty"`
+
+	// Pending The side effects of a revoke not confirmed yet, each retried until it is: `bundle`, its sandbox CA taken out of what `/v1/ca` serves, and `tunnel-key`, its tunnel-gateway key revoked.
+	Pending     []RunnerOperationPending `json:"pending"`
+	RequestedAt time.Time                `json:"requestedAt"`
+
+	// RequestedBy Who asked for it.
+	RequestedBy     openapi_types.Email `json:"requestedBy"`
+	RevokeWhenEmpty bool                `json:"revokeWhenEmpty"`
+
+	// RunnerId The runner's hostID.
+	RunnerId string `json:"runnerId"`
+
+	// SinceGeneration The runner's desired-state generation when it was asked: only a report that applied this one or a later one says it is empty.
+	SinceGeneration int64 `json:"sinceGeneration"`
+
+	// Step | step | what it means |
+	// |---|---|
+	// | `draining` | placed on no more; waiting for it to be empty, when it is to be revoked then |
+	// | `revoking` | being revoked: it is so once this step is past |
+	// | `cutting-off` | revoked, and refused on every request; `pending` is what is left to confirm |
+	// | `done` | revoked, and every side effect confirmed |
+	// | `cancelled` | a drain undone with `undrain` |
+	Step      RunnerOperationStep `json:"step"`
+	UpdatedAt *time.Time          `json:"updatedAt,omitempty"`
+}
+
+// RunnerOperationKind A drain turned into a revoke, by `DELETE` or by emptying, is a revoke.
+type RunnerOperationKind string
+
+// RunnerOperationPending defines model for RunnerOperation.Pending.
+type RunnerOperationPending string
+
+// RunnerOperationStep | step | what it means |
+// |---|---|
+// | `draining` | placed on no more; waiting for it to be empty, when it is to be revoked then |
+// | `revoking` | being revoked: it is so once this step is past |
+// | `cutting-off` | revoked, and refused on every request; `pending` is what is left to confirm |
+// | `done` | revoked, and every side effect confirmed |
+// | `cancelled` | a drain undone with `undrain` |
+type RunnerOperationStep string
+
+// RunnerPage defines model for RunnerPage.
+type RunnerPage struct {
+	Items []Runner `json:"items"`
+
+	// NextCursor Pass as `cursor` to continue. Absent means the end.
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+// RunnerRefusal The last request of this runner's that was refused for where it came from.
+type RunnerRefusal struct {
+	// Address Where it came from, as the server measured it.
+	Address string    `json:"address"`
+	At      time.Time `json:"at"`
+
+	// Code `source_not_allowed`: from outside its `allowedSources`; `held`: from a second address while it was connected, or held, to another.
+	Code RunnerRefusalCode `json:"code"`
+}
+
+// RunnerRefusalCode `source_not_allowed`: from outside its `allowedSources`; `held`: from a second address while it was connected, or held, to another.
+type RunnerRefusalCode string
+
+// RunnerSettings defines model for RunnerSettings.
+type RunnerSettings struct {
+	// HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
+	HardwareKeys HardwareKeys `json:"hardwareKeys"`
+
+	// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
+	Residency Residency `json:"residency"`
+
+	// TrustedMakers The TPM makers' endorsement CAs this server trusts, by name, from `tpm.endorsementRoots` in its configuration: a key in a TPM of none of them is `file`.
+	TrustedMakers []string `json:"trustedMakers"`
+}
+
+// RunnerSettingsUpdate defines model for RunnerSettingsUpdate.
+type RunnerSettingsUpdate struct {
+	// HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
+	HardwareKeys *HardwareKeys `json:"hardwareKeys,omitempty"`
+
+	// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
+	Residency *Residency `json:"residency,omitempty"`
+}
+
+// RunnerState | state | what it means |
+// |---|---|
+// | `pending` | enrolled, and not approved yet: in no bundle, and given no sandbox |
+// | `online` | approved, and holding its line |
+// | `unreachable` | approved, and its line is down |
+// | `held` | a line from a second address was refused while it held one, until an admin decides |
+// | `draining` | placed on no more; revoked once empty when asked to be |
+// | `expired` | its certificate expired; it comes back with a Rejoin token |
+// | `revoked` | cut off, for good |
+type RunnerState string
+
+// RunnerUpdate defines model for RunnerUpdate.
+type RunnerUpdate struct {
+	// AllowedSources IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike) it may connect from, replacing what it had. Empty is anywhere.
+	AllowedSources []string `json:"allowedSources"`
 }
 
 // Sandbox defines model for Sandbox.
@@ -1971,6 +2758,9 @@ type Sandbox struct {
 	// ReadyAt When the guest first answered. Absent until it has.
 	ReadyAt *time.Time `json:"readyAt,omitempty"`
 
+	// Runner The runner a sandbox is placed on, or a volume is held by, as this server last heard of it. Absent on a server whose machines run on no runner it lists.
+	Runner *PlacedOn `json:"runner,omitempty"`
+
 	// Spec What was asked for, with this host's defaults filled in — so a caller that sent three fields can see the other nine it got.
 	Spec SandboxSpec `json:"spec"`
 
@@ -1984,6 +2774,7 @@ type Sandbox struct {
 	// | `stopped` | shut down on purpose, disk intact | `POST /start` |
 	// | `failed` | it will not become ready; `error` says why | read the events, then delete |
 	// | `gone` | the machine is no longer on this host | delete the record |
+	// | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
 	State SandboxState `json:"state"`
 
 	// Tainted The first call that ran something in it or wrote into it, through any route that `spec.sealed` refuses — by a key or by a person, whoever it was. Absent while nothing has, and never taken away: not by sealing it, nor by stopping or starting it.
@@ -2071,6 +2862,7 @@ type SandboxEvent struct {
 	// | `stopped` | shut down on purpose, disk intact | `POST /start` |
 	// | `failed` | it will not become ready; `error` says why | read the events, then delete |
 	// | `gone` | the machine is no longer on this host | delete the record |
+	// | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
 	State *SandboxState `json:"state,omitempty"`
 
 	// Type `progress` is the one that makes a thirty-second `creating` bearable: pulling a layer, flattening the rootfs, making the disk, installing the rules. `operation` is a call somebody made on this sandbox, and carries `operation` saying who and how it went.
@@ -2382,6 +3174,18 @@ type SandboxSpec struct {
 	// Nested Whether the sandbox gets a working `/dev/kvm` of its own. Off by default and asked for explicitly. A host that cannot give it refuses the spec rather than booting a guest that sees the CPU extension and finds no device — which is the most confusing way for this to fail.
 	Nested *bool `json:"nested,omitempty"`
 
+	// Placement Where a sandbox may run, among the runners of this server
+	// (docs/design/runners, "Scheduling"). Absent is anywhere. Read at
+	// create, and at a start that places the sandbox again; never
+	// otherwise.
+	//
+	// Of the runners that meet it, and every other constraint, it is
+	// placed on the one with the most left of its scarcest resource once
+	// it is placed, a tie going to one with its image cached. None that
+	// meets it is `422 unplaceable`, naming what nobody meets; only room
+	// short is `507 capacity_exceeded`.
+	Placement *Placement `json:"placement,omitempty"`
+
 	// Ports Ports of this host that carry traffic INTO the sandbox. The other
 	// direction from `egress`: there the workload dials out, here
 	// somebody dials in and the workload never decides when.
@@ -2465,6 +3269,7 @@ type SandboxSpec struct {
 // | `stopped` | shut down on purpose, disk intact | `POST /start` |
 // | `failed` | it will not become ready; `error` says why | read the events, then delete |
 // | `gone` | the machine is no longer on this host | delete the record |
+// | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
 type SandboxState string
 
 // SandboxUsagePoint defines model for SandboxUsagePoint.
@@ -2489,12 +3294,15 @@ type SandboxUsagePoint struct {
 // | `brokers.admin` | declare, replace and withdraw the shared brokers |
 // | `principals.read` | see principals, and read brokers' trusted documents for them |
 // | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
-// | `activity.read` | read what the sandboxes did through their brokers, bodies included |
+// | `activity.read` | read what the sandboxes did through their brokers, without the bodies |
+// | `activity.bodies` | read the bodies of what the sandboxes sent and were answered through their brokers |
+// | `usage.read` | read what the whole workspace's sandboxes consumed (`GET /v1/usage`), and nothing else of them |
 // | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
 // | `files.read` | read bytes out of a sandbox, including its process and socket tables |
 // | `files.write` | write bytes into a sandbox |
 // | `exec` | run commands and processes inside a sandbox |
 // | `keys.admin` | mint and revoke its owner's keys, within its own scopes — an administrator's, anybody's |
+// | `runners.admin` | mint and revoke join tokens, which add runners: never granted with another scope, and only to an administrator's key |
 //
 // `exec` is separate from everything because it is arbitrary code in the
 // sandbox, which a caller that only starts and stops machines has no need
@@ -2515,10 +3323,49 @@ type SandboxUsagePoint struct {
 // names only the principals it made.
 //
 // `activity.read` is separate from `sandboxes.read` because a record
-// carries what a sandbox sent and was answered — an API's JSON, a
-// tool's arguments — which a caller that only watches machines has no
-// need of.
+// says what a sandbox called and how it was answered, which a caller
+// that only watches machines has no need of. `activity.bodies` is
+// separate from `activity.read` because a body is what was sent and
+// answered — an API's JSON, a tool's arguments — and reading it is a
+// different trust from counting and billing what was called: the
+// bodies stay on the runner that saw the exchange, and every read of
+// one is itself recorded.
+//
+// `usage.read` is apart from `sandboxes.read` because what bills a
+// workspace counts all of it and needs to see none of it: a key held to
+// its `own` sandboxes, of which it makes none, may read the whole
+// workspace's consumption with it and still no sandbox, which
+// `sandboxes.read` would show.
+//
+// `runners.admin` is apart from every other scope, and is never granted
+// with one: it adds a host that sandboxes run on, which nothing that
+// holds a key for sandboxes, an agent or anything it drives, should be
+// able to do. Only an administrator's key may hold it.
 type Scope string
+
+// SealedCredential defines model for SealedCredential.
+type SealedCredential struct {
+	// ExpiresAt What the provider said of the sign-in.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// Sealed Encrypted to the workspace credential key.
+	Sealed    []byte              `json:"sealed"`
+	Subject   openapi_types.Email `json:"subject"`
+	Version   int64               `json:"version"`
+	WrittenAt time.Time           `json:"writtenAt"`
+
+	// WrittenBy The runner that last wrote it, or the person.
+	WrittenBy *string `json:"writtenBy,omitempty"`
+}
+
+// SealedCredentialWrite defines model for SealedCredentialWrite.
+type SealedCredentialWrite struct {
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Sealed    []byte     `json:"sealed"`
+
+	// Version The version this replaces, 0 for none.
+	Version int64 `json:"version"`
+}
 
 // SignInError Why a sign-in came back without a session, in `signInError` on the
 // console's address.
@@ -2808,6 +3655,86 @@ type TunnelTokenRequest struct {
 	Comment string `json:"comment"`
 }
 
+// Usage What was consumed. Never a price.
+type Usage struct {
+	// BrokerBytesIn Bytes the sandboxes sent through brokers.
+	BrokerBytesIn int64 `json:"brokerBytesIn"`
+
+	// BrokerBytesOut Bytes brokers answered the sandboxes with.
+	BrokerBytesOut int64 `json:"brokerBytesOut"`
+
+	// BrokerCalls Exchanges through brokers.
+	BrokerCalls int64 `json:"brokerCalls"`
+
+	// ImageGiBHours Cached images' GiB, on each runner that has one, times the hours held.
+	ImageGiBHours float64 `json:"imageGiBHours"`
+
+	// MemoryGiBSeconds Their memory in GiB times the seconds they held it, paused too.
+	MemoryGiBSeconds float64 `json:"memoryGiBSeconds"`
+
+	// Models The tokens each model was said to spend, by name.
+	Models []ModelUsage `json:"models"`
+
+	// PeakSandboxes The most sandboxes held at once — the slots taken — of the whole, a runner or an hour. Absent from a sandbox's group and a principal's, and for a key held to its own sandboxes.
+	PeakSandboxes *int `json:"peakSandboxes,omitempty"`
+
+	// SandboxSeconds How long sandboxes were held, running or paused.
+	SandboxSeconds float64 `json:"sandboxSeconds"`
+
+	// Sandboxes How many sandboxes were held at all.
+	Sandboxes int `json:"sandboxes"`
+
+	// TunnelSeconds How long tunnels were served.
+	TunnelSeconds float64 `json:"tunnelSeconds"`
+
+	// Tunnels How many tunnels were served at all.
+	Tunnels int `json:"tunnels"`
+
+	// VcpuSeconds Their vCPUs times the seconds they ran, not paused.
+	VcpuSeconds float64 `json:"vcpuSeconds"`
+
+	// VolumeGiBHours Volumes' GiB, at the size each may grow to, times the hours held.
+	VolumeGiBHours float64 `json:"volumeGiBHours"`
+}
+
+// UsageGroup One group's consumption. Of the fields that say which, the one it is grouped by: a group with none of them is what was nobody's — a volume's and an image's, which are no sandbox's; a sandbox's that is no principal; a record the server made itself, which is no runner's.
+type UsageGroup struct {
+	// Hour The hour's start.
+	Hour      *time.Time `json:"hour,omitempty"`
+	Principal *string    `json:"principal,omitempty"`
+
+	// Runner The runner's id.
+	Runner *string `json:"runner,omitempty"`
+
+	// Sandbox The sandbox's id.
+	Sandbox *string `json:"sandbox,omitempty"`
+
+	// Usage What was consumed. Never a price.
+	Usage Usage `json:"usage"`
+}
+
+// UsageGroupBy What a usage report's groups are: each runner, each sandbox, each principal, or each hour of the window.
+type UsageGroupBy string
+
+// UsageReport What was consumed over a window: the whole, and each group. Grouped by hour, every hour of the window, oldest first, those nothing was used in too; otherwise each group that used anything, by its id.
+type UsageReport struct {
+	// From The first hour's start.
+	From time.Time `json:"from"`
+
+	// GroupBy What a usage report's groups are: each runner, each sandbox, each principal, or each hour of the window.
+	GroupBy UsageGroupBy `json:"groupBy"`
+	Groups  []UsageGroup `json:"groups"`
+
+	// To Now.
+	To time.Time `json:"to"`
+
+	// Total What was consumed. Never a price.
+	Total Usage `json:"total"`
+
+	// Window How far back it goes, an hour at a time, whatever the window.
+	Window CostWindow `json:"window"`
+}
+
 // Volume defines model for Volume.
 type Volume struct {
 	// AllocatedBytes What it costs on this host, which is what it holds.
@@ -2832,8 +3759,20 @@ type Volume struct {
 	// Principal The principal it is bound to: that of the first sandbox bound to one that attached it, or the one it was moved to. Only sandboxes bound to it attach it. Absent while it is bound to none.
 	Principal *PrincipalId `json:"principal,omitempty"`
 
+	// Runner The runner whose disk it is on: a sandbox naming it is placed there.
+	Runner *PlacedOn `json:"runner,omitempty"`
+
 	// SandboxId The sandbox holding it. Absent when none does.
 	SandboxId *openapi_types.UUID `json:"sandboxId,omitempty"`
+
+	// State | state | what it means |
+	// |---|---|
+	// | `ready` | on its runner, to be attached |
+	// | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+	State *VolumeState `json:"state,omitempty"`
+
+	// TransferringTo The runner it is being transferred to, while it is `transferring`.
+	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
 }
 
 // VolumeClone What `POST .../volumes/{volumeName}/clone` makes.
@@ -2859,8 +3798,26 @@ type VolumePrincipal struct {
 	Principal PrincipalId `json:"principal"`
 }
 
+// VolumeState | state | what it means |
+// |---|---|
+// | `ready` | on its runner, to be attached |
+// | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+type VolumeState string
+
+// VolumeTransfer What `POST .../volumes/{volumeName}/transfer` moves it to.
+type VolumeTransfer struct {
+	// Runner The target runner's hostID, as `GET /v1/runners/{id}` names it.
+	Runner string `json:"runner"`
+}
+
 // BuildID defines model for BuildID.
 type BuildID = string
+
+// BundleIfNoneMatch defines model for BundleIfNoneMatch.
+type BundleIfNoneMatch = string
+
+// BundleWait defines model for BundleWait.
+type BundleWait = int
 
 // CostWindowInQuery How far back. `24h` is hour by hour; the others are day by day, each day in UTC.
 type CostWindowInQuery = CostWindow
@@ -2910,8 +3867,14 @@ type TunnelName = string
 // TunnelTokenID defines model for TunnelTokenID.
 type TunnelTokenID = string
 
+// ApprovalInvalid Every failure, in one shape.
+type ApprovalInvalid = Error
+
 // BadRequest Every failure, in one shape.
 type BadRequest = Error
+
+// ControlDBUnavailable Every failure, in one shape.
+type ControlDBUnavailable = Error
 
 // EgressNotChangeable Every failure, in one shape.
 type EgressNotChangeable = Error
@@ -2933,6 +3896,12 @@ type NotFound = Error
 
 // NotRunning Every failure, in one shape.
 type NotRunning = Error
+
+// RunnerFailed Every failure, in one shape.
+type RunnerFailed = Error
+
+// RunnerUnreachable Every failure, in one shape.
+type RunnerUnreachable = Error
 
 // SandboxUnreachable Every failure, in one shape.
 type SandboxUnreachable = Error
@@ -3006,6 +3975,31 @@ type ReadBuildLogParams struct {
 
 	// Follow Hold the body open and keep sending as more arrives, until the thing being read ends.
 	Follow *FollowQuery `form:"follow,omitempty" json:"follow,omitempty"`
+}
+
+// GetCAParams defines parameters for GetCA.
+type GetCAParams struct {
+	// Wait With `If-None-Match`, hold the request open up to this many seconds until the bundle changes, and answer `304` if it does not. Without it, or `0`, answered at once.
+	Wait *BundleWait `form:"wait,omitempty" json:"wait,omitempty"`
+
+	// IfNoneMatch The ETag of the bundle the caller holds; `304` while it is still the bundle.
+	IfNoneMatch *BundleIfNoneMatch `json:"If-None-Match,omitempty"`
+}
+
+// GetCABundleParams defines parameters for GetCABundle.
+type GetCABundleParams struct {
+	// Wait With `If-None-Match`, hold the request open up to this many seconds until the bundle changes, and answer `304` if it does not. Without it, or `0`, answered at once.
+	Wait *BundleWait `form:"wait,omitempty" json:"wait,omitempty"`
+
+	// IfNoneMatch The ETag of the bundle the caller holds; `304` while it is still the bundle.
+	IfNoneMatch *BundleIfNoneMatch `json:"If-None-Match,omitempty"`
+}
+
+// GetCALogParams defines parameters for GetCALog.
+type GetCALogParams struct {
+	// After Only the lines after this seq.
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
+	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetCostsParams defines parameters for GetCosts.
@@ -3241,6 +4235,21 @@ type ListHostTunnelsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetUsageParams defines parameters for GetUsage.
+type GetUsageParams struct {
+	// Window How far back to go. `7d` when it is not said.
+	Window *CostWindowInQuery `form:"window,omitempty" json:"window,omitempty"`
+
+	// GroupBy What each group is. `runner` when it is not said.
+	GroupBy *UsageGroupBy `form:"groupBy,omitempty" json:"groupBy,omitempty"`
+
+	// Runner Only what this runner held and carried, by its id.
+	Runner *string `form:"runner,omitempty" json:"runner,omitempty"`
+}
+
+// AddApproverJSONRequestBody defines body for AddApprover for application/json ContentType.
+type AddApproverJSONRequestBody = ApproverRequest
+
 // SignInWithPasswordJSONRequestBody defines body for SignInWithPassword for application/json ContentType.
 type SignInWithPasswordJSONRequestBody = PasswordSignIn
 
@@ -3250,6 +4259,9 @@ type PutBrokerJSONRequestBody = BrokerUpstream
 // CreateBuildJSONRequestBody defines body for CreateBuild for application/json ContentType.
 type CreateBuildJSONRequestBody = BuildRequest
 
+// PutSealedCredentialJSONRequestBody defines body for PutSealedCredential for application/json ContentType.
+type PutSealedCredentialJSONRequestBody = SealedCredentialWrite
+
 // PullImageJSONRequestBody defines body for PullImage for application/json ContentType.
 type PullImageJSONRequestBody = ImageRequest
 
@@ -3258,6 +4270,24 @@ type CreateKeyJSONRequestBody = KeyRequest
 
 // PutPrincipalJSONRequestBody defines body for PutPrincipal for application/json ContentType.
 type PutPrincipalJSONRequestBody = PrincipalSpec
+
+// CreateJoinTokenJSONRequestBody defines body for CreateJoinToken for application/json ContentType.
+type CreateJoinTokenJSONRequestBody = JoinTokenRequest
+
+// UpdateRunnerSettingsJSONRequestBody defines body for UpdateRunnerSettings for application/json ContentType.
+type UpdateRunnerSettingsJSONRequestBody = RunnerSettingsUpdate
+
+// UpdateRunnerJSONRequestBody defines body for UpdateRunner for application/json ContentType.
+type UpdateRunnerJSONRequestBody = RunnerUpdate
+
+// AllowRunnerAddressJSONRequestBody defines body for AllowRunnerAddress for application/json ContentType.
+type AllowRunnerAddressJSONRequestBody = AllowAddress
+
+// ApproveRunnerJSONRequestBody defines body for ApproveRunner for application/json ContentType.
+type ApproveRunnerJSONRequestBody = RunnerApproval
+
+// DrainRunnerJSONRequestBody defines body for DrainRunner for application/json ContentType.
+type DrainRunnerJSONRequestBody = RunnerDrainRequest
 
 // CreateSandboxJSONRequestBody defines body for CreateSandbox for application/json ContentType.
 type CreateSandboxJSONRequestBody = SandboxSpec
@@ -3297,6 +4327,9 @@ type CloneVolumeJSONRequestBody = VolumeClone
 
 // MoveVolumeJSONRequestBody defines body for MoveVolume for application/json ContentType.
 type MoveVolumeJSONRequestBody = VolumePrincipal
+
+// TransferVolumeJSONRequestBody defines body for TransferVolume for application/json ContentType.
+type TransferVolumeJSONRequestBody = VolumeTransfer
 
 // AsStreamGap returns the union data inside the StreamGapped as a StreamGap
 func (t StreamGapped) AsStreamGap() (StreamGap, error) {
@@ -3466,6 +4499,17 @@ type ClientInterface interface {
 	// GetBrokerActivity request
 	GetBrokerActivity(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetBrokerActivityBody request
+	GetBrokerActivityBody(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListApprovers request
+	ListApprovers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddApproverWithBody request with any body
+	AddApproverWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AddApprover(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetAuth request
 	GetAuth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3515,13 +4559,30 @@ type ClientInterface interface {
 	ReadBuildLog(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCA request
-	GetCA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetCA(ctx context.Context, params *GetCAParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCABundle request
+	GetCABundle(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCALog request
+	GetCALog(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCosts request
 	GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCounts request
 	GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSealedCredential request
+	DeleteSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSealedCredential request
+	GetSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutSealedCredentialWithBody request with any body
+	PutSealedCredentialWithBody(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutSealedCredential(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDocs request
 	GetDocs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3585,6 +4646,57 @@ type ClientInterface interface {
 
 	// GetBrokerTrusted request
 	GetBrokerTrusted(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRunners request
+	ListRunners(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListJoinTokens request
+	ListJoinTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateJoinTokenWithBody request with any body
+	CreateJoinTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateJoinToken(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeJoinToken request
+	RevokeJoinToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRunnerSettings request
+	GetRunnerSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateRunnerSettingsWithBody request with any body
+	UpdateRunnerSettingsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateRunnerSettings(ctx context.Context, body UpdateRunnerSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeRunner request
+	RevokeRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRunner request
+	GetRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateRunnerWithBody request with any body
+	UpdateRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateRunner(ctx context.Context, runnerId string, body UpdateRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllowRunnerAddressWithBody request with any body
+	AllowRunnerAddressWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AllowRunnerAddress(ctx context.Context, runnerId string, body AllowRunnerAddressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveRunnerWithBody request with any body
+	ApproveRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ApproveRunner(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DrainRunnerWithBody request with any body
+	DrainRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	DrainRunner(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UndrainRunner request
+	UndrainRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSandboxes request
 	ListSandboxes(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3779,6 +4891,9 @@ type ClientInterface interface {
 	// ListHostTunnels request
 	ListHostTunnels(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetUsage request
+	GetUsage(ctx context.Context, params *GetUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListVolumes request
 	ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3794,6 +4909,11 @@ type ClientInterface interface {
 	MoveVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	MoveVolume(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransferVolumeWithBody request with any body
+	TransferVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	TransferVolume(ctx context.Context, volumeName VolumeName, body TransferVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetRoot(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3918,6 +5038,54 @@ func (c *Client) ListBrokerActivity(ctx context.Context, params *ListBrokerActiv
 
 func (c *Client) GetBrokerActivity(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBrokerActivityRequest(c.Server, activityId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetBrokerActivityBody(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBrokerActivityBodyRequest(c.Server, activityId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListApprovers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListApproversRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddApproverWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddApproverRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddApprover(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddApproverRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4132,8 +5300,32 @@ func (c *Client) ReadBuildLog(ctx context.Context, buildId BuildID, params *Read
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetCA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCARequest(c.Server)
+func (c *Client) GetCA(ctx context.Context, params *GetCAParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCARequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCABundle(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCABundleRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCALog(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCALogRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4158,6 +5350,54 @@ func (c *Client) GetCosts(ctx context.Context, params *GetCostsParams, reqEditor
 
 func (c *Client) GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCountsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSealedCredentialRequest(c.Server, subject)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSealedCredentialRequest(c.Server, subject)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutSealedCredentialWithBody(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSealedCredentialRequestWithBody(c.Server, subject, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutSealedCredential(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSealedCredentialRequest(c.Server, subject, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4422,6 +5662,234 @@ func (c *Client) PutPrincipal(ctx context.Context, principalId PrincipalID, body
 
 func (c *Client) GetBrokerTrusted(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBrokerTrustedRequest(c.Server, principalId, brokerName, path)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListRunners(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRunnersRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListJoinTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListJoinTokensRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateJoinTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateJoinTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateJoinToken(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateJoinTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeJoinToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeJoinTokenRequest(c.Server, tokenId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetRunnerSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRunnerSettingsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRunnerSettingsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRunnerSettingsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRunnerSettings(ctx context.Context, body UpdateRunnerSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRunnerSettingsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RevokeRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeRunnerRequest(c.Server, runnerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRunnerRequest(c.Server, runnerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRunnerRequestWithBody(c.Server, runnerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateRunner(ctx context.Context, runnerId string, body UpdateRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateRunnerRequest(c.Server, runnerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AllowRunnerAddressWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllowRunnerAddressRequestWithBody(c.Server, runnerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AllowRunnerAddress(ctx context.Context, runnerId string, body AllowRunnerAddressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllowRunnerAddressRequest(c.Server, runnerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApproveRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveRunnerRequestWithBody(c.Server, runnerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ApproveRunner(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveRunnerRequest(c.Server, runnerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DrainRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDrainRunnerRequestWithBody(c.Server, runnerId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DrainRunner(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDrainRunnerRequest(c.Server, runnerId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UndrainRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUndrainRunnerRequest(c.Server, runnerId)
 	if err != nil {
 		return nil, err
 	}
@@ -5248,6 +6716,18 @@ func (c *Client) ListHostTunnels(ctx context.Context, params *ListHostTunnelsPar
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetUsage(ctx context.Context, params *GetUsageParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUsageRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) ListVolumes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListVolumesRequest(c.Server)
 	if err != nil {
@@ -5310,6 +6790,30 @@ func (c *Client) MoveVolumeWithBody(ctx context.Context, volumeName VolumeName, 
 
 func (c *Client) MoveVolume(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMoveVolumeRequest(c.Server, volumeName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransferVolumeWithBody(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferVolumeRequestWithBody(c.Server, volumeName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) TransferVolume(ctx context.Context, volumeName VolumeName, body TransferVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferVolumeRequest(c.Server, volumeName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5777,6 +7281,107 @@ func NewGetBrokerActivityRequest(server string, activityId BrokerActivityID) (*h
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewGetBrokerActivityBodyRequest generates requests for GetBrokerActivityBody
+func NewGetBrokerActivityBodyRequest(server string, activityId BrokerActivityID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "activityId", runtime.ParamLocationPath, activityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/activity/%s/body", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListApproversRequest generates requests for ListApprovers
+func NewListApproversRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/approvers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddApproverRequest calls the generic AddApprover builder with application/json body
+func NewAddApproverRequest(server string, body AddApproverJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddApproverRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAddApproverRequestWithBody generates requests for AddApprover with any type of body
+func NewAddApproverRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/approvers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6393,7 +7998,7 @@ func NewReadBuildLogRequest(server string, buildId BuildID, params *ReadBuildLog
 }
 
 // NewGetCARequest generates requests for GetCA
-func NewGetCARequest(server string) (*http.Request, error) {
+func NewGetCARequest(server string, params *GetCAParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -6409,6 +8014,172 @@ func NewGetCARequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Wait != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "wait", runtime.ParamLocationQuery, *params.Wait); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfNoneMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "If-None-Match", runtime.ParamLocationHeader, *params.IfNoneMatch)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-None-Match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetCABundleRequest generates requests for GetCABundle
+func NewGetCABundleRequest(server string, params *GetCABundleParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ca/bundle")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Wait != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "wait", runtime.ParamLocationQuery, *params.Wait); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.IfNoneMatch != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "If-None-Match", runtime.ParamLocationHeader, *params.IfNoneMatch)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-None-Match", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetCALogRequest generates requests for GetCALog
+func NewGetCALogRequest(server string, params *GetCALogParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ca/log")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "after", runtime.ParamLocationQuery, *params.After); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -6523,6 +8294,121 @@ func NewGetCountsRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewDeleteSealedCredentialRequest generates requests for DeleteSealedCredential
+func NewDeleteSealedCredentialRequest(server string, subject openapi_types.Email) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSealedCredentialRequest generates requests for GetSealedCredential
+func NewGetSealedCredentialRequest(server string, subject openapi_types.Email) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutSealedCredentialRequest calls the generic PutSealedCredential builder with application/json body
+func NewPutSealedCredentialRequest(server string, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutSealedCredentialRequestWithBody(server, subject, "application/json", bodyReader)
+}
+
+// NewPutSealedCredentialRequestWithBody generates requests for PutSealedCredential with any type of body
+func NewPutSealedCredentialRequestWithBody(server string, subject openapi_types.Email, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7271,6 +9157,491 @@ func NewGetBrokerTrustedRequest(server string, principalId PrincipalID, brokerNa
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListRunnersRequest generates requests for ListRunners
+func NewListRunnersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListJoinTokensRequest generates requests for ListJoinTokens
+func NewListJoinTokensRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/join-tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateJoinTokenRequest calls the generic CreateJoinToken builder with application/json body
+func NewCreateJoinTokenRequest(server string, body CreateJoinTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateJoinTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateJoinTokenRequestWithBody generates requests for CreateJoinToken with any type of body
+func NewCreateJoinTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/join-tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeJoinTokenRequest generates requests for RevokeJoinToken
+func NewRevokeJoinTokenRequest(server string, tokenId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "tokenId", runtime.ParamLocationPath, tokenId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/join-tokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRunnerSettingsRequest generates requests for GetRunnerSettings
+func NewGetRunnerSettingsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/settings")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateRunnerSettingsRequest calls the generic UpdateRunnerSettings builder with application/json body
+func NewUpdateRunnerSettingsRequest(server string, body UpdateRunnerSettingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateRunnerSettingsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateRunnerSettingsRequestWithBody generates requests for UpdateRunnerSettings with any type of body
+func NewUpdateRunnerSettingsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/settings")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeRunnerRequest generates requests for RevokeRunner
+func NewRevokeRunnerRequest(server string, runnerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRunnerRequest generates requests for GetRunner
+func NewGetRunnerRequest(server string, runnerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateRunnerRequest calls the generic UpdateRunner builder with application/json body
+func NewUpdateRunnerRequest(server string, runnerId string, body UpdateRunnerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateRunnerRequestWithBody(server, runnerId, "application/json", bodyReader)
+}
+
+// NewUpdateRunnerRequestWithBody generates requests for UpdateRunner with any type of body
+func NewUpdateRunnerRequestWithBody(server string, runnerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAllowRunnerAddressRequest calls the generic AllowRunnerAddress builder with application/json body
+func NewAllowRunnerAddressRequest(server string, runnerId string, body AllowRunnerAddressJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAllowRunnerAddressRequestWithBody(server, runnerId, "application/json", bodyReader)
+}
+
+// NewAllowRunnerAddressRequestWithBody generates requests for AllowRunnerAddress with any type of body
+func NewAllowRunnerAddressRequestWithBody(server string, runnerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/allow-address", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApproveRunnerRequest calls the generic ApproveRunner builder with application/json body
+func NewApproveRunnerRequest(server string, runnerId string, body ApproveRunnerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApproveRunnerRequestWithBody(server, runnerId, "application/json", bodyReader)
+}
+
+// NewApproveRunnerRequestWithBody generates requests for ApproveRunner with any type of body
+func NewApproveRunnerRequestWithBody(server string, runnerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/approve", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDrainRunnerRequest calls the generic DrainRunner builder with application/json body
+func NewDrainRunnerRequest(server string, runnerId string, body DrainRunnerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDrainRunnerRequestWithBody(server, runnerId, "application/json", bodyReader)
+}
+
+// NewDrainRunnerRequestWithBody generates requests for DrainRunner with any type of body
+func NewDrainRunnerRequestWithBody(server string, runnerId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/drain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUndrainRunnerRequest generates requests for UndrainRunner
+func NewUndrainRunnerRequest(server string, runnerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/undrain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -10237,6 +12608,87 @@ func NewListHostTunnelsRequest(server string, params *ListHostTunnelsParams) (*h
 	return req, nil
 }
 
+// NewGetUsageRequest generates requests for GetUsage
+func NewGetUsageRequest(server string, params *GetUsageParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/usage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Window != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "window", runtime.ParamLocationQuery, *params.Window); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.GroupBy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "groupBy", runtime.ParamLocationQuery, *params.GroupBy); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Runner != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "runner", runtime.ParamLocationQuery, *params.Runner); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListVolumesRequest generates requests for ListVolumes
 func NewListVolumesRequest(server string) (*http.Request, error) {
 	var err error
@@ -10392,6 +12844,53 @@ func NewMoveVolumeRequestWithBody(server string, volumeName VolumeName, contentT
 	return req, nil
 }
 
+// NewTransferVolumeRequest calls the generic TransferVolume builder with application/json body
+func NewTransferVolumeRequest(server string, volumeName VolumeName, body TransferVolumeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTransferVolumeRequestWithBody(server, volumeName, "application/json", bodyReader)
+}
+
+// NewTransferVolumeRequestWithBody generates requests for TransferVolume with any type of body
+func NewTransferVolumeRequestWithBody(server string, volumeName VolumeName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "volumeName", runtime.ParamLocationPath, volumeName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/volumes/%s/transfer", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -10468,6 +12967,17 @@ type ClientWithResponsesInterface interface {
 	// GetBrokerActivityWithResponse request
 	GetBrokerActivityWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityResponse, error)
 
+	// GetBrokerActivityBodyWithResponse request
+	GetBrokerActivityBodyWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityBodyResponse, error)
+
+	// ListApproversWithResponse request
+	ListApproversWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListApproversResponse, error)
+
+	// AddApproverWithBodyWithResponse request with any body
+	AddApproverWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddApproverResponse, error)
+
+	AddApproverWithResponse(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*AddApproverResponse, error)
+
 	// GetAuthWithResponse request
 	GetAuthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthResponse, error)
 
@@ -10517,13 +13027,30 @@ type ClientWithResponsesInterface interface {
 	ReadBuildLogWithResponse(ctx context.Context, buildId BuildID, params *ReadBuildLogParams, reqEditors ...RequestEditorFn) (*ReadBuildLogResponse, error)
 
 	// GetCAWithResponse request
-	GetCAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
+	GetCAWithResponse(ctx context.Context, params *GetCAParams, reqEditors ...RequestEditorFn) (*GetCAResponse, error)
+
+	// GetCABundleWithResponse request
+	GetCABundleWithResponse(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*GetCABundleResponse, error)
+
+	// GetCALogWithResponse request
+	GetCALogWithResponse(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*GetCALogResponse, error)
 
 	// GetCostsWithResponse request
 	GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error)
 
 	// GetCountsWithResponse request
 	GetCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountsResponse, error)
+
+	// DeleteSealedCredentialWithResponse request
+	DeleteSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteSealedCredentialResponse, error)
+
+	// GetSealedCredentialWithResponse request
+	GetSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*GetSealedCredentialResponse, error)
+
+	// PutSealedCredentialWithBodyWithResponse request with any body
+	PutSealedCredentialWithBodyWithResponse(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error)
+
+	PutSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error)
 
 	// GetDocsWithResponse request
 	GetDocsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDocsResponse, error)
@@ -10587,6 +13114,57 @@ type ClientWithResponsesInterface interface {
 
 	// GetBrokerTrustedWithResponse request
 	GetBrokerTrustedWithResponse(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
+
+	// ListRunnersWithResponse request
+	ListRunnersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error)
+
+	// ListJoinTokensWithResponse request
+	ListJoinTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListJoinTokensResponse, error)
+
+	// CreateJoinTokenWithBodyWithResponse request with any body
+	CreateJoinTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error)
+
+	CreateJoinTokenWithResponse(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error)
+
+	// RevokeJoinTokenWithResponse request
+	RevokeJoinTokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeJoinTokenResponse, error)
+
+	// GetRunnerSettingsWithResponse request
+	GetRunnerSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRunnerSettingsResponse, error)
+
+	// UpdateRunnerSettingsWithBodyWithResponse request with any body
+	UpdateRunnerSettingsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRunnerSettingsResponse, error)
+
+	UpdateRunnerSettingsWithResponse(ctx context.Context, body UpdateRunnerSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRunnerSettingsResponse, error)
+
+	// RevokeRunnerWithResponse request
+	RevokeRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*RevokeRunnerResponse, error)
+
+	// GetRunnerWithResponse request
+	GetRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*GetRunnerResponse, error)
+
+	// UpdateRunnerWithBodyWithResponse request with any body
+	UpdateRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRunnerResponse, error)
+
+	UpdateRunnerWithResponse(ctx context.Context, runnerId string, body UpdateRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRunnerResponse, error)
+
+	// AllowRunnerAddressWithBodyWithResponse request with any body
+	AllowRunnerAddressWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllowRunnerAddressResponse, error)
+
+	AllowRunnerAddressWithResponse(ctx context.Context, runnerId string, body AllowRunnerAddressJSONRequestBody, reqEditors ...RequestEditorFn) (*AllowRunnerAddressResponse, error)
+
+	// ApproveRunnerWithBodyWithResponse request with any body
+	ApproveRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveRunnerResponse, error)
+
+	ApproveRunnerWithResponse(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveRunnerResponse, error)
+
+	// DrainRunnerWithBodyWithResponse request with any body
+	DrainRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error)
+
+	DrainRunnerWithResponse(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error)
+
+	// UndrainRunnerWithResponse request
+	UndrainRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UndrainRunnerResponse, error)
 
 	// ListSandboxesWithResponse request
 	ListSandboxesWithResponse(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
@@ -10781,6 +13359,9 @@ type ClientWithResponsesInterface interface {
 	// ListHostTunnelsWithResponse request
 	ListHostTunnelsWithResponse(ctx context.Context, params *ListHostTunnelsParams, reqEditors ...RequestEditorFn) (*ListHostTunnelsResponse, error)
 
+	// GetUsageWithResponse request
+	GetUsageWithResponse(ctx context.Context, params *GetUsageParams, reqEditors ...RequestEditorFn) (*GetUsageResponse, error)
+
 	// ListVolumesWithResponse request
 	ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error)
 
@@ -10796,6 +13377,11 @@ type ClientWithResponsesInterface interface {
 	MoveVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
 
 	MoveVolumeWithResponse(ctx context.Context, volumeName VolumeName, body MoveVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*MoveVolumeResponse, error)
+
+	// TransferVolumeWithBodyWithResponse request with any body
+	TransferVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferVolumeResponse, error)
+
+	TransferVolumeWithResponse(ctx context.Context, volumeName VolumeName, body TransferVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferVolumeResponse, error)
 }
 
 type GetRootResponse struct {
@@ -11039,6 +13625,88 @@ func (r GetBrokerActivityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetBrokerActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetBrokerActivityBodyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BrokerActivityBody
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON410      *Error
+	JSON502      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetBrokerActivityBodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetBrokerActivityBodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListApproversResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ApproverPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r ListApproversResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListApproversResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AddApproverResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *Approver
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *Error
+	JSON422      *ApprovalInvalid
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r AddApproverResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddApproverResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11321,6 +13989,8 @@ type DeleteBuildResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *RunnerFailed
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -11346,6 +14016,8 @@ type GetBuildResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *RunnerFailed
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -11371,6 +14043,8 @@ type ReadBuildLogResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *RunnerFailed
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -11392,8 +14066,10 @@ func (r ReadBuildLogResponse) StatusCode() int {
 type GetCAResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
+	JSON503      *ControlDBUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -11406,6 +14082,58 @@ func (r GetCAResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCABundleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *CABundle
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCABundleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCABundleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCALogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *BundleLogPage
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCALogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCALogResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11457,6 +14185,83 @@ func (r GetCountsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteSealedCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSealedCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSealedCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetSealedCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SealedCredential
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSealedCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSealedCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutSealedCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SealedCredential
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *Error
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r PutSealedCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutSealedCredentialResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -11567,6 +14372,7 @@ type PullImageResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON422      *Error
+	JSON503      *Error
 	JSON507      *Error
 }
 
@@ -11618,6 +14424,8 @@ type GetImageResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON500      *RunnerFailed
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -11933,6 +14741,342 @@ func (r GetBrokerTrustedResponse) StatusCode() int {
 	return 0
 }
 
+type ListRunnersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RunnerPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRunnersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRunnersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListJoinTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JoinTokenPage
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r ListJoinTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListJoinTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type CreateJoinTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *JoinTokenCreated
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateJoinTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateJoinTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeJoinTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeJoinTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeJoinTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetRunnerSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RunnerSettings
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRunnerSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRunnerSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateRunnerSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *RunnerSettings
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateRunnerSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateRunnerSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RevokeRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *RunnerOperation
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Runner
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpdateRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Runner
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type AllowRunnerAddressResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Runner
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r AllowRunnerAddressResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllowRunnerAddressResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ApproveRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Runner
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON422      *ApprovalInvalid
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DrainRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *RunnerOperation
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r DrainRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DrainRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UndrainRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *RunnerOperation
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UndrainRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UndrainRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListSandboxesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11994,6 +15138,7 @@ type DeleteSandboxResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON503      *SandboxUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -12699,6 +15844,7 @@ type PauseSandboxResponse struct {
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON500      *Error
+	JSON503      *SandboxUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -12947,6 +16093,7 @@ type ResumeSandboxResponse struct {
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON500      *Error
+	JSON503      *SandboxUnreachable
 	JSON507      *Error
 }
 
@@ -13002,6 +16149,7 @@ type StartSandboxResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON503      *SandboxUnreachable
 	JSON507      *Error
 }
 
@@ -13029,6 +16177,7 @@ type StopSandboxResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON503      *SandboxUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -13479,6 +16628,32 @@ func (r ListHostTunnelsResponse) StatusCode() int {
 	return 0
 }
 
+type GetUsageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *UsageReport
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUsageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUsageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type ListVolumesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -13586,6 +16761,34 @@ func (r MoveVolumeResponse) StatusCode() int {
 	return 0
 }
 
+type TransferVolumeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *Volume
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *Error
+	JSON409      *Error
+	JSON503      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r TransferVolumeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TransferVolumeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // GetRootWithResponse request returning *GetRootResponse
 func (c *ClientWithResponses) GetRootWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRootResponse, error) {
 	rsp, err := c.GetRoot(ctx, reqEditors...)
@@ -13683,6 +16886,41 @@ func (c *ClientWithResponses) GetBrokerActivityWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseGetBrokerActivityResponse(rsp)
+}
+
+// GetBrokerActivityBodyWithResponse request returning *GetBrokerActivityBodyResponse
+func (c *ClientWithResponses) GetBrokerActivityBodyWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityBodyResponse, error) {
+	rsp, err := c.GetBrokerActivityBody(ctx, activityId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetBrokerActivityBodyResponse(rsp)
+}
+
+// ListApproversWithResponse request returning *ListApproversResponse
+func (c *ClientWithResponses) ListApproversWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListApproversResponse, error) {
+	rsp, err := c.ListApprovers(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListApproversResponse(rsp)
+}
+
+// AddApproverWithBodyWithResponse request with arbitrary body returning *AddApproverResponse
+func (c *ClientWithResponses) AddApproverWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddApproverResponse, error) {
+	rsp, err := c.AddApproverWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddApproverResponse(rsp)
+}
+
+func (c *ClientWithResponses) AddApproverWithResponse(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*AddApproverResponse, error) {
+	rsp, err := c.AddApprover(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddApproverResponse(rsp)
 }
 
 // GetAuthWithResponse request returning *GetAuthResponse
@@ -13836,12 +17074,30 @@ func (c *ClientWithResponses) ReadBuildLogWithResponse(ctx context.Context, buil
 }
 
 // GetCAWithResponse request returning *GetCAResponse
-func (c *ClientWithResponses) GetCAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCAResponse, error) {
-	rsp, err := c.GetCA(ctx, reqEditors...)
+func (c *ClientWithResponses) GetCAWithResponse(ctx context.Context, params *GetCAParams, reqEditors ...RequestEditorFn) (*GetCAResponse, error) {
+	rsp, err := c.GetCA(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseGetCAResponse(rsp)
+}
+
+// GetCABundleWithResponse request returning *GetCABundleResponse
+func (c *ClientWithResponses) GetCABundleWithResponse(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*GetCABundleResponse, error) {
+	rsp, err := c.GetCABundle(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCABundleResponse(rsp)
+}
+
+// GetCALogWithResponse request returning *GetCALogResponse
+func (c *ClientWithResponses) GetCALogWithResponse(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*GetCALogResponse, error) {
+	rsp, err := c.GetCALog(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCALogResponse(rsp)
 }
 
 // GetCostsWithResponse request returning *GetCostsResponse
@@ -13860,6 +17116,41 @@ func (c *ClientWithResponses) GetCountsWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetCountsResponse(rsp)
+}
+
+// DeleteSealedCredentialWithResponse request returning *DeleteSealedCredentialResponse
+func (c *ClientWithResponses) DeleteSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteSealedCredentialResponse, error) {
+	rsp, err := c.DeleteSealedCredential(ctx, subject, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSealedCredentialResponse(rsp)
+}
+
+// GetSealedCredentialWithResponse request returning *GetSealedCredentialResponse
+func (c *ClientWithResponses) GetSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*GetSealedCredentialResponse, error) {
+	rsp, err := c.GetSealedCredential(ctx, subject, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSealedCredentialResponse(rsp)
+}
+
+// PutSealedCredentialWithBodyWithResponse request with arbitrary body returning *PutSealedCredentialResponse
+func (c *ClientWithResponses) PutSealedCredentialWithBodyWithResponse(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error) {
+	rsp, err := c.PutSealedCredentialWithBody(ctx, subject, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSealedCredentialResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error) {
+	rsp, err := c.PutSealedCredential(ctx, subject, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSealedCredentialResponse(rsp)
 }
 
 // GetDocsWithResponse request returning *GetDocsResponse
@@ -14055,6 +17346,171 @@ func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseGetBrokerTrustedResponse(rsp)
+}
+
+// ListRunnersWithResponse request returning *ListRunnersResponse
+func (c *ClientWithResponses) ListRunnersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error) {
+	rsp, err := c.ListRunners(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRunnersResponse(rsp)
+}
+
+// ListJoinTokensWithResponse request returning *ListJoinTokensResponse
+func (c *ClientWithResponses) ListJoinTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListJoinTokensResponse, error) {
+	rsp, err := c.ListJoinTokens(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListJoinTokensResponse(rsp)
+}
+
+// CreateJoinTokenWithBodyWithResponse request with arbitrary body returning *CreateJoinTokenResponse
+func (c *ClientWithResponses) CreateJoinTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error) {
+	rsp, err := c.CreateJoinTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateJoinTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateJoinTokenWithResponse(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error) {
+	rsp, err := c.CreateJoinToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateJoinTokenResponse(rsp)
+}
+
+// RevokeJoinTokenWithResponse request returning *RevokeJoinTokenResponse
+func (c *ClientWithResponses) RevokeJoinTokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeJoinTokenResponse, error) {
+	rsp, err := c.RevokeJoinToken(ctx, tokenId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeJoinTokenResponse(rsp)
+}
+
+// GetRunnerSettingsWithResponse request returning *GetRunnerSettingsResponse
+func (c *ClientWithResponses) GetRunnerSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRunnerSettingsResponse, error) {
+	rsp, err := c.GetRunnerSettings(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRunnerSettingsResponse(rsp)
+}
+
+// UpdateRunnerSettingsWithBodyWithResponse request with arbitrary body returning *UpdateRunnerSettingsResponse
+func (c *ClientWithResponses) UpdateRunnerSettingsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRunnerSettingsResponse, error) {
+	rsp, err := c.UpdateRunnerSettingsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRunnerSettingsResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateRunnerSettingsWithResponse(ctx context.Context, body UpdateRunnerSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRunnerSettingsResponse, error) {
+	rsp, err := c.UpdateRunnerSettings(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRunnerSettingsResponse(rsp)
+}
+
+// RevokeRunnerWithResponse request returning *RevokeRunnerResponse
+func (c *ClientWithResponses) RevokeRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*RevokeRunnerResponse, error) {
+	rsp, err := c.RevokeRunner(ctx, runnerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeRunnerResponse(rsp)
+}
+
+// GetRunnerWithResponse request returning *GetRunnerResponse
+func (c *ClientWithResponses) GetRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*GetRunnerResponse, error) {
+	rsp, err := c.GetRunner(ctx, runnerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRunnerResponse(rsp)
+}
+
+// UpdateRunnerWithBodyWithResponse request with arbitrary body returning *UpdateRunnerResponse
+func (c *ClientWithResponses) UpdateRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateRunnerResponse, error) {
+	rsp, err := c.UpdateRunnerWithBody(ctx, runnerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRunnerResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateRunnerWithResponse(ctx context.Context, runnerId string, body UpdateRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateRunnerResponse, error) {
+	rsp, err := c.UpdateRunner(ctx, runnerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateRunnerResponse(rsp)
+}
+
+// AllowRunnerAddressWithBodyWithResponse request with arbitrary body returning *AllowRunnerAddressResponse
+func (c *ClientWithResponses) AllowRunnerAddressWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllowRunnerAddressResponse, error) {
+	rsp, err := c.AllowRunnerAddressWithBody(ctx, runnerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllowRunnerAddressResponse(rsp)
+}
+
+func (c *ClientWithResponses) AllowRunnerAddressWithResponse(ctx context.Context, runnerId string, body AllowRunnerAddressJSONRequestBody, reqEditors ...RequestEditorFn) (*AllowRunnerAddressResponse, error) {
+	rsp, err := c.AllowRunnerAddress(ctx, runnerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllowRunnerAddressResponse(rsp)
+}
+
+// ApproveRunnerWithBodyWithResponse request with arbitrary body returning *ApproveRunnerResponse
+func (c *ClientWithResponses) ApproveRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveRunnerResponse, error) {
+	rsp, err := c.ApproveRunnerWithBody(ctx, runnerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveRunnerResponse(rsp)
+}
+
+func (c *ClientWithResponses) ApproveRunnerWithResponse(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveRunnerResponse, error) {
+	rsp, err := c.ApproveRunner(ctx, runnerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveRunnerResponse(rsp)
+}
+
+// DrainRunnerWithBodyWithResponse request with arbitrary body returning *DrainRunnerResponse
+func (c *ClientWithResponses) DrainRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error) {
+	rsp, err := c.DrainRunnerWithBody(ctx, runnerId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDrainRunnerResponse(rsp)
+}
+
+func (c *ClientWithResponses) DrainRunnerWithResponse(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error) {
+	rsp, err := c.DrainRunner(ctx, runnerId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDrainRunnerResponse(rsp)
+}
+
+// UndrainRunnerWithResponse request returning *UndrainRunnerResponse
+func (c *ClientWithResponses) UndrainRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UndrainRunnerResponse, error) {
+	rsp, err := c.UndrainRunner(ctx, runnerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUndrainRunnerResponse(rsp)
 }
 
 // ListSandboxesWithResponse request returning *ListSandboxesResponse
@@ -14658,6 +18114,15 @@ func (c *ClientWithResponses) ListHostTunnelsWithResponse(ctx context.Context, p
 	return ParseListHostTunnelsResponse(rsp)
 }
 
+// GetUsageWithResponse request returning *GetUsageResponse
+func (c *ClientWithResponses) GetUsageWithResponse(ctx context.Context, params *GetUsageParams, reqEditors ...RequestEditorFn) (*GetUsageResponse, error) {
+	rsp, err := c.GetUsage(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUsageResponse(rsp)
+}
+
 // ListVolumesWithResponse request returning *ListVolumesResponse
 func (c *ClientWithResponses) ListVolumesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVolumesResponse, error) {
 	rsp, err := c.ListVolumes(ctx, reqEditors...)
@@ -14708,6 +18173,23 @@ func (c *ClientWithResponses) MoveVolumeWithResponse(ctx context.Context, volume
 		return nil, err
 	}
 	return ParseMoveVolumeResponse(rsp)
+}
+
+// TransferVolumeWithBodyWithResponse request with arbitrary body returning *TransferVolumeResponse
+func (c *ClientWithResponses) TransferVolumeWithBodyWithResponse(ctx context.Context, volumeName VolumeName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferVolumeResponse, error) {
+	rsp, err := c.TransferVolumeWithBody(ctx, volumeName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferVolumeResponse(rsp)
+}
+
+func (c *ClientWithResponses) TransferVolumeWithResponse(ctx context.Context, volumeName VolumeName, body TransferVolumeJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferVolumeResponse, error) {
+	rsp, err := c.TransferVolume(ctx, volumeName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferVolumeResponse(rsp)
 }
 
 // ParseGetRootResponse parses an HTTP response from a GetRootWithResponse call
@@ -15016,6 +18498,196 @@ func ParseGetBrokerActivityResponse(rsp *http.Response) (*GetBrokerActivityRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetBrokerActivityBodyResponse parses an HTTP response from a GetBrokerActivityBodyWithResponse call
+func ParseGetBrokerActivityBodyResponse(rsp *http.Response) (*GetBrokerActivityBodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetBrokerActivityBodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BrokerActivityBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListApproversResponse parses an HTTP response from a ListApproversWithResponse call
+func ParseListApproversResponse(rsp *http.Response) (*ListApproversResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListApproversResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ApproverPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddApproverResponse parses an HTTP response from a AddApproverWithResponse call
+func ParseAddApproverResponse(rsp *http.Response) (*AddApproverResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddApproverResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Approver
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ApprovalInvalid
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -15536,6 +19208,20 @@ func ParseDeleteBuildResponse(rsp *http.Response) (*DeleteBuildResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest RunnerFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -15582,6 +19268,20 @@ func ParseGetBuildResponse(rsp *http.Response) (*GetBuildResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest RunnerFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -15630,6 +19330,20 @@ func ParseReadBuildLogResponse(rsp *http.Response) (*ReadBuildLogResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest RunnerFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -15649,6 +19363,13 @@ func ParseGetCAResponse(rsp *http.Response) (*GetCAResponse, error) {
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -15662,6 +19383,121 @@ func ParseGetCAResponse(rsp *http.Response) (*GetCAResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCABundleResponse parses an HTTP response from a GetCABundleWithResponse call
+func ParseGetCABundleResponse(rsp *http.Response) (*GetCABundleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCABundleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CABundle
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCALogResponse parses an HTTP response from a GetCALogWithResponse call
+func ParseGetCALogResponse(rsp *http.Response) (*GetCALogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCALogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BundleLogPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -15763,6 +19599,161 @@ func ParseGetCountsResponse(rsp *http.Response) (*GetCountsResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSealedCredentialResponse parses an HTTP response from a DeleteSealedCredentialWithResponse call
+func ParseDeleteSealedCredentialResponse(rsp *http.Response) (*DeleteSealedCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSealedCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSealedCredentialResponse parses an HTTP response from a GetSealedCredentialWithResponse call
+func ParseGetSealedCredentialResponse(rsp *http.Response) (*GetSealedCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSealedCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SealedCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutSealedCredentialResponse parses an HTTP response from a PutSealedCredentialWithResponse call
+func ParsePutSealedCredentialResponse(rsp *http.Response) (*PutSealedCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutSealedCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SealedCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -15975,6 +19966,13 @@ func ParsePullImageResponse(rsp *http.Response) (*PullImageResponse, error) {
 		}
 		response.JSON422 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -16075,6 +20073,20 @@ func ParseGetImageResponse(rsp *http.Response) (*GetImageResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest RunnerFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -16624,6 +20636,694 @@ func ParseGetBrokerTrustedResponse(rsp *http.Response) (*GetBrokerTrustedRespons
 	return response, nil
 }
 
+// ParseListRunnersResponse parses an HTTP response from a ListRunnersWithResponse call
+func ParseListRunnersResponse(rsp *http.Response) (*ListRunnersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRunnersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunnerPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListJoinTokensResponse parses an HTTP response from a ListJoinTokensWithResponse call
+func ParseListJoinTokensResponse(rsp *http.Response) (*ListJoinTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListJoinTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JoinTokenPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateJoinTokenResponse parses an HTTP response from a CreateJoinTokenWithResponse call
+func ParseCreateJoinTokenResponse(rsp *http.Response) (*CreateJoinTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateJoinTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest JoinTokenCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeJoinTokenResponse parses an HTTP response from a RevokeJoinTokenWithResponse call
+func ParseRevokeJoinTokenResponse(rsp *http.Response) (*RevokeJoinTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeJoinTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRunnerSettingsResponse parses an HTTP response from a GetRunnerSettingsWithResponse call
+func ParseGetRunnerSettingsResponse(rsp *http.Response) (*GetRunnerSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRunnerSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunnerSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateRunnerSettingsResponse parses an HTTP response from a UpdateRunnerSettingsWithResponse call
+func ParseUpdateRunnerSettingsResponse(rsp *http.Response) (*UpdateRunnerSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateRunnerSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunnerSettings
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeRunnerResponse parses an HTTP response from a RevokeRunnerWithResponse call
+func ParseRevokeRunnerResponse(rsp *http.Response) (*RevokeRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RunnerOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRunnerResponse parses an HTTP response from a GetRunnerWithResponse call
+func ParseGetRunnerResponse(rsp *http.Response) (*GetRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateRunnerResponse parses an HTTP response from a UpdateRunnerWithResponse call
+func ParseUpdateRunnerResponse(rsp *http.Response) (*UpdateRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAllowRunnerAddressResponse parses an HTTP response from a AllowRunnerAddressWithResponse call
+func ParseAllowRunnerAddressResponse(rsp *http.Response) (*AllowRunnerAddressResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AllowRunnerAddressResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApproveRunnerResponse parses an HTTP response from a ApproveRunnerWithResponse call
+func ParseApproveRunnerResponse(rsp *http.Response) (*ApproveRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ApprovalInvalid
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDrainRunnerResponse parses an HTTP response from a DrainRunnerWithResponse call
+func ParseDrainRunnerResponse(rsp *http.Response) (*DrainRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DrainRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RunnerOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUndrainRunnerResponse parses an HTTP response from a UndrainRunnerWithResponse call
+func ParseUndrainRunnerResponse(rsp *http.Response) (*UndrainRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UndrainRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RunnerOperation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSandboxesResponse parses an HTTP response from a ListSandboxesWithResponse call
 func ParseListSandboxesResponse(rsp *http.Response) (*ListSandboxesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -16787,6 +21487,13 @@ func ParseDeleteSandboxResponse(rsp *http.Response) (*DeleteSandboxResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -18371,6 +23078,13 @@ func ParsePauseSandboxResponse(rsp *http.Response) (*PauseSandboxResponse, error
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -18955,6 +23669,13 @@ func ParseResumeSandboxResponse(rsp *http.Response) (*ResumeSandboxResponse, err
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19084,6 +23805,13 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19144,6 +23872,13 @@ func ParseStopSandboxResponse(rsp *http.Response) (*StopSandboxResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -20114,6 +24849,60 @@ func ParseListHostTunnelsResponse(rsp *http.Response) (*ListHostTunnelsResponse,
 	return response, nil
 }
 
+// ParseGetUsageResponse parses an HTTP response from a GetUsageWithResponse call
+func ParseGetUsageResponse(rsp *http.Response) (*GetUsageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUsageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UsageReport
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListVolumesResponse parses an HTTP response from a ListVolumesWithResponse call
 func ParseListVolumesResponse(rsp *http.Response) (*ListVolumesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -20351,6 +25140,74 @@ func ParseMoveVolumeResponse(rsp *http.Response) (*MoveVolumeResponse, error) {
 	return response, nil
 }
 
+// ParseTransferVolumeResponse parses an HTTP response from a TransferVolumeWithResponse call
+func ParseTransferVolumeResponse(rsp *http.Response) (*TransferVolumeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TransferVolumeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Volume
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Go to the console
@@ -20383,9 +25240,18 @@ type ServerInterface interface {
 	// What the sandboxes did through their brokers, from a cursor
 	// (GET /v1/activity)
 	ListBrokerActivity(w http.ResponseWriter, r *http.Request, params ListBrokerActivityParams)
-	// One record, with its bodies
+	// One record, without its bodies
 	// (GET /v1/activity/{activityId})
 	GetBrokerActivity(w http.ResponseWriter, r *http.Request, activityId BrokerActivityID)
+	// A record's bodies, fetched from the runner that keeps them
+	// (GET /v1/activity/{activityId}/body)
+	GetBrokerActivityBody(w http.ResponseWriter, r *http.Request, activityId BrokerActivityID)
+	// The workspace's approver keys
+	// (GET /v1/approvers)
+	ListApprovers(w http.ResponseWriter, r *http.Request)
+	// Add an approver key
+	// (POST /v1/approvers)
+	AddApprover(w http.ResponseWriter, r *http.Request)
 	// How a person may sign in here
 	// (GET /v1/auth)
 	GetAuth(w http.ResponseWriter, r *http.Request)
@@ -20428,15 +25294,30 @@ type ServerInterface interface {
 	// What the build printed, from a byte offset
 	// (GET /v1/builds/{buildId}/log)
 	ReadBuildLog(w http.ResponseWriter, r *http.Request, buildId BuildID, params ReadBuildLogParams)
-	// The certificate authority this server's sandboxes are identified by
+	// The certificate authorities this server's sandboxes are identified by
 	// (GET /v1/ca)
-	GetCA(w http.ResponseWriter, r *http.Request)
+	GetCA(w http.ResponseWriter, r *http.Request, params GetCAParams)
+	// The approved bundle, each CA bound to its runner
+	// (GET /v1/ca/bundle)
+	GetCABundle(w http.ResponseWriter, r *http.Request, params GetCABundleParams)
+	// Every change to the bundle, hash-chained
+	// (GET /v1/ca/log)
+	GetCALog(w http.ResponseWriter, r *http.Request, params GetCALogParams)
 	// What this server's sandboxes have cost
 	// (GET /v1/costs)
 	GetCosts(w http.ResponseWriter, r *http.Request, params GetCostsParams)
 	// How many of each thing this host has
 	// (GET /v1/counts)
 	GetCounts(w http.ResponseWriter, r *http.Request)
+	// Disconnect a person's subscription
+	// (DELETE /v1/credentials/{subject})
+	DeleteSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
+	// A person's sealed subscription
+	// (GET /v1/credentials/{subject})
+	GetSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
+	// Connect a person's subscription, sealed
+	// (PUT /v1/credentials/{subject})
+	PutSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
 	// This document, rendered
 	// (GET /v1/docs)
 	GetDocs(w http.ResponseWriter, r *http.Request)
@@ -20446,7 +25327,7 @@ type ServerInterface interface {
 	// What this host has been using
 	// (GET /v1/host/metrics/history)
 	GetHostMetricsHistory(w http.ResponseWriter, r *http.Request, params GetHostMetricsHistoryParams)
-	// Every image cached on this host
+	// Every image cached on a runner, each with the runners holding it
 	// (GET /v1/images)
 	ListImages(w http.ResponseWriter, r *http.Request, params ListImagesParams)
 	// Pull an OCI reference and build the rootfs a VM can boot
@@ -20494,6 +25375,45 @@ type ServerInterface interface {
 	// Read a shared broker's document about a principal, through its trusted plane
 	// (GET /v1/principals/{principalId}/brokers/{brokerName}/trusted/{path})
 	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
+	// The runners of this server
+	// (GET /v1/runners)
+	ListRunners(w http.ResponseWriter, r *http.Request)
+	// The join tokens minted here
+	// (GET /v1/runners/join-tokens)
+	ListJoinTokens(w http.ResponseWriter, r *http.Request)
+	// Mint a join token
+	// (POST /v1/runners/join-tokens)
+	CreateJoinToken(w http.ResponseWriter, r *http.Request)
+	// Revoke a join token
+	// (DELETE /v1/runners/join-tokens/{tokenId})
+	RevokeJoinToken(w http.ResponseWriter, r *http.Request, tokenId string)
+	// The workspace's settings for its runners
+	// (GET /v1/runners/settings)
+	GetRunnerSettings(w http.ResponseWriter, r *http.Request)
+	// Change the workspace's settings for its runners
+	// (PATCH /v1/runners/settings)
+	UpdateRunnerSettings(w http.ResponseWriter, r *http.Request)
+	// Revoke a runner now
+	// (DELETE /v1/runners/{runnerId})
+	RevokeRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// One runner
+	// (GET /v1/runners/{runnerId})
+	GetRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Change where a runner may connect from
+	// (PATCH /v1/runners/{runnerId})
+	UpdateRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Resolve a held runner by allowing the new address
+	// (POST /v1/runners/{runnerId}/allow-address)
+	AllowRunnerAddress(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Approve a runner with a passkey
+	// (POST /v1/runners/{runnerId}/approve)
+	ApproveRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Place nothing more on a runner
+	// (POST /v1/runners/{runnerId}/drain)
+	DrainRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Cancel a runner's drain
+	// (POST /v1/runners/{runnerId}/undrain)
+	UndrainRunner(w http.ResponseWriter, r *http.Request, runnerId string)
 	// Every sandbox on this host
 	// (GET /v1/sandboxes)
 	ListSandboxes(w http.ResponseWriter, r *http.Request, params ListSandboxesParams)
@@ -20665,6 +25585,9 @@ type ServerInterface interface {
 	// Every tunnel on this host, and the relay that serves them
 	// (GET /v1/tunnels)
 	ListHostTunnels(w http.ResponseWriter, r *http.Request, params ListHostTunnelsParams)
+	// What this workspace's sandboxes have consumed
+	// (GET /v1/usage)
+	GetUsage(w http.ResponseWriter, r *http.Request, params GetUsageParams)
 	// Every volume on this host
 	// (GET /v1/volumes)
 	ListVolumes(w http.ResponseWriter, r *http.Request)
@@ -20677,6 +25600,9 @@ type ServerInterface interface {
 	// Bind a volume to a principal
 	// (PUT /v1/volumes/{volumeName}/principal)
 	MoveVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
+	// Move a volume to another runner
+	// (POST /v1/volumes/{volumeName}/transfer)
+	TransferVolume(w http.ResponseWriter, r *http.Request, volumeName VolumeName)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -20993,6 +25919,83 @@ func (siw *ServerInterfaceWrapper) GetBrokerActivity(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBrokerActivity(w, r, activityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBrokerActivityBody operation middleware
+func (siw *ServerInterfaceWrapper) GetBrokerActivityBody(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "activityId" -------------
+	var activityId BrokerActivityID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "activityId", r.PathValue("activityId"), &activityId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "activityId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBrokerActivityBody(w, r, activityId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListApprovers operation middleware
+func (siw *ServerInterfaceWrapper) ListApprovers(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListApprovers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddApprover operation middleware
+func (siw *ServerInterfaceWrapper) AddApprover(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddApprover(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -21421,6 +26424,8 @@ func (siw *ServerInterfaceWrapper) ReadBuildLog(w http.ResponseWriter, r *http.R
 // GetCA operation middleware
 func (siw *ServerInterfaceWrapper) GetCA(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
@@ -21429,8 +26434,139 @@ func (siw *ServerInterfaceWrapper) GetCA(w http.ResponseWriter, r *http.Request)
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCAParams
+
+	// ------------- Optional query parameter "wait" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "wait", r.URL.Query(), &params.Wait)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch BundleIfNoneMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetCA(w, r)
+		siw.Handler.GetCA(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCABundle operation middleware
+func (siw *ServerInterfaceWrapper) GetCABundle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCABundleParams
+
+	// ------------- Optional query parameter "wait" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "wait", r.URL.Query(), &params.Wait)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "wait", Err: err})
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch BundleIfNoneMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCABundle(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCALog operation middleware
+func (siw *ServerInterfaceWrapper) GetCALog(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCALogParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "after", r.URL.Query(), &params.After)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCALog(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -21504,6 +26640,105 @@ func (siw *ServerInterfaceWrapper) GetCounts(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSealedCredential operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSealedCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "subject" -------------
+	var subject openapi_types.Email
+
+	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSealedCredential(w, r, subject)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSealedCredential operation middleware
+func (siw *ServerInterfaceWrapper) GetSealedCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "subject" -------------
+	var subject openapi_types.Email
+
+	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSealedCredential(w, r, subject)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSealedCredential operation middleware
+func (siw *ServerInterfaceWrapper) PutSealedCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "subject" -------------
+	var subject openapi_types.Email
+
+	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSealedCredential(w, r, subject)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -22077,6 +27312,380 @@ func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBrokerTrusted(w, r, principalId, brokerName, path)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRunners operation middleware
+func (siw *ServerInterfaceWrapper) ListRunners(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRunners(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListJoinTokens operation middleware
+func (siw *ServerInterfaceWrapper) ListJoinTokens(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListJoinTokens(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateJoinToken operation middleware
+func (siw *ServerInterfaceWrapper) CreateJoinToken(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateJoinToken(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeJoinToken operation middleware
+func (siw *ServerInterfaceWrapper) RevokeJoinToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "tokenId" -------------
+	var tokenId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tokenId", r.PathValue("tokenId"), &tokenId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tokenId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeJoinToken(w, r, tokenId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRunnerSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetRunnerSettings(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRunnerSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRunnerSettings operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRunnerSettings(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRunnerSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeRunner operation middleware
+func (siw *ServerInterfaceWrapper) RevokeRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRunner operation middleware
+func (siw *ServerInterfaceWrapper) GetRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRunner operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AllowRunnerAddress operation middleware
+func (siw *ServerInterfaceWrapper) AllowRunnerAddress(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AllowRunnerAddress(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApproveRunner operation middleware
+func (siw *ServerInterfaceWrapper) ApproveRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApproveRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DrainRunner operation middleware
+func (siw *ServerInterfaceWrapper) DrainRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DrainRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UndrainRunner operation middleware
+func (siw *ServerInterfaceWrapper) UndrainRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UndrainRunner(w, r, runnerId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24588,6 +30197,57 @@ func (siw *ServerInterfaceWrapper) ListHostTunnels(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUsageParams
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "groupBy" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "groupBy", r.URL.Query(), &params.GroupBy)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "groupBy", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "runner" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "runner", r.URL.Query(), &params.Runner)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runner", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUsage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListVolumes operation middleware
 func (siw *ServerInterfaceWrapper) ListVolumes(w http.ResponseWriter, r *http.Request) {
 
@@ -24700,6 +30360,39 @@ func (siw *ServerInterfaceWrapper) MoveVolume(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.MoveVolume(w, r, volumeName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TransferVolume operation middleware
+func (siw *ServerInterfaceWrapper) TransferVolume(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "volumeName" -------------
+	var volumeName VolumeName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "volumeName", r.PathValue("volumeName"), &volumeName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "volumeName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TransferVolume(w, r, volumeName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -24840,6 +30533,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/healthz", wrapper.Health)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/activity", wrapper.ListBrokerActivity)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/activity/{activityId}", wrapper.GetBrokerActivity)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/activity/{activityId}/body", wrapper.GetBrokerActivityBody)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/approvers", wrapper.ListApprovers)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/approvers", wrapper.AddApprover)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth", wrapper.GetAuth)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google", wrapper.BeginGoogleSignIn)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google/callback", wrapper.CompleteGoogleSignIn)
@@ -24855,8 +30551,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}", wrapper.GetBuild)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}/log", wrapper.ReadBuildLog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/ca", wrapper.GetCA)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/ca/bundle", wrapper.GetCABundle)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/ca/log", wrapper.GetCALog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/costs", wrapper.GetCosts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/counts", wrapper.GetCounts)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/credentials/{subject}", wrapper.DeleteSealedCredential)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/credentials/{subject}", wrapper.GetSealedCredential)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/credentials/{subject}", wrapper.PutSealedCredential)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/docs", wrapper.GetDocs)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/commitments", wrapper.GetHostCommitments)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/metrics/history", wrapper.GetHostMetricsHistory)
@@ -24876,6 +30577,19 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/principals/{principalId}", wrapper.GetPrincipal)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/principals/{principalId}", wrapper.PutPrincipal)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/principals/{principalId}/brokers/{brokerName}/trusted/{path}", wrapper.GetBrokerTrusted)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/runners", wrapper.ListRunners)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/runners/join-tokens", wrapper.ListJoinTokens)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/join-tokens", wrapper.CreateJoinToken)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/join-tokens/{tokenId}", wrapper.RevokeJoinToken)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/runners/settings", wrapper.GetRunnerSettings)
+	m.HandleFunc("PATCH "+options.BaseURL+"/v1/runners/settings", wrapper.UpdateRunnerSettings)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/{runnerId}", wrapper.RevokeRunner)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/runners/{runnerId}", wrapper.GetRunner)
+	m.HandleFunc("PATCH "+options.BaseURL+"/v1/runners/{runnerId}", wrapper.UpdateRunner)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/allow-address", wrapper.AllowRunnerAddress)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/approve", wrapper.ApproveRunner)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/drain", wrapper.DrainRunner)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/undrain", wrapper.UndrainRunner)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes", wrapper.ListSandboxes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes", wrapper.CreateSandbox)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}", wrapper.DeleteSandbox)
@@ -24933,10 +30647,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}", wrapper.RevokeTunnelToken)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/unseal", wrapper.UnsealSandbox)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/tunnels", wrapper.ListHostTunnels)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/usage", wrapper.GetUsage)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/volumes", wrapper.ListVolumes)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/volumes/{volumeName}", wrapper.DeleteVolume)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/volumes/{volumeName}/clone", wrapper.CloneVolume)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/volumes/{volumeName}/principal", wrapper.MoveVolume)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/volumes/{volumeName}/transfer", wrapper.TransferVolume)
 
 	return m
 }

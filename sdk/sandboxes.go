@@ -323,9 +323,9 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 				message = *sandbox.Error
 			}
 			return last, errors.New(message)
-		case genv1.SandboxStateGone, genv1.SandboxStateStopped, genv1.SandboxStatePaused:
+		case genv1.SandboxStateGone, genv1.SandboxStateStopped, genv1.SandboxStatePaused, genv1.SandboxStateLost:
 			// None becomes ready by waiting: somebody stopped it or paused it,
-			// or the machine left the host. Waiting out the timeout for either was
+			// the machine left the host, or its runner was revoked. Waiting out the timeout for either was
 			// three minutes of a caller staring at nothing.
 			return last, fmt.Errorf("sandbox %s is %s, and will not become ready", id, sandbox.State)
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
@@ -365,7 +365,7 @@ func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID) {
 		}
 		switch *event.State {
 		case genv1.SandboxStateReady, genv1.SandboxStateFailed, genv1.SandboxStateGone, genv1.SandboxStateStopped,
-			genv1.SandboxStatePaused:
+			genv1.SandboxStatePaused, genv1.SandboxStateLost:
 			return
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
 		}

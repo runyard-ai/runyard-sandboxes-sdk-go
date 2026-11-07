@@ -10,7 +10,7 @@ openapi: 3.0.3
 
 info:
   title: runyard-sandboxes
-  version: 3.0.0
+  version: 3.1.0
   description: |
     **One API in front of a pool of microVMs: it makes them from OCI images,
     runs things inside them, moves bytes in and out, and drops them.**
@@ -299,6 +299,10 @@ tags:
       cost, at the rates the server's configuration names: metered every
       minute, kept an hour at a time, and kept after what it was about is
       deleted.
+  - name: Usage
+    description: >-
+      What this workspace's sandboxes, volumes, images, tunnels and brokers
+      consumed, by runner, sandbox, principal or hour: counted, never priced.
   - name: Images
     description: >-
       OCI references turned into the rootfs a VM boots, and the cache of them.
@@ -329,12 +333,17 @@ tags:
       broker then sends upstream on its own account is not here — that is
       the broker's, and the record is of the sandbox's acts.
 
-      Every brokered connection crosses this server on its way out of the
-      machine, which is why it is kept here: nothing inside the sandbox can
-      leave it out, and nothing a broker says can put something in but its
-      own `Runyard-Activity` header, which says what an exchange was and is
-      taken off the answer before the sandbox sees it. Kept for the
-      server's `activity.keep`, and sent on to its sinks.
+      Every brokered connection crosses the access gateway on the runner
+      that runs the machine, on its way out, which is why it is recorded
+      there: nothing inside the sandbox can leave it out, and nothing a
+      broker says can put something in but its own `Runyard-Activity`
+      header, which says what an exchange was and is taken off the answer
+      before the sandbox sees it. The runner keeps each exchange whole, and
+      sends this server one line for each — signed, and chained to the line
+      before it — which is the feed here: kept for the server's
+      `activity.keep`, and sent on to its sinks. The bodies stay on the
+      runner, and are fetched from it only for a caller holding
+      `activity.bodies`, who is recorded reading them.
   - name: Tunnels
     description: |
       A port of a sandbox, at a public address, for the people and tokens
@@ -513,6 +522,35 @@ tags:
       whatever its author put in it — a token passed as a flag is the ordinary
       case — and these answer nothing that reading `/proc` through
       `GET .../files` would not.
+  - name: Runners
+    description: |
+      The hosts this server's machines run on (docs/design/runners). A
+      runner dials this server and holds a line to it; nothing dials a
+      runner. It joins with a **join token** an administrator mints here,
+      at `POST /v1/runner/enrol` (openapi/runner.yaml), and is `pending`
+      until a workspace admin approves it: in no bundle, and given no
+      sandbox.
+
+      Reading runners is reading where sandboxes run: `sandboxes.read`.
+      Everything that adds one, or would, is `runners.admin`, a scope that
+      is **never granted together with another** and only to a key whose
+      owner is an administrator, so that nothing holding a key for
+      sandboxes can add a host to run them on.
+
+      **Where a runner may connect from.** A runner's `allowedSources`,
+      when it has some, are the only addresses any request of its is
+      served from — enrolment, the line, every dial-back — and one from
+      anywhere else is refused at once, `403 source_not_allowed`.
+      Without them any address will do, one at a time: a request from a
+      second address while the runner holds its line from another is
+      refused, the runner keeps the line it had, and it is `held`
+      until an administrator allows the new address
+      (`POST /v1/runners/{runnerId}/allow-address`) or revokes it. Each
+      refusal is recorded, said in the server's log, and shown on the
+      runner as its `lastRefusal`. The address is measured, never
+      declared: the connection's peer, or, from a proxy the server is
+      configured to trust (`line.trustedProxies`), the last
+      `X-Forwarded-For` entry it added.
   - name: Keys
     description: |
       Minting, listing and revoking the credentials this API is called with.
@@ -829,30 +867,191 @@ paths:
     get:
       operationId: getCA
       tags: [Brokers]
-      summary: The certificate authority this server's sandboxes are identified by
+      summary: The certificate authorities this server's sandboxes are identified by
       description: |
-        The PEM an upstream needs in order to verify the sandboxes calling it.
+        The PEM an upstream needs in order to verify the sandboxes calling it:
+        the sandbox CA of **every approved runner** of this server, one
+        certificate after another, and nothing else. A runner that has joined
+        and is not approved yet is in no bundle, and neither is one revoked
+        (docs/design/runners, "Identity").
 
-        **Each server has a CA of its own**, and signs its own sandboxes'
-        identities and no other's: an upstream that trusts one server's
-        sandboxes does not thereby trust another's.
+        **Each runner has a CA of its own**, and signs its own sandboxes'
+        identities and no other's. `GET /v1/ca/bundle` is the same set with
+        each CA bound to the one runner it may sign for, and the passkey
+        approval that put it there, for an upstream that checks both.
 
         This is the other half of the broker plane: an operator declares an
-        upstream here, and gives that upstream this certificate. Everything the
-        upstream then knows about a caller — which sandbox, on which host —
-        comes from the connection rather than from anything the caller sent.
+        upstream here, and gives that upstream this. Everything the upstream
+        then knows about a caller — which sandbox, on which runner — comes
+        from the connection rather than from anything the caller sent.
 
-        It is a public certificate and carries no key. What it is NOT is a
+        It is public certificates and carries no key. What it is NOT is a
         credential: holding it lets somebody verify this server's
         sandboxes, not impersonate one.
+
+        **Fetched cheaply.** The answer carries an `ETag` naming the bundle's
+        generation and a hash of what it says (`"g42-9f3c1a…"`); asked again
+        with it in `If-None-Match`, an unchanged bundle is `304` with no
+        body. With `wait` as well, the request is held until the bundle
+        changes — a runner approved, a CA rotated, a runner revoked — or
+        `wait` seconds pass, and then answered `304`. An upstream that holds
+        one learns of a revocation as soon as it is committed.
+      parameters:
+        - $ref: "#/components/parameters/BundleIfNoneMatch"
+        - $ref: "#/components/parameters/BundleWait"
       responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
-          description: The authority.
+          description: The authorities, as the generation in the ETag has them.
+          headers:
+            ETag:
+              $ref: "#/components/headers/BundleETag"
           content:
             application/x-pem-file:
               schema: { type: string }
+        "304":
+          $ref: "#/components/responses/BundleNotModified"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/ca/bundle:
+    get:
+      operationId: getCABundle
+      tags: [Brokers]
+      summary: The approved bundle, each CA bound to its runner
+      description: |
+        Every approved runner's entry: its sandbox CA, the hostID that CA may
+        sign for and no other, its assigned labels, the public halves of its
+        record key and its broker key, and the approval that put it here —
+        a workspace approver's passkey assertion over all of them, or, for a
+        rotated CA, the signature of the CA it replaced. Beside them, the
+        workspace credential key's public half, signed by the runner that
+        made it, once one has.
+
+        **The server cannot add an entry an upstream would accept**: each
+        approval is checked by the upstream against the approver keys it was
+        given when it was installed (`GET /v1/approvers`). What a passkey
+        signed is `statement` of `RunnerApproval`, which the upstream makes
+        again from the entry.
+
+        Conditional and held exactly as `GET /v1/ca` is, with the same ETag:
+        the two are one bundle, written two ways.
+      parameters:
+        - $ref: "#/components/parameters/BundleIfNoneMatch"
+        - $ref: "#/components/parameters/BundleWait"
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: The bundle.
+          headers:
+            ETag:
+              $ref: "#/components/headers/BundleETag"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CABundle" }
+        "304":
+          $ref: "#/components/responses/BundleNotModified"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/ca/log:
+    get:
+      operationId: getCALog
+      tags: [Brokers]
+      summary: Every change to the bundle, hash-chained
+      description: |
+        Oldest first: each approver added, each runner approved, each CA
+        rotated, each runner revoked or enrolled again, and the workspace
+        credential key published. Each line's `hash` is the SHA-256, in hex,
+        of the previous line's `hash` followed by this line's `body`, so a
+        line changed or taken out afterwards breaks every hash after it; the
+        first line's previous hash is empty.
+      parameters:
+        - name: after
+          in: query
+          description: Only the lines after this seq.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: The lines.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BundleLogPage" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/approvers:
+    get:
+      operationId: listApprovers
+      tags: [Runners]
+      summary: The workspace's approver keys
+      description: |
+        The public keys of the passkeys that may approve a runner, oldest
+        first. An upstream is given these once, when it is installed, and
+        checks every bundle entry's approval against them; whoever installs
+        it compares their ids with what the console shows.
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: The approvers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApproverPage" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: addApprover
+      tags: [Runners]
+      summary: Add an approver key
+      description: |
+        Needs `runners.admin`, and an assertion by a passkey over the
+        addition (`ApproverStatement`): by an approver this workspace has
+        already, or — for the first, when there is none — by the passkey
+        being added, which proves it is held by whoever adds it. Nothing
+        else adds one, so a server cannot make itself an approver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApproverRequest" }
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "201":
+          description: Added.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approver" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: That key is an approver already.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          $ref: "#/components/responses/ApprovalInvalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "401":
           $ref: "#/components/responses/Unauthorized"
   /v1/sandboxes/{sandboxId}/identity:
@@ -1320,7 +1519,9 @@ paths:
         **`capacity` is what admission measures against**: the capacity the
         configuration gives each resource, its overcommit, and what is
         committed of it now — what a platform placing work across hosts
-        reads to choose one.
+        reads to choose one. With several runners it is theirs added up, and
+        `runners` is each one's, which is what this server's own placement
+        reads (docs/design/runners, "Scheduling").
       responses:
         "200":
           description: What the host has promised, added up.
@@ -1332,7 +1533,9 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "500":
-          description: The volumes could not be read, and the message says why.
+          description: >-
+            The volumes, or the runners' records, could not be read, and the
+            message says why.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1394,11 +1597,11 @@ paths:
     get:
       operationId: getBrokerActivity
       tags: [Activity]
-      summary: One record, with its bodies
+      summary: One record, without its bodies
       description: |
-        A record whole: as much of the body the sandbox sent, and of the one
-        it was answered, as the server keeps (`activity.requestBodyAtMost`
-        and `activity.responseBodyAtMost`), base64.
+        The line the server keeps of an exchange: what was asked and
+        answered, without the bodies, which stay on the runner that saw it
+        and are read with `GET /v1/activity/{activityId}/body`.
       responses:
         "200":
           description: The record.
@@ -1413,6 +1616,65 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/activity/{activityId}/body:
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: A record's `id`.
+        schema: { $ref: "#/components/schemas/BrokerActivityID" }
+    get:
+      operationId: getBrokerActivityBody
+      tags: [Activity]
+      summary: A record's bodies, fetched from the runner that keeps them
+      description: |
+        As much of the body the sandbox sent, and of the one it was
+        answered, as the runner that saw the exchange kept (its
+        `activity.requestBodyAtMost` and `activity.responseBodyAtMost`),
+        base64.
+
+        **Bodies stay on the runner.** The server keeps the line — what
+        `GET /v1/activity` lists — and never the content: it asks the runner
+        for a body when somebody holding `activity.bodies` reads one, checks
+        it is the body the line's hash was made of, and answers. **Every
+        read is itself recorded**, before it is answered: a record of type
+        `read` in the feed, naming the record read and who read it.
+
+        `503` while the runner that keeps the body is offline, naming it:
+        the line is listed as usual, and the body can be read once it is
+        back. `410` once the body is gone for good: its runner revoked or no
+        longer known, or the body kept for longer than the runner keeps
+        them. A record that stands for no exchange — `lost`, `read` — has no
+        body to read, and is `404`.
+      responses:
+        "200":
+          description: The bodies.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrokerActivityBody" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: The body is gone for good, and the message says why.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: The runner answered a body that is not the one its line was recorded with, and it is not given.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The runner that keeps the body is offline, and the message names it; or the read could not be recorded, and so was not made.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/costs:
     get:
       operationId: getCosts
@@ -1450,6 +1712,11 @@ paths:
         volumes named — what a program that labels its sandboxes and names
         their disks reads as one thing's cost. Labels are matched as each
         thing was last seen.
+
+        **Priced here, at this server's own rates** (`costs.*` in its
+        configuration), which say nothing of what a runner on its owner's
+        hardware costs them. What a workspace is billed from is what it
+        consumed, `GET /v1/usage`, priced by whoever bills it.
       parameters:
         - $ref: "#/components/parameters/CostWindowInQuery"
         - name: label
@@ -1478,6 +1745,69 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CostReport" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: The control plane's database did not answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/usage:
+    get:
+      operationId: getUsage
+      tags: [Usage]
+      summary: What this workspace's sandboxes have consumed
+      description: |
+        What was used over a window — never what it cost — on every runner,
+        grouped by runner, sandbox, principal or hour. A customer's runner
+        runs on the customer's hardware, so no price set here would mean
+        anything there: whoever bills prices this on its side, and a
+        self-hosted workspace reads it as it is.
+
+        **What is counted.** A sandbox held — `creating`, `booting`,
+        `ready`, `unreachable` or `paused`, each a slot — for its seconds, its
+        vCPUs times the seconds it ran (a paused one's are stopped) and its
+        memory times the seconds it held it, paused too. A volume, at the size
+        it may grow to, and an image on each runner that has it cached, at its
+        filesystem's size, for each hour held. A tunnel, for each second it is
+        served: its sandbox `ready`, the tunnel neither paused nor expired.
+        Each exchange through a broker, with its bytes each way; and the
+        tokens each model was said to spend, in the LLM broker's annotation
+        once its answer had ended.
+
+        **How it is kept.** The server looks every minute at what every
+        answering runner holds, and keeps it an hour at a time, by runner;
+        what went through brokers is added up from the activity each runner
+        sends, as it is kept, and outlives the records `activity.keep`
+        deletes. Nothing is forgotten with what it was about. The time the
+        server was not running is not counted, and neither is what a runner
+        that did not answer held.
+
+        **Who may read it** is a caller holding `usage.read`, which is the
+        whole workspace's consumption — whatever sandboxes its key reaches,
+        even none: what bills a workspace bills all of it, and reads nothing
+        of what a sandbox is or does, only how much of each it held, by
+        sandbox id, runner, principal and hour.
+      parameters:
+        - $ref: "#/components/parameters/CostWindowInQuery"
+        - name: groupBy
+          in: query
+          description: What each group is. `runner` when it is not said.
+          schema: { $ref: "#/components/schemas/UsageGroupBy" }
+        - name: runner
+          in: query
+          description: Only what this runner held and carried, by its id.
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        "200":
+          description: What was consumed over the window.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UsageReport" }
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1531,7 +1861,12 @@ paths:
     get:
       operationId: listImages
       tags: [Images]
-      summary: Every image cached on this host
+      summary: Every image cached on a runner, each with the runners holding it
+      description: >-
+        An image is the workspace's reference, and its cache is each runner's:
+        one is listed once, with `runners` saying which hold it and in what
+        state. A runner that is not answering is listed as it last reported
+        what it holds, with `reachable` false.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1550,6 +1885,12 @@ paths:
       tags: [Images]
       summary: Pull an OCI reference and build the rootfs a VM can boot
       description: |
+        **On each runner, with the runner's own credentials.** A pull runs on
+        every runner named in `runners`, or, named none, on every answering
+        runner that can pull from the reference's registry. Each pulls with
+        its own registry logins, which never leave it: this server holds no
+        registry secret. The image's `runners` say how each one is doing.
+
         **`POST`, where a sandbox is a `PUT`, and the difference is where the id
         comes from.** An image's id is derived from its manifest digest, so this
         is idempotent by content rather than by a name the caller invented: the
@@ -1598,9 +1939,17 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           description: >-
-            The reference does not parse, or names a registry this server has no
-            credential for. Refused here rather than as an image that goes
-            `failed` a minute later.
+            The reference does not parse, `runners` names a runner there is
+            none of or one that cannot pull from its registry, or no runner
+            can. Refused here rather than as an image that goes `failed` a
+            minute later.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >-
+            A runner named in `runners` is not answering
+            (`runner_unreachable`), or none is.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1621,6 +1970,10 @@ paths:
       tags: [Images]
       summary: Whether this image is ready, and why it is not
       responses:
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
+        "500":
+          $ref: "#/components/responses/RunnerFailed"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1637,6 +1990,11 @@ paths:
       tags: [Images]
       summary: Drop a cached rootfs
       description: >-
+        From every answering runner that holds it. One that is not answering
+        keeps its copy, and is still listed holding it, until it is deleted
+        again once it answers.
+
+
         Idempotent: deleting one that is already gone succeeds, because a caller
         cleaning up after a crash cannot tell "already gone" from "never
         existed".
@@ -1709,9 +2067,13 @@ paths:
         — it may not do in a build either. It is `sandboxId` while it runs, and
         removed, disk and all, when the build ends.
 
+        **A build runs on a runner** (`runner`), which reads its `FROM` and
+        pushes with its own registry logins: this server holds none.
+
         **What each step changed is a layer**, pushed with the `FROM` image's
-        layers to this host's registry as `repository`, tagged with the build's
-        id, and then cached as any pulled image is — `imageId` once it is
+        layers to that runner's registry (`builds.registry`) as `repository`,
+        tagged with the build's id, and then cached there as any pulled image
+        is — `imageId` once it is
         `succeeded`. The recipe is in the image, as its label
         `ai.runyard.recipe`, and is its `recipe` in `GET /v1/images`.
 
@@ -1734,8 +2096,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           description: >-
-            This host builds nothing: it has no registry to push to
-            (`builds_unconfigured`).
+            No runner builds, or the one named does not: it has no registry to
+            push to (`builds_unconfigured`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1747,7 +2109,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: This server is going down, and starts no build.
+          description: >-
+            This server is going down, and starts no build; or the runner
+            named is not answering (`runner_unreachable`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1761,6 +2125,10 @@ paths:
       tags: [Builds]
       summary: Where a build is, step by step
       responses:
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
+        "500":
+          $ref: "#/components/responses/RunnerFailed"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1781,6 +2149,10 @@ paths:
         pushed. One that ended is forgotten with its log; the image it made
         stays.
       responses:
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
+        "500":
+          $ref: "#/components/responses/RunnerFailed"
         "403":
           $ref: "#/components/responses/Forbidden"
         "204":
@@ -1805,6 +2177,10 @@ paths:
         - $ref: "#/components/parameters/FromBytesQuery"
         - $ref: "#/components/parameters/FollowQuery"
       responses:
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
+        "500":
+          $ref: "#/components/responses/RunnerFailed"
         "403":
           $ref: "#/components/responses/Forbidden"
         "200":
@@ -1964,11 +2340,15 @@ paths:
         waits for no clone: it is refused `409` while one is being made, as
         is any create naming this volume or `name`, and a delete of either.
 
-        **On this host alone.** A volume is a file on the host that holds it,
-        and a clone is a copy of that file there. Asked of a host that does
-        not hold this volume it is `404 not_found`, as a volume that is not
-        there anywhere is: it is never copied between hosts, and a caller
-        whose fork lands on another host copies what it needs itself.
+        **On the runner that holds it.** A volume is a file on the runner
+        that holds it, and a clone is a copy of that file there: a sandbox
+        made on the clone is placed on that runner when it fits. A volume is
+        copied between runners only by a transfer the server plans — when a
+        sandbox made on it does not fit where it is, or when an admin moves
+        it (`POST /v1/volumes/{volumeName}/transfer`) — through the server,
+        encrypted end to end, and never across the workspace's residency
+        lines unless its settings allow it (`GET /v1/runners/settings`). A
+        volume that is not there anywhere is `404 not_found`.
 
         **Bound to a principal as the source is, unless the call says
         otherwise.** `principal` absent, the clone is bound to the principal
@@ -2013,9 +2393,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "404":
           description: >-
-            No volume of that name on this host — not there, on another host,
-            or not one this key may reach — or the principal it names is not
-            there.
+            No volume of that name — not there, or not one this key may reach
+            — or the principal it names is not there.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2040,6 +2419,71 @@ paths:
           description: >-
             This host is full: what its capacity allows of disk, overcommitted
             as its configuration says, leaves no room for the clone's size.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/volumes/{volumeName}/transfer:
+    parameters:
+      - $ref: "#/components/parameters/VolumeName"
+    post:
+      operationId: transferVolume
+      tags: [Volumes, Runners]
+      summary: Move a volume to another runner
+      description: |
+        Needs `runners.admin`. The server plans the transfer and the volume
+        is `transferring` until it is the target's: the target makes a key
+        for this one transfer and seals it to the source's approved broker
+        key, and each runner dials the server back, which joins the two and
+        carries a sparse, compressed stream of the volume it cannot read.
+        Runners never connect to each other. Once the target has checked
+        its copy the volume is the target's, and the source deletes its own.
+
+        **Within the workspace's residency lines.** A volume is not moved
+        between runners whose values of the residency label differ (`site`
+        by default; `GET /v1/runners/settings`), unless the workspace's
+        settings allow a volume to cross them: refused `409 residency`.
+
+        Only a volume no sandbox holds is moved: one a sandbox holds is
+        refused `409 volume_in_use`, and is moved with its sandbox, which
+        is the server's to plan. Meanwhile the volume is attached, cloned
+        and deleted by nobody, and a create naming it is refused `409
+        volume_transferring`. A target with no room for it ends the
+        transfer, which `GET /v1/volumes` then no longer says, and the
+        server's log says why.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VolumeTransfer" }
+      responses:
+        "202":
+          description: Transferring.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Volume" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No volume of that name, or no runner of that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: >-
+            `residency`: the target is on the other side of a residency line.
+            `volume_in_use`: a sandbox holds it, or it is being cloned.
+            `volume_transferring`: it is being transferred already.
+            `conflict`: the target is the runner holding it, or is not one a
+            sandbox may be placed on.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The runner holding it, or the target, is not answering.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2182,14 +2626,25 @@ paths:
             and the body says which. Or `volume_principal`: that volume is
             bound to another principal than the one this sandbox is bound to,
             and the body names neither. Or `principal_deleting`: the
-            principal it names is being deleted.
+            principal it names is being deleted. Or `volume_transferring`:
+            the volume it names is being moved to another runner, with a
+            `Retry-After`. A sandbox naming a volume no sandbox holds, whose
+            runner cannot take it, has the server plan that volume's transfer
+            to a runner that can, within the workspace's residency lines, and
+            is answered so: made again with the same `Idempotency-Key` once
+            the volume is there (`GET /v1/volumes`), it is placed with it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
           description: >-
             The spec is well-formed and this host cannot satisfy it: an image it
-            cannot pull, `nested` it cannot give.
+            cannot pull, `nested` it cannot give. Or `unplaceable`: no runner
+            may take it for a reason other than room, which the message names
+            and `error.constraint` says (`no runner labelled region=eu can
+            reach broker "github"`). A shared broker it is given that does not
+            run the hardened identity check keeps it off every runner but the
+            server's own, and `error.broker` names that broker.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2201,7 +2656,8 @@ paths:
             configuration says, leaves no room for this one's (`GET
             /v1/host/commitments`). The body says which, because "try again
             later" and "you are at your limit" are different sentences to act
-            on.
+            on. With several runners, room is the only constraint unmet: some
+            runner meets every other one, and none of those has room.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2269,6 +2725,8 @@ paths:
             enum: [keep, delete]
             default: keep
       responses:
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
         "400":
           $ref: "#/components/responses/BadRequest"
         "204":
@@ -2300,6 +2758,8 @@ paths:
         it wrote. That is what makes a sandbox something a host can park
         overnight.
       responses:
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
         "403":
           $ref: "#/components/responses/Forbidden"
         "400":
@@ -2328,6 +2788,8 @@ paths:
         Its vCPUs and memory are held again, and measured first against
         this host's capacity (`507` `capacity_exceeded`).
       responses:
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
         "403":
           $ref: "#/components/responses/Forbidden"
         "507":
@@ -2348,7 +2810,10 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The sandbox is not stopped.
+          description: >-
+            The sandbox is not stopped, or (`runner_draining`) its runner is
+            draining to be revoked, where waking it would keep the runner from
+            ever emptying.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2445,6 +2910,8 @@ paths:
         that leaves it running; one that powers it off loses its memory, and
         it comes back `stopped`.
       responses:
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
         "400":
           $ref: "#/components/responses/BadRequest"
         "200":
@@ -2487,6 +2954,8 @@ paths:
         measured again against this host's capacity (`507`
         `capacity_exceeded`). Refused, it stays paused.
       responses:
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
         "507":
           description: >-
             This host is full: what its capacity allows of vCPUs,
@@ -2506,8 +2975,9 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: >-
-            The sandbox is not paused, or it was stopped while it was being
-            resumed.
+            The sandbox is not paused, it was stopped while it was being
+            resumed, or (`runner_draining`) its runner is draining to be
+            revoked.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2698,7 +3168,10 @@ paths:
         "422":
           description: >-
             No shared broker has that name (`unsupported_spec`), so there is
-            nothing to give it.
+            nothing to give it. Or `unplaceable`: the sandbox runs on a runner
+            other than the server's own, and that shared broker does not run
+            the hardened identity check as the runner last read it;
+            `error.broker` names it.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4299,6 +4772,540 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/runners:
+    get:
+      operationId: listRunners
+      tags: [Runners]
+      summary: The runners of this server
+      description: >-
+        Every runner that ever enrolled, in the order they joined: a revoked
+        one is listed too, as `revoked`, since its hostID is never given to
+        another.
+      responses:
+        "200":
+          description: The runners.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerPage" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/{runnerId}:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    get:
+      operationId: getRunner
+      tags: [Runners]
+      summary: One runner
+      responses:
+        "200":
+          description: The runner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      operationId: updateRunner
+      tags: [Runners]
+      summary: Change where a runner may connect from
+      description: |
+        Needs `runners.admin`. `allowedSources` replaces the runner's: IPs
+        and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike), or
+        none for anywhere. In force at once: a line held from an address
+        the new list does not allow is dropped, and every request from
+        outside it is refused `403 source_not_allowed`. The change is
+        recorded, with who made it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerUpdate" }
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`conflict`: the runner was revoked, and nothing it may connect from matters any more."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: revokeRunner
+      tags: [Runners]
+      summary: Revoke a runner now
+      description: |
+        Needs `runners.admin`. For a host that is no longer trusted: whatever
+        is on it is lost to this server. The answer is the operation, written
+        down before it is given, which completes whatever restarts in between
+        (docs/design/runners, "Revoking a runner"):
+
+        - the runner is `revoked`, with who and when, once and for good: its
+          hostID is never given to another, and nothing brings it back;
+        - its line is dropped after a last `revoked` event, and every request
+          made with its certificate is refused from this answer on;
+        - its sandbox CA leaves `GET /v1/ca`, and its tunnel-gateway key is
+          revoked, each retried until it is confirmed, which the operation's
+          `pending` lists until then;
+        - its sandboxes and volumes are `lost`, for `runner_revoked`: their
+          records are kept.
+
+        A runner draining has its drain turned into this revoke, in the same
+        operation. One revoked already is answered with the operation that
+        revoked it.
+      responses:
+        "202":
+          description: Revoked; what is left of cutting it off is in `pending`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerOperation" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: It was revoked by no operation this server recorded, before revoking was one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/{runnerId}/drain:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: drainRunner
+      tags: [Runners]
+      summary: Place nothing more on a runner
+      description: |
+        Needs `runners.admin`. The runner is `draining`: nothing new is
+        placed on it, and what runs there runs on until it stops or sleeps.
+        With `revokeWhenEmpty`, for a host being retired, the server revokes
+        it by itself once it is empty — once a report from it, newer than the
+        drain, says nothing on it is running, paused, or on its way to
+        either; a runner that does not report is never taken for empty — and
+        a sandbox there is refused `409` `runner_draining` when it is
+        started or resumed, since waking it would keep the runner from ever
+        emptying. Without it, for maintenance, it drains until
+        `POST /v1/runners/{runnerId}/undrain`.
+
+        The answer is the operation, durable: a server restarted halfway
+        carries on from where it was. The same drain twice is answered with
+        the one open, and `revokeWhenEmpty` asked of a drain that was not is
+        added to it.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerDrainRequest" }
+      responses:
+        "202":
+          description: Draining.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerOperation" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The runner was revoked, or is being.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/{runnerId}/undrain:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: undrainRunner
+      tags: [Runners]
+      summary: Cancel a runner's drain
+      description: >-
+        Needs `runners.admin`. The runner is placed on again, as it was
+        before the drain, and the drain's operation is `cancelled`. Possible
+        until the drain reaches revoking: nothing undoes a revoke.
+      responses:
+        "202":
+          description: Cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerOperation" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The runner is not draining, or its drain has become a revoke.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/{runnerId}/allow-address:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: allowRunnerAddress
+      tags: [Runners]
+      summary: Resolve a held runner by allowing the new address
+      description: |
+        Needs `runners.admin`. A runner is `held` when a request came from a
+        second address while it held its line from another: the server
+        cannot tell which of the two is the real one, so it kept the line it
+        had and decided nothing. This decides it for `address`, which must
+        be the runner's `heldFrom`: the line from the other address is
+        dropped, and until the runner holds its line from `address`, a
+        request from anywhere else holds it again. The other way out is
+        revoking the runner. Recorded, with who decided.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AllowAddress" }
+      responses:
+        "200":
+          description: Allowed; the runner is no longer held.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`conflict`: the runner is not held, `address` is not the one it was held by (another may have been refused since), or it was revoked."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/join-tokens:
+    post:
+      operationId: createJoinToken
+      tags: [Runners]
+      summary: Mint a join token
+      description: |
+        Needs `runners.admin`. A join token does one thing: it enrols a host
+        as a runner of this server, at `POST /v1/runner/enrol`. It is
+        `rjt_<id>_<secret>`, and **the secret is in this response and
+        nowhere else**: what is stored is a SHA-256 of it.
+
+        By default it enrols one host (`maxUses` 1) and lives an hour;
+        `expiresIn` is 15 minutes to a day. A token for a fleet, good for
+        several enrolments, is asked for with a larger `maxUses`. Its
+        `labels` and `allowedSources` become each runner's it enrols, and an
+        enrolment from outside `allowedSources` is refused. With `hostID` it
+        is a **Rejoin**: it enrols that existing runner again, as itself,
+        once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JoinTokenRequest" }
+      responses:
+        "201":
+          description: Minted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JoinTokenCreated" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: "`hostID` names no runner of this server."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "`hostID` names a revoked runner, which nothing brings back."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      operationId: listJoinTokens
+      tags: [Runners]
+      summary: The join tokens minted here
+      description: >-
+        Every join token, newest first, used up, expired and revoked ones
+        included, so that what enrolled whom can be read afterwards. Never
+        their secrets.
+      responses:
+        "200":
+          description: The tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JoinTokenPage" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/join-tokens/{tokenId}:
+    parameters:
+      - name: tokenId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: revokeJoinToken
+      tags: [Runners]
+      summary: Revoke a join token
+      description: >-
+        In force at once: nothing enrols with it after this answer. What it
+        enrolled already stays enrolled. Idempotent.
+      responses:
+        "204":
+          description: Revoked, or was already.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/runners/settings:
+    get:
+      operationId: getRunnerSettings
+      tags: [Runners]
+      summary: The workspace's settings for its runners
+      description: >-
+        Whether runners must hold their keys in a TPM, the TPM makers whose
+        endorsement certificates this server trusts to prove one, and the
+        workspace's residency lines.
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerSettings" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      operationId: updateRunnerSettings
+      tags: [Runners]
+      summary: Change the workspace's settings for its runners
+      description: |
+        Needs `runners.admin`. `hardwareKeys: required` is "runners must
+        hold their keys in a TPM": from this answer on, a runner enrols, and
+        renews its certificate, only with an attestation that proves its
+        key was made in a TPM and cannot leave it, chained to the
+        endorsement certificate of a maker this server trusts
+        (`tpm.endorsementRoots` in its configuration); one that cannot is
+        refused with the reason. A runner enrolled before keeps its
+        certificate until it renews. Off by default, since a workspace that
+        turns it on cannot add a host without a TPM.
+
+        `residency` names the assigned label whose values draw the
+        workspace's lines, `site` by default, and whether a volume may cross
+        one: `refused` by default, so a volume is never transferred between
+        runners whose values differ, and a runner without the label is on a
+        side of its own. The label is an assigned one, signed at approval,
+        because a runner must not be able to move itself across a line.
+        Changing it is an activity record of its own (`type: setting`). What
+        is absent is left as it is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerSettingsUpdate" }
+      responses:
+        "200":
+          description: The settings, changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerSettings" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: "`required`, and this server trusts no TPM maker (`tpm.endorsementRoots`): no runner could enrol."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/runners/{runnerId}/approve:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: approveRunner
+      tags: [Runners]
+      summary: Approve a runner with a passkey
+      description: |
+        Needs `runners.admin`, and a workspace approver's passkey (WebAuthn)
+        assertion over the runner's entry: `statement` of `RunnerApproval`,
+        made from what the runner reported and `approvedAt`. Until then the
+        runner is `pending`: in no bundle, and given no sandbox.
+
+        The assertion is checked here, and put in the runner's bundle entry
+        as it was made, so that every upstream checks it again for itself:
+        the server only carries it. Its challenge is the SHA-256 of the
+        statement; it is for the approver's `rpId`, with the user present;
+        and `approvedAt` is within five minutes of this server's clock.
+
+        Approving moves the bundle's generation, and is a line of its log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerApproval" }
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: Approved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            The runner is not `pending`, or has not reported its sandbox CA
+            yet, so there is nothing to approve.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          $ref: "#/components/responses/ApprovalInvalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/credentials/{subject}:
+    parameters:
+      - name: subject
+        in: path
+        required: true
+        description: >-
+          The person whose subscription it is, by the email they sign in
+          with: the subject a session acting for them names.
+        schema: { type: string, format: email }
+    get:
+      operationId: getSealedCredential
+      tags: [Runners]
+      summary: A person's sealed subscription
+      description: |
+        Ciphertext, encrypted to the workspace credential key, which only
+        this workspace's runners hold: this server cannot open it. A person
+        reads their own; an administrator anybody's.
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: The sealed credential and its version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SealedCredential" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: putSealedCredential
+      tags: [Runners]
+      summary: Connect a person's subscription, sealed
+      description: |
+        What the console, or `ryclaude login`, sends once a person has signed
+        in to their provider: `{code, verifier}`, encrypted in the browser
+        (or on their machine) to the workspace credential key published in
+        `GET /v1/ca/bundle`. A runner opens it, trades the code for tokens,
+        and writes them back sealed the same way. A person connects their
+        own; an administrator anybody's.
+
+        Compare-and-swap: `version` is the version this replaces, `0` for
+        none, and the answer is the new one. Refused while a runner holds
+        the renewal lease, since it is about to write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SealedCredentialWrite" }
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: Written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SealedCredential" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: The version moved, or a runner holds the lease.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteSealedCredential
+      tags: [Runners]
+      summary: Disconnect a person's subscription
+      description: Idempotent. What a runner holds of it in memory lapses with its access token.
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "204":
+          description: Gone, or was never there.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/keys:
     get:
       operationId: listKeys
@@ -4336,6 +5343,10 @@ paths:
         a wider reach than the caller's: a key that acts only on its `own`
         sandboxes mints only keys that do, each on its own and not on its
         minter's.
+
+
+        `runners.admin` is granted alone or not at all, and only for an
+        administrator: a key that holds it holds nothing else.
 
 
         **The key is its owner's**: the caller's, unless an administrator
@@ -4623,6 +5634,19 @@ components:
         again, into the same outage.
 
   parameters:
+    BundleIfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: The ETag of the bundle the caller holds; `304` while it is still the bundle.
+      schema: { type: string }
+    BundleWait:
+      name: wait
+      in: query
+      description: >-
+        With `If-None-Match`, hold the request open up to this many seconds
+        until the bundle changes, and answer `304` if it does not. Without
+        it, or `0`, answered at once.
+      schema: { type: integer, minimum: 0, maximum: 60 }
     CostWindowInQuery:
       name: window
       in: query
@@ -4777,7 +5801,32 @@ components:
         being read ends.
       schema: { type: boolean, default: false }
 
+  headers:
+    BundleETag:
+      description: >-
+        The bundle's generation and a hash of what it says, `"g<generation>-<hex>"`,
+        the same for `GET /v1/ca` and `GET /v1/ca/bundle`.
+      schema: { type: string, example: '"g42-9f3c1a0b2d4e5f60"' }
   responses:
+    ControlDBUnavailable:
+      description: The control plane's database did not answer. Code `upstream_error`; try again.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BundleNotModified:
+      description: The bundle is still the one `If-None-Match` names. No body.
+      headers:
+        ETag:
+          $ref: "#/components/headers/BundleETag"
+    ApprovalInvalid:
+      description: >-
+        The passkey assertion does not verify: not by an approver of this
+        workspace, not over this statement, not for the approver's relying
+        party, without the user present, or signed too long ago. Code
+        `approval_invalid`, and the message says which.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: >-
         No key or session, or one this server will not accept — missing,
@@ -4885,10 +5934,24 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    RunnerUnreachable:
+      description: >-
+        The runner it is on is not answering (`runner_unreachable`): it is
+        that runner's, and is answered for once the runner is back.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RunnerFailed:
+      description: The runner it is on answered with a failure of its own.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     SandboxUnreachable:
       description: >-
-        The machine exists and its guest is not answering. Retry: this is the
-        state that comes back, where `failed` is the one that does not.
+        The machine exists and its guest is not answering, or the runner it
+        is on is not holding its line (`runner.state` is `unreachable`), so
+        nothing can be asked of it there. Retry: this is the state that comes
+        back, where `failed` is the one that does not.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -5081,6 +6144,35 @@ components:
             that is already a new id. This is for the case a digest cannot
             express: the same content, written differently, because something
             below it changed.
+        runners:
+          type: array
+          maxItems: 64
+          items: { type: string }
+          description: >-
+            The runners to pull it on, by id. Absent, every answering runner
+            that can pull from the reference's registry.
+
+    ImageRunner:
+      type: object
+      required: [id, state, reachable]
+      description: One runner's cache of an image.
+      properties:
+        id: { type: string, description: "The runner's id." }
+        state: { $ref: "#/components/schemas/ImageState" }
+        digest:
+          type: string
+          description: >-
+            The manifest digest this runner has: two runners that pulled a
+            tag at different times, or built one recipe each, may differ, and
+            that is how it shows.
+        error: { type: string, description: "Why it is `failed` there." }
+        size: { type: integer, format: int64, description: "Its rootfs there, in bytes." }
+        reachable:
+          type: boolean
+          description: >-
+            Whether the runner is answering. One that is not is listed as it
+            last reported, as of `observedAt`.
+        observedAt: { type: string, format: date-time }
 
     Image:
       type: object
@@ -5137,6 +6229,13 @@ components:
             The recipe this image was built from, as its label
             `ai.runyard.recipe` says — whoever built it, here or elsewhere.
             Absent for an image that carries none.
+        runners:
+          type: array
+          items: { $ref: "#/components/schemas/ImageRunner" }
+          description: >-
+            The runners holding it, each with its own cache's state. `state`
+            above is `ready` when it is ready on any of them, so a sandbox can
+            boot from it there.
         createdAt: { type: string, format: date-time }
         readyAt: { type: string, format: date-time }
 
@@ -5165,6 +6264,12 @@ components:
           description: >-
             Values for the recipe's `ARG`s, by name. One the recipe does not
             declare is a `422`.
+        runner:
+          type: string
+          description: >-
+            The runner to build on, by id. Absent, the first answering runner
+            that builds (has a `builds.registry`). To build a recipe on two
+            runners is two builds, one naming each.
 
     Build:
       type: object
@@ -5177,6 +6282,11 @@ components:
           type: object
           additionalProperties: { type: string }
         state: { $ref: "#/components/schemas/BuildState" }
+        runner:
+          type: string
+          description: >-
+            The runner it runs on: its steps' machine, its registry logins and
+            the registry it pushes to are that runner's.
         error:
           type: string
           description: Why it is `failed`, for a person. Present only then.
@@ -5429,6 +6539,7 @@ components:
             another principal — or to one, for a sandbox bound to none — is
             a `409 volume_principal`; one bound to none is bound to this
             sandbox's principal. A build's sandbox is never bound to one.
+        placement: { $ref: "#/components/schemas/Placement" }
         labels:
           type: object
           additionalProperties: { type: string }
@@ -5442,6 +6553,53 @@ components:
             is still only a label — not unique, not checked, and not the
             sandbox's identity, which is the id.
           example: { name: pr-1234-review, owner: runyard, session: "1234" }
+
+    Placement:
+      type: object
+      additionalProperties: false
+      description: |
+        Where a sandbox may run, among the runners of this server
+        (docs/design/runners, "Scheduling"). Absent is anywhere. Read at
+        create, and at a start that places the sandbox again; never
+        otherwise.
+
+        Of the runners that meet it, and every other constraint, it is
+        placed on the one with the most left of its scarcest resource once
+        it is placed, a tie going to one with its image cached. None that
+        meets it is `422 unplaceable`, naming what nobody meets; only room
+        short is `507 capacity_exceeded`.
+      properties:
+        labels:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, minLength: 1, maxLength: 253 }
+          description: >-
+            Every one must be a runner's: an assigned label (`GET
+            /v1/runners/{id}`, `labels`) or a fact it reports (`arch`,
+            `kvm`, …), as equal strings. There is no pool: a label is the
+            one way to say where.
+          example: { region: eu }
+
+    PlacedOn:
+      type: object
+      readOnly: true
+      description: >-
+        The runner a sandbox is placed on, or a volume is held by, as this
+        server last heard of it. Absent on a server whose machines run on no
+        runner it lists.
+      required: [id, state]
+      properties:
+        id:
+          type: string
+          description: The runner's hostID, as `GET /v1/runners/{id}` names it.
+          example: r-02
+        state: { $ref: "#/components/schemas/RunnerState" }
+        observedAt:
+          type: string
+          format: date-time
+          description: >-
+            When it last reported what it holds. Absent until it has: what is
+            said of a sandbox on a runner that is `unreachable` is as of then.
 
     PrincipalId:
       type: string
@@ -5511,6 +6669,27 @@ components:
             The principal the clone is bound to. Absent, the one the source
             is bound to, or none.
 
+    VolumeTransfer:
+      type: object
+      description: What `POST .../volumes/{volumeName}/transfer` moves it to.
+      required: [runner]
+      additionalProperties: false
+      properties:
+        runner:
+          type: string
+          description: The target runner's hostID, as `GET /v1/runners/{id}` names it.
+          example: r-02
+
+    VolumeState:
+      type: string
+      enum: [ready, transferring]
+      x-enum-varnames: [VolumeReady, VolumeTransferring]
+      description: |
+        | state | what it means |
+        |---|---|
+        | `ready` | on its runner, to be attached |
+        | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+
     VolumeName:
       type: string
       description: >-
@@ -5542,6 +6721,15 @@ components:
           type: string
           format: uuid
           description: The sandbox holding it. Absent when none does.
+        runner:
+          allOf: [{ $ref: "#/components/schemas/PlacedOn" }]
+          description: >-
+            The runner whose disk it is on: a sandbox naming it is placed
+            there.
+        state: { $ref: "#/components/schemas/VolumeState" }
+        transferringTo:
+          allOf: [{ $ref: "#/components/schemas/PlacedOn" }]
+          description: The runner it is being transferred to, while it is `transferring`.
         createdBy:
           allOf: [{ $ref: "#/components/schemas/Creator" }]
           description: >-
@@ -6155,7 +7343,8 @@ components:
         | `stopped` | shut down on purpose, disk intact | `POST /start` |
         | `failed` | it will not become ready; `error` says why | read the events, then delete |
         | `gone` | the machine is no longer on this host | delete the record |
-      enum: [creating, booting, ready, unreachable, paused, stopped, failed, gone]
+        | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
+      enum: [creating, booting, ready, unreachable, paused, stopped, failed, gone, lost]
 
     Sandbox:
       type: object
@@ -6170,6 +7359,7 @@ components:
             it. It is what the sandbox's identity is made of.
           example: 0192f7a4-5b1e-7c3d-9a2f-4e6b8c1d0a53
         state: { $ref: "#/components/schemas/SandboxState" }
+        runner: { $ref: "#/components/schemas/PlacedOn" }
         spec:
           allOf: [{ $ref: "#/components/schemas/SandboxSpec" }]
           description: >-
@@ -6385,6 +7575,16 @@ components:
             and is for an upstream on loopback or a private link — and its
             path is a prefix: a sandbox's `/mcp` goes to this path, without
             its trailing slash, then `/mcp`.
+
+
+            `runner`, on a shared broker, is one each runner provides for
+            itself: the name is declared here, tenant-wide, and each runner
+            says in its own configuration (`brokers.provides`) where its own
+            is, with its own credentials. A sandbox given it is placed only on
+            a runner that provides it (`422 unplaceable`, naming the broker,
+            when none does) and reaches the one beside its runner. Such a
+            declaration carries no `ca` and no `trustedUrl`: those are the
+            runner's to say, beside where its broker is.
           example: https://broker.internal:8443/
         auth: { $ref: "#/components/schemas/BrokerAuth" }
         description:
@@ -6984,6 +8184,90 @@ components:
             live or not, the most expensive first: at most 500.
           items: { $ref: "#/components/schemas/CostResource" }
 
+    UsageGroupBy:
+      type: string
+      enum: [runner, sandbox, principal, hour]
+      x-enum-varnames: [UsageByRunner, UsageBySandbox, UsageByPrincipal, UsageByHour]
+      description: >-
+        What a usage report's groups are: each runner, each sandbox, each
+        principal, or each hour of the window.
+    Usage:
+      type: object
+      description: What was consumed. Never a price.
+      required: [sandboxSeconds, vcpuSeconds, memoryGiBSeconds, volumeGiBHours, imageGiBHours, tunnelSeconds,
+        sandboxes, tunnels, brokerCalls, brokerBytesIn, brokerBytesOut, models]
+      properties:
+        sandboxSeconds: { type: number, format: double, minimum: 0, description: "How long sandboxes were held, running or paused." }
+        vcpuSeconds: { type: number, format: double, minimum: 0, description: "Their vCPUs times the seconds they ran, not paused." }
+        memoryGiBSeconds: { type: number, format: double, minimum: 0, description: "Their memory in GiB times the seconds they held it, paused too." }
+        volumeGiBHours: { type: number, format: double, minimum: 0, description: "Volumes' GiB, at the size each may grow to, times the hours held." }
+        imageGiBHours: { type: number, format: double, minimum: 0, description: "Cached images' GiB, on each runner that has one, times the hours held." }
+        tunnelSeconds: { type: number, format: double, minimum: 0, description: "How long tunnels were served." }
+        sandboxes: { type: integer, minimum: 0, description: "How many sandboxes were held at all." }
+        tunnels: { type: integer, minimum: 0, description: "How many tunnels were served at all." }
+        peakSandboxes:
+          type: integer
+          minimum: 0
+          description: >-
+            The most sandboxes held at once — the slots taken — of the whole,
+            a runner or an hour. Absent from a sandbox's group and a
+            principal's, and for a key held to its own sandboxes.
+        brokerCalls: { type: integer, format: int64, minimum: 0, description: "Exchanges through brokers." }
+        brokerBytesIn: { type: integer, format: int64, minimum: 0, description: "Bytes the sandboxes sent through brokers." }
+        brokerBytesOut: { type: integer, format: int64, minimum: 0, description: "Bytes brokers answered the sandboxes with." }
+        models:
+          type: array
+          description: The tokens each model was said to spend, by name.
+          items: { $ref: "#/components/schemas/ModelUsage" }
+    ModelUsage:
+      type: object
+      description: >-
+        What one model was said to spend, by the LLM broker's annotation on
+        each call once its answer had ended. A call cut short said nothing,
+        and is not here.
+      required: [model, calls, input, output, cacheRead, cacheWrite, cacheWrite1h, reasoning]
+      properties:
+        model: { type: string, description: "The model the calls asked for, as the sandbox named it." }
+        calls: { type: integer, format: int64, minimum: 0 }
+        input: { type: integer, format: int64, minimum: 0 }
+        output: { type: integer, format: int64, minimum: 0 }
+        cacheRead: { type: integer, format: int64, minimum: 0 }
+        cacheWrite: { type: integer, format: int64, minimum: 0 }
+        cacheWrite1h: { type: integer, format: int64, minimum: 0 }
+        reasoning: { type: integer, format: int64, minimum: 0 }
+    UsageGroup:
+      type: object
+      description: >-
+        One group's consumption. Of the fields that say which, the one it is
+        grouped by: a group with none of them is what was nobody's — a
+        volume's and an image's, which are no sandbox's; a sandbox's that is
+        no principal; a record the server made itself, which is no runner's.
+      required: [usage]
+      properties:
+        runner: { type: string, description: "The runner's id." }
+        sandbox: { type: string, description: "The sandbox's id." }
+        principal: { type: string }
+        hour: { type: string, format: date-time, description: "The hour's start." }
+        usage: { $ref: "#/components/schemas/Usage" }
+    UsageReport:
+      type: object
+      description: >-
+        What was consumed over a window: the whole, and each group. Grouped
+        by hour, every hour of the window, oldest first, those nothing was
+        used in too; otherwise each group that used anything, by its id.
+      required: [window, from, to, groupBy, total, groups]
+      properties:
+        window:
+          description: How far back it goes, an hour at a time, whatever the window.
+          allOf: [{ $ref: "#/components/schemas/CostWindow" }]
+        from: { type: string, format: date-time, description: "The first hour's start." }
+        to: { type: string, format: date-time, description: "Now." }
+        groupBy: { $ref: "#/components/schemas/UsageGroupBy" }
+        total: { $ref: "#/components/schemas/Usage" }
+        groups:
+          type: array
+          items: { $ref: "#/components/schemas/UsageGroup" }
+
     MetricsWindow:
       type: string
       enum: ["15m", "1h", "6h", "24h"]
@@ -7314,6 +8598,577 @@ components:
               type: array
               items: { $ref: "#/components/schemas/Process" }
 
+    RunnerSettings:
+      type: object
+      required: [hardwareKeys, trustedMakers, residency]
+      properties:
+        hardwareKeys: { $ref: "#/components/schemas/HardwareKeys" }
+        residency: { $ref: "#/components/schemas/Residency" }
+        trustedMakers:
+          type: array
+          description: "The TPM makers' endorsement CAs this server trusts, by name, from `tpm.endorsementRoots` in its configuration: a key in a TPM of none of them is `file`."
+          items: { type: string, example: Infineon OPTIGA(TM) RSA Manufacturing CA 003 }
+    RunnerSettingsUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        hardwareKeys: { $ref: "#/components/schemas/HardwareKeys" }
+        residency: { $ref: "#/components/schemas/Residency" }
+    Residency:
+      type: object
+      description: >-
+        Where the workspace's volumes may go: the assigned label whose values
+        draw its residency lines, and whether a volume may cross one.
+      required: [label, crossing]
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 63
+          description: An assigned label's key. `site` until changed.
+          example: site
+        crossing:
+          type: string
+          enum: [refused, allowed]
+          x-enum-varnames: [CrossingRefused, CrossingAllowed]
+          description: >-
+            `refused`, the default: a volume is never transferred between
+            runners whose values of `label` differ. `allowed`: it moves
+            freely, for a workspace that docked runners for capacity.
+    HardwareKeys:
+      type: string
+      enum: [preferred, required]
+      x-enum-varnames: [HardwareKeysPreferred, HardwareKeysRequired]
+      description: "`preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused."
+    RunnerPage:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Runner" }
+
+    RunnerState:
+      type: string
+      description: |
+        | state | what it means |
+        |---|---|
+        | `pending` | enrolled, and not approved yet: in no bundle, and given no sandbox |
+        | `online` | approved, and holding its line |
+        | `unreachable` | approved, and its line is down |
+        | `held` | a line from a second address was refused while it held one, until an admin decides |
+        | `draining` | placed on no more; revoked once empty when asked to be |
+        | `expired` | its certificate expired; it comes back with a Rejoin token |
+        | `revoked` | cut off, for good |
+      enum: [pending, online, unreachable, held, draining, expired, revoked]
+      x-enum-varnames: [RunnerPending, RunnerOnline, RunnerUnreachable, RunnerHeld, RunnerDraining, RunnerExpired, RunnerRevoked]
+
+    Runner:
+      type: object
+      description: A host this server's machines run on.
+      required: [id, state, labels, version, capacity, keyKind, allowedSources, joinedAt, joinedBy, enrolledFrom, certificateNotAfter, recordKey, brokerKey]
+      properties:
+        id:
+          type: string
+          description: Its hostID, unique on this server and never given to another.
+          example: r-02
+        state: { $ref: "#/components/schemas/RunnerState" }
+        labels:
+          type: object
+          description: Its assigned labels, from the join token it enrolled with.
+          additionalProperties: { type: string }
+        version:
+          type: string
+          description: The runyard-runner it reported at enrolment.
+          example: 0.27.0
+        capacity: { $ref: "#/components/schemas/RunnerCapacity" }
+        keyKind:
+          type: string
+          enum: [tpm, file]
+          x-enum-varnames: [KeyKindTPM, KeyKindFile]
+          description: >-
+            Where its key is held: `tpm` only when a TPM attestation proved it,
+            and `file` otherwise.
+        keyMaker:
+          type: string
+          description: "For a `tpm` key, the maker's CA whose endorsement certificate proved it."
+          example: Infineon OPTIGA(TM) RSA Manufacturing CA 003
+        allowedSources:
+          type: array
+          description: The addresses and ranges it may connect from. Empty is anywhere.
+          items: { type: string, example: 198.51.100.0/28 }
+        heldFrom:
+          type: string
+          description: >-
+            While it is `held`, the second address a request came from: the
+            one `POST /v1/runners/{runnerId}/allow-address` would allow.
+          example: 198.51.100.7
+        lastRefusal: { $ref: "#/components/schemas/RunnerRefusal" }
+        connectedFrom:
+          type: string
+          description: The address its line is held from, when it holds one.
+        enrolledFrom:
+          type: string
+          description: The address it last enrolled from.
+          example: 203.0.113.24
+        joinedAt: { type: string, format: date-time }
+        joinedBy:
+          type: string
+          description: >-
+            Who minted the join token it last enrolled with: an
+            administrator's address, or `runyard-sandboxes` for the token a
+            server mints for the runner on its own host.
+          example: ada@example.com
+        certificateNotAfter:
+          type: string
+          format: date-time
+          description: When its runner certificate expires, unless renewed first.
+        lastSeenAt: { type: string, format: date-time }
+        revokedAt:
+          type: string
+          format: date-time
+          description: When it was revoked.
+        revokedBy:
+          type: string
+          format: email
+          description: Who revoked it, or asked for the drain that did.
+        operation:
+          allOf: [{ $ref: "#/components/schemas/RunnerOperation" }]
+          description: >-
+            Its latest drain or revoke: the one in progress, or the last one
+            to have ended. Absent when it has had none.
+        recordKey:
+          type: string
+          description: The public half of the key that signs its activity lines, PEM, as it enrolled with it.
+        brokerKey:
+          type: string
+          description: The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
+        caFingerprint:
+          type: string
+          description: >-
+            The SHA-256, in hex, of the sandbox CA it reported, once it has:
+            what an admin compares with `runyard-runner status` on the host
+            before approving it.
+        approval: { $ref: "#/components/schemas/BundleApproval" }
+        provides:
+          type: array
+          description: >-
+            The shared brokers declared with `url: runner` that it provides
+            for itself, as it last reported: where a sandbox given one may be
+            placed.
+          items: { $ref: "#/components/schemas/BrokerName" }
+        reaches:
+          type: array
+          description: >-
+            The shared brokers it reaches from its own network, as it last
+            reported. One it does not reach answers a sandbox on it with a
+            closed connection.
+          items: { $ref: "#/components/schemas/BrokerName" }
+
+    RunnerApproval:
+      type: object
+      additionalProperties: false
+      required: [approvedAt, assertion]
+      description: |
+        A passkey's approval of one runner. What it signs, `statement`, is
+        this JSON, with no whitespace, its keys in this order and a label's
+        keys sorted, and `approvedAt` in UTC to the second:
+
+        `{"tenant":…,"hostID":…,"caFingerprint":…,"labels":{…},"recordKey":…,"brokerKey":…,"approvedAt":"2026-11-05T10:00:00Z"}`
+
+        — the runner's, as `GET /v1/runners/{id}` shows them, and the
+        server's tenant (`GET /v1/ca/bundle`). The assertion's challenge is
+        the statement's SHA-256.
+      properties:
+        approvedAt: { type: string, format: date-time }
+        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
+
+    PasskeyAssertion:
+      type: object
+      additionalProperties: false
+      required: [approver, authenticatorData, clientDataJSON, signature]
+      description: What `navigator.credentials.get()` answered, by the approver whose passkey it was.
+      properties:
+        approver:
+          type: string
+          description: The approver's id.
+        authenticatorData: { type: string, format: byte }
+        clientDataJSON: { type: string, format: byte }
+        signature: { type: string, format: byte }
+
+    Approver:
+      type: object
+      required: [id, name, publicKey, credentialId, rpId, addedAt, addedBy, assertion]
+      properties:
+        id:
+          type: string
+          description: The SHA-256 of its public key, in hex.
+        name:
+          type: string
+          description: Whose passkey it is, as a person reads it.
+        publicKey:
+          type: string
+          format: byte
+          description: Its public key, DER (SubjectPublicKeyInfo), as `getPublicKey()` gave it. P-256 or Ed25519.
+        credentialId:
+          type: string
+          format: byte
+          description: The passkey's credential id, which the console asks it for by.
+        rpId:
+          type: string
+          description: The relying party the passkey was made for, which its assertions name.
+        addedAt: { type: string, format: date-time }
+        addedBy:
+          type: string
+          description: The id of the approver whose assertion added it; its own, for the first.
+        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
+
+    ApproverRequest:
+      type: object
+      additionalProperties: false
+      required: [name, publicKey, credentialId, rpId, addedAt, assertion]
+      description: |
+        A passkey to add as an approver, and an existing approver's assertion
+        over its addition — or its own, for the first. What is signed is
+
+        `{"tenant":…,"approver":…,"name":…,"rpId":…,"addedAt":"2026-11-05T10:00:00Z"}`
+
+        as `RunnerApproval`'s statement is written, `approver` being the new
+        key's id.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        publicKey: { type: string, format: byte }
+        credentialId: { type: string, format: byte }
+        rpId: { type: string, minLength: 1, maxLength: 253 }
+        addedAt: { type: string, format: date-time }
+        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
+
+    ApproverPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Approver" }
+
+    CABundle:
+      type: object
+      required: [tenant, generation, entries]
+      properties:
+        tenant: { type: string }
+        generation:
+          type: integer
+          format: int64
+          description: Moved by every approval, rotation and revocation; never goes back.
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/BundleEntry" }
+        credentialKey: { $ref: "#/components/schemas/CredentialKey" }
+
+    BundleEntry:
+      type: object
+      required: [hostID, certificate, fingerprint, labels, recordKey, brokerKey, approval]
+      description: One approved runner's sandbox CA, bound to the one hostID it may sign for.
+      properties:
+        hostID: { type: string }
+        certificate: { type: string, description: "Its sandbox CA, PEM." }
+        fingerprint: { type: string, description: "The SHA-256 of the certificate's DER, in hex." }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        recordKey: { type: string }
+        brokerKey: { type: string }
+        approval: { $ref: "#/components/schemas/BundleApproval" }
+
+    BundleApproval:
+      type: object
+      required: [kind, approvedAt, signature]
+      description: |
+        `passkey`: an approver's assertion over the entry's statement, made
+        with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
+        fingerprint, approved before it) signed the statement of this entry,
+        ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+      properties:
+        kind:
+          type: string
+          enum: [passkey, rotation]
+          x-enum-varnames: [ApprovalPasskey, ApprovalRotation]
+        approvedAt: { type: string, format: date-time }
+        approver: { type: string, description: "For `passkey`: the approver's id." }
+        authenticatorData: { type: string, format: byte }
+        clientDataJSON: { type: string, format: byte }
+        signature: { type: string, format: byte }
+        previous: { type: string, description: "For `rotation`: the fingerprint of the CA it replaced." }
+
+    CredentialKey:
+      type: object
+      required: [publicKey, hostID, signature]
+      description: |
+        The workspace credential key's public half, which a person's
+        subscription is sealed to: made by the workspace's first approved
+        runner, `hostID`, and signed with that runner's broker key (ECDSA
+        over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
+        Its private half is only ever on runners.
+      properties:
+        publicKey: { type: string, description: "PEM, P-256." }
+        hostID: { type: string }
+        signature: { type: string, format: byte }
+
+    BundleLogPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BundleLogLine" }
+
+    BundleLogLine:
+      type: object
+      required: [seq, generation, at, kind, body, prev, hash]
+      properties:
+        seq: { type: integer, format: int64 }
+        generation: { type: integer, format: int64, description: The bundle's generation once this was written. }
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [approver, approved, rotated, revoked, rejoined, credential_key]
+          x-enum-varnames: [LogApprover, LogApproved, LogRotated, LogRevoked, LogRejoined, LogCredentialKey]
+        hostID: { type: string }
+        body: { type: string, description: "What happened, JSON, as it was hashed." }
+        prev: { type: string }
+        hash: { type: string }
+
+    SealedCredential:
+      type: object
+      required: [subject, version, sealed, writtenAt]
+      properties:
+        subject: { type: string, format: email }
+        version: { type: integer, format: int64 }
+        sealed: { type: string, format: byte, description: Encrypted to the workspace credential key. }
+        expiresAt: { type: string, format: date-time, description: "What the provider said of the sign-in." }
+        writtenAt: { type: string, format: date-time }
+        writtenBy: { type: string, description: "The runner that last wrote it, or the person." }
+
+    SealedCredentialWrite:
+      type: object
+      additionalProperties: false
+      required: [version, sealed]
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The version this replaces, 0 for none.
+        sealed: { type: string, format: byte, maxLength: 87382 }
+        expiresAt: { type: string, format: date-time }
+
+    RunnerRefusal:
+      type: object
+      description: The last request of this runner's that was refused for where it came from.
+      required: [address, at, code]
+      properties:
+        address:
+          type: string
+          description: Where it came from, as the server measured it.
+          example: 198.51.100.7
+        at: { type: string, format: date-time }
+        code:
+          type: string
+          description: >-
+            `source_not_allowed`: from outside its `allowedSources`; `held`: from a
+            second address while it was connected, or held, to another.
+          enum: [source_not_allowed, held]
+          x-enum-varnames: [RefusedSourceNotAllowed, RefusedHeld]
+
+    RunnerUpdate:
+      type: object
+      additionalProperties: false
+      required: [allowedSources]
+      properties:
+        allowedSources:
+          type: array
+          description: >-
+            IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6
+            alike) it may connect from, replacing what it had. Empty is
+            anywhere.
+          items: { type: string }
+
+    AllowAddress:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address:
+          type: string
+          description: The address to allow, which is the held runner's `heldFrom`.
+          example: 198.51.100.7
+
+    RunnerCapacity:
+      type: object
+      description: What the runner reported it brings.
+      properties:
+        cpus: { type: integer }
+        memory: { type: string, example: 128Gi }
+        disk: { type: string, example: 2Ti }
+        gpus: { type: integer }
+        arch: { type: string, enum: [amd64, arm64], x-enum-varnames: [ArchAMD64, ArchARM64] }
+
+    RunnerDrainRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        revokeWhenEmpty:
+          type: boolean
+          description: Revoke the runner by itself once it is empty, for a host being retired. False, for maintenance, unless it says.
+
+    RunnerOperationStep:
+      type: string
+      description: |
+        | step | what it means |
+        |---|---|
+        | `draining` | placed on no more; waiting for it to be empty, when it is to be revoked then |
+        | `revoking` | being revoked: it is so once this step is past |
+        | `cutting-off` | revoked, and refused on every request; `pending` is what is left to confirm |
+        | `done` | revoked, and every side effect confirmed |
+        | `cancelled` | a drain undone with `undrain` |
+      enum: [draining, revoking, cutting-off, done, cancelled]
+      x-enum-varnames: [OperationDraining, OperationRevoking, OperationCuttingOff, OperationDone, OperationCancelled]
+
+    RunnerOperation:
+      type: object
+      description: >-
+        A drain or a revoke, which is a record rather than a process: written
+        down in the transaction that answers it, and carried through to the
+        end by the server whatever restarts in between.
+      required: [id, runnerId, kind, revokeWhenEmpty, requestedBy, requestedAt, sinceGeneration, step, pending]
+      properties:
+        id: { type: integer, format: int64 }
+        runnerId: { type: string, description: The runner's hostID. }
+        kind:
+          type: string
+          enum: [drain, revoke]
+          x-enum-varnames: [OperationDrain, OperationRevoke]
+          description: A drain turned into a revoke, by `DELETE` or by emptying, is a revoke.
+        revokeWhenEmpty: { type: boolean }
+        requestedBy:
+          type: string
+          format: email
+          description: Who asked for it.
+        requestedAt: { type: string, format: date-time }
+        sinceGeneration:
+          type: integer
+          format: int64
+          description: >-
+            The runner's desired-state generation when it was asked: only a
+            report that applied this one or a later one says it is empty.
+        step: { $ref: "#/components/schemas/RunnerOperationStep" }
+        pending:
+          type: array
+          description: >-
+            The side effects of a revoke not confirmed yet, each retried until
+            it is: `bundle`, its sandbox CA taken out of what `/v1/ca`
+            serves, and `tunnel-key`, its tunnel-gateway key revoked.
+          items:
+            type: string
+            enum: [bundle, tunnel-key]
+            x-enum-varnames: [PendingBundle, PendingTunnelKey]
+        left:
+          type: integer
+          description: >-
+            While it drains, how many of its sandboxes its last report said
+            are running, paused or on their way to either. Absent while it
+            has not reported since the drain.
+        updatedAt: { type: string, format: date-time }
+    JoinTokenRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          description: What it is for, as the list of tokens shows it; text a person reads.
+        labels:
+          type: object
+          description: The labels each runner it enrols is assigned.
+          additionalProperties: { type: string }
+        allowedSources:
+          type: array
+          description: >-
+            IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6
+            alike) it may be used from, which become the runner's. Empty is
+            anywhere.
+          items: { type: string }
+        expiresIn:
+          type: string
+          description: How long it may be used for, as a Go duration, 15 minutes to a day. An hour when left out.
+          example: 1h
+        maxUses:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: How many hosts it may enrol. 1 unless it is minted for a fleet.
+        hostID:
+          type: string
+          description: >-
+            Binds it to this existing runner (Rejoin): it enrols that runner
+            again, as itself, and nothing else, once.
+
+    JoinToken:
+      type: object
+      description: A join token's metadata. Never its secret.
+      required: [id, labels, allowedSources, createdAt, createdBy, expiresAt, maxUses, uses, revoked]
+      properties:
+        id: { type: string, example: 3f9a1c0b7e2d }
+        name: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        allowedSources:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        createdBy:
+          type: string
+          description: >-
+            Who minted it: an administrator's address, or `runyard-sandboxes`
+            for the token a server mints for the runner on its own host.
+          example: ada@example.com
+        expiresAt: { type: string, format: date-time }
+        maxUses: { type: integer }
+        uses:
+          type: integer
+          description: How many enrolments it was used for.
+        hostID:
+          type: string
+          description: The runner it is bound to, for a Rejoin token.
+        revoked: { type: boolean }
+
+    JoinTokenCreated:
+      allOf:
+        - $ref: "#/components/schemas/JoinToken"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: >-
+                The whole token, `rjt_<id>_<secret>`. **This is the only time
+                it exists outside the caller.**
+              example: rjt_3f9a1c0b7e2d_8f2kQm2xV8sT1pLd0aZbN4wK
+
+    JoinTokenPage:
+      allOf:
+        - $ref: "#/components/schemas/Page"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/JoinToken" }
+
     KeyPage:
       allOf:
         - $ref: "#/components/schemas/Page"
@@ -7337,12 +9192,15 @@ components:
         | `brokers.admin` | declare, replace and withdraw the shared brokers |
         | `principals.read` | see principals, and read brokers' trusted documents for them |
         | `principals.write` | make and delete principals, and move a volume to one (with `sandboxes.write`) |
-        | `activity.read` | read what the sandboxes did through their brokers, bodies included |
+        | `activity.read` | read what the sandboxes did through their brokers, without the bodies |
+        | `activity.bodies` | read the bodies of what the sandboxes sent and were answered through their brokers |
+        | `usage.read` | read what the whole workspace's sandboxes consumed (`GET /v1/usage`), and nothing else of them |
         | `tunnels.write` | publish a sandbox's ports through the gateway, say who may reach them, and mint their tokens |
         | `files.read` | read bytes out of a sandbox, including its process and socket tables |
         | `files.write` | write bytes into a sandbox |
         | `exec` | run commands and processes inside a sandbox |
         | `keys.admin` | mint and revoke its owner's keys, within its own scopes — an administrator's, anybody's |
+        | `runners.admin` | mint and revoke join tokens, which add runners: never granted with another scope, and only to an administrator's key |
 
         `exec` is separate from everything because it is arbitrary code in the
         sandbox, which a caller that only starts and stops machines has no need
@@ -7363,9 +9221,24 @@ components:
         names only the principals it made.
 
         `activity.read` is separate from `sandboxes.read` because a record
-        carries what a sandbox sent and was answered — an API's JSON, a
-        tool's arguments — which a caller that only watches machines has no
-        need of.
+        says what a sandbox called and how it was answered, which a caller
+        that only watches machines has no need of. `activity.bodies` is
+        separate from `activity.read` because a body is what was sent and
+        answered — an API's JSON, a tool's arguments — and reading it is a
+        different trust from counting and billing what was called: the
+        bodies stay on the runner that saw the exchange, and every read of
+        one is itself recorded.
+
+        `usage.read` is apart from `sandboxes.read` because what bills a
+        workspace counts all of it and needs to see none of it: a key held to
+        its `own` sandboxes, of which it makes none, may read the whole
+        workspace's consumption with it and still no sandbox, which
+        `sandboxes.read` would show.
+
+        `runners.admin` is apart from every other scope, and is never granted
+        with one: it adds a host that sandboxes run on, which nothing that
+        holds a key for sandboxes, an agent or anything it drives, should be
+        able to do. Only an administrator's key may hold it.
       enum:
         - sandboxes.read
         - sandboxes.write
@@ -7376,11 +9249,14 @@ components:
         - principals.read
         - principals.write
         - activity.read
+        - activity.bodies
+        - usage.read
         - tunnels.write
         - files.read
         - files.write
         - exec
         - keys.admin
+        - runners.admin
 
     KeyRequest:
       type: object
@@ -7769,7 +9645,12 @@ components:
         and its answer; `upgrade`, a request answered `101` and the bytes
         after it, closed when the connection was; `stream`, a connection that
         was not HTTP, carried as bytes — or one refused before anything of it
-        was read.
+        was read; `read`, somebody reading another record's bodies (`read`);
+        `setting`, somebody changing a workspace setting (`setting`).
+
+        A record carries no body: the bodies of an exchange stay on the
+        runner that saw it (`runner`), and are read with
+        `GET /v1/activity/{activityId}/body`.
       required: [id, seq, type, startedAt, endedAt, outcome, bytesIn, bytesOut]
       properties:
         id: { $ref: "#/components/schemas/BrokerActivityID" }
@@ -7794,8 +9675,8 @@ components:
           description: What kind of broker it went through, when it reached one.
         type:
           type: string
-          enum: [http, upgrade, stream]
-          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream]
+          enum: [http, upgrade, stream, read, setting]
+          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting]
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
         outcome:
@@ -7825,6 +9706,60 @@ components:
           type: string
           maxLength: 512
           description: What the broker said the exchange was, in its `Runyard-Activity` header.
+        runner:
+          type: string
+          description: The runner that saw the exchange and keeps its bodies. Absent on a record the server made itself (`read`), and on one kept before bodies stayed on runners.
+        read: { $ref: "#/components/schemas/BrokerActivityRead" }
+        setting: { $ref: "#/components/schemas/BrokerActivitySetting" }
+
+    BrokerActivitySetting:
+      type: object
+      description: On a record of type `setting`, which setting was changed, from what to what, and by whom.
+      required: [name, from, to, by]
+      properties:
+        name:
+          type: string
+          description: The setting, as `GET /v1/runners/settings` names it.
+          example: residency
+        from:
+          type: string
+          description: What it was, as a person reads it.
+          example: site, refused
+        to:
+          type: string
+          description: What it is now.
+          example: site, allowed
+        by:
+          type: string
+          description: "The email of whoever changed it: the person, or the key's owner."
+        key:
+          type: string
+          description: The id of the key it was changed with; absent for a person signed in to the console.
+
+    BrokerActivityRead:
+      type: object
+      description: On a record of type `read`, whose bodies were read and by whom.
+      required: [activity, by]
+      properties:
+        activity: { $ref: "#/components/schemas/BrokerActivityID" }
+        by:
+          type: string
+          description: "The email of whoever read them: the person, or the key's owner."
+        key:
+          type: string
+          description: The id of the key they were read with; absent for a person signed in to the console.
+
+    BrokerActivityBody:
+      type: object
+      description: |
+        An exchange's bodies, as much of each as was kept, base64. Absent
+        where nothing was: a body that was empty, or an exchange that was
+        not HTTP.
+      required: [id]
+      properties:
+        id: { $ref: "#/components/schemas/BrokerActivityID" }
+        request: { type: string, format: byte }
+        response: { type: string, format: byte }
 
     BrokerActivityRequest:
       type: object
@@ -7838,10 +9773,6 @@ components:
         path: { type: string }
         query: { type: string }
         headers: { $ref: "#/components/schemas/ActivityHeaders" }
-        body:
-          type: string
-          format: byte
-          description: As much of its body as is kept, base64. Only on a record read by its id.
         bodyBytes:
           type: integer
           format: int64
@@ -7857,10 +9788,6 @@ components:
       properties:
         status: { type: integer }
         headers: { $ref: "#/components/schemas/ActivityHeaders" }
-        body:
-          type: string
-          format: byte
-          description: As much of its body as is kept, base64. Only on a record read by its id.
         bodyBytes:
           type: integer
           format: int64
@@ -7964,6 +9891,36 @@ components:
             Their sizes, together — what they may grow to, not what they have
             written, which is `diskAllocatedBytes` in the host's history.
         capacity: { $ref: "#/components/schemas/HostCapacity" }
+        runners:
+          type: array
+          description: >-
+            Each runner's own, beside the total `capacity`, which is theirs
+            added up: what placement reads. A runner that cannot be reached
+            is listed with no `capacity`, and adds nothing to the total.
+          items: { $ref: "#/components/schemas/RunnerCommitments" }
+
+    RunnerCommitments:
+      type: object
+      required: [id, state, labels]
+      properties:
+        id:
+          type: string
+          description: Its hostID.
+          example: r-02
+        state: { $ref: "#/components/schemas/RunnerState" }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            What `placement.labels` is matched against: its assigned labels,
+            and over them the facts it reports.
+        capacity:
+          allOf: [{ $ref: "#/components/schemas/HostCapacity" }]
+          description: Its capacity and what is committed against it, as it answers now.
+        observedAt:
+          type: string
+          format: date-time
+          description: When it last reported. Absent until it has.
 
     HostCapacity:
       type: object
@@ -8063,6 +10020,28 @@ components:
               description: >-
                 For a person reading a log. It may quote something a sandbox
                 produced, so do not render it as anything but text.
+            broker:
+              type: string
+              description: >-
+                On `unplaceable`, the shared broker holding the sandbox back:
+                one that does not run the hardened identity check
+                (docs/design/runners, "Identity"), as its runners last read its
+                `/.well-known/runyard-broker`.
+            constraint:
+              type: string
+              enum: [volume, placement, image, brokers, floor, runner]
+              description: |
+                On `unplaceable`, the constraint no runner meets, as the
+                message names it (docs/design/runners, "Scheduling"):
+
+                | constraint | what no runner did |
+                |---|---|
+                | `volume` | hold the volume `disk.volume` names, and take a sandbox |
+                | `placement` | have every label `placement.labels` names |
+                | `image` | pull the image's registry, or have it cached |
+                | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+                | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
+                | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
 
     AuthMethods:
       type: object
@@ -8171,6 +10150,8 @@ components:
         - volume_in_use
         - volume_exists
         - volume_principal
+        - volume_transferring
+        - residency
         - broker_in_use
         - principal_in_use
         - principal_deleting
@@ -8182,8 +10163,13 @@ components:
         - sandbox_unreachable
         - sandbox_failed
         - capacity_exceeded
+        - unplaceable
+        - runner_draining
         - timeout
         - upstream_error
+        - approval_invalid
+        - runner_unreachable
+        - gone
         - not_implemented
         - internal
 

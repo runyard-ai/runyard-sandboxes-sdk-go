@@ -1040,7 +1040,7 @@ func isRunning(state genv1.SandboxState) bool {
 	case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateReady,
 		genv1.SandboxStateUnreachable, genv1.SandboxStatePaused:
 		return true
-	case genv1.SandboxStateStopped, genv1.SandboxStateFailed, genv1.SandboxStateGone:
+	case genv1.SandboxStateStopped, genv1.SandboxStateFailed, genv1.SandboxStateGone, genv1.SandboxStateLost:
 		return false
 	}
 	return false

@@ -316,6 +316,7 @@ const (
 const (
 	SandboxStateBooting     SandboxState = "booting"
 	SandboxStateCreating    SandboxState = "creating"
+	SandboxStateDeleting    SandboxState = "deleting"
 	SandboxStateFailed      SandboxState = "failed"
 	SandboxStateGone        SandboxState = "gone"
 	SandboxStateLost        SandboxState = "lost"
@@ -397,6 +398,7 @@ const (
 
 // Defines values for VolumeState.
 const (
+	VolumeDeleting     VolumeState = "deleting"
 	VolumeReady        VolumeState = "ready"
 	VolumeTransferring VolumeState = "transferring"
 )
@@ -2906,6 +2908,7 @@ type Sandbox struct {
 	// | `failed` | it will not become ready; `error` says why | read the events, then delete |
 	// | `gone` | the machine is no longer on this host | delete the record |
 	// | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
+	// | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed | nothing; wait |
 	State SandboxState `json:"state"`
 
 	// Tainted The first call that ran something in it or wrote into it, through any route that `spec.sealed` refuses — by a key or by a person, whoever it was. Absent while nothing has, and never taken away: not by sealing it, nor by stopping or starting it.
@@ -2914,7 +2917,7 @@ type Sandbox struct {
 	// TransferringTo The runner it is being moved to, with its volume, while it is: by a transfer of the volume it holds, or by a start its runner had no room for, after which it is started there. It is stopped until it is there.
 	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
 
-	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves. While it is `deleting`, `runner`: the runner holding it is away, and deletes it once it is back.
 	WaitingFor *TransferWaitingFor `json:"waitingFor,omitempty"`
 }
 
@@ -3000,6 +3003,7 @@ type SandboxEvent struct {
 	// | `failed` | it will not become ready; `error` says why | read the events, then delete |
 	// | `gone` | the machine is no longer on this host | delete the record |
 	// | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
+	// | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed | nothing; wait |
 	State *SandboxState `json:"state,omitempty"`
 
 	// Type `progress` is the one that makes a thirty-second `creating` bearable: pulling a layer, flattening the rootfs, making the disk, installing the rules. `operation` is a call somebody made on this sandbox, and carries `operation` saying who and how it went.
@@ -3407,6 +3411,7 @@ type SandboxSpec struct {
 // | `failed` | it will not become ready; `error` says why | read the events, then delete |
 // | `gone` | the machine is no longer on this host | delete the record |
 // | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
+// | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed | nothing; wait |
 type SandboxState string
 
 // SandboxUsagePoint defines model for SandboxUsagePoint.
@@ -3555,7 +3560,7 @@ type Taint struct {
 	Route string `json:"route"`
 }
 
-// TransferWaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+// TransferWaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves. While it is `deleting`, `runner`: the runner holding it is away, and deletes it once it is back.
 type TransferWaitingFor string
 
 // Tunnel defines model for Tunnel.
@@ -3909,12 +3914,13 @@ type Volume struct {
 	// |---|---|
 	// | `ready` | on its runner, to be attached |
 	// | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+	// | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed |
 	State *VolumeState `json:"state,omitempty"`
 
 	// TransferringTo The runner it is being transferred to, while it is `transferring`.
 	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
 
-	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves. While it is `deleting`, `runner`: the runner holding it is away, and deletes it once it is back.
 	WaitingFor *TransferWaitingFor `json:"waitingFor,omitempty"`
 }
 
@@ -3945,6 +3951,7 @@ type VolumePrincipal struct {
 // |---|---|
 // | `ready` | on its runner, to be attached |
 // | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+// | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed |
 type VolumeState string
 
 // VolumeTransfer What `POST .../volumes/{volumeName}/transfer` moves it to.
@@ -15779,6 +15786,7 @@ func (r CreateSandboxResponse) StatusCode() int {
 type DeleteSandboxResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON202      *Sandbox
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
@@ -17402,6 +17410,7 @@ func (r ListVolumesResponse) StatusCode() int {
 type DeleteVolumeResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON202      *Volume
 	JSON400      *BadRequest
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
@@ -22537,6 +22546,13 @@ func ParseDeleteSandboxResponse(rsp *http.Response) (*DeleteSandboxResponse, err
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Sandbox
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -26566,6 +26582,13 @@ func ParseDeleteVolumeResponse(rsp *http.Response) (*DeleteVolumeResponse, error
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Volume
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

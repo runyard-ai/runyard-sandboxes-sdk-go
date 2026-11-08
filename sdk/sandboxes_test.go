@@ -717,6 +717,26 @@ func TestCloseDeletesTheDiskAndReleaseKeepsIt(t *testing.T) {
 	}
 }
 
+// A delete the server accepts for a runner that is away, and carries out
+// when it is back, is a delete done as far as its caller is concerned.
+func TestADeleteAcceptedForARunnerThatIsAwayReturns(t *testing.T) {
+	d, client := fake(t)
+	sandbox := ready(t, client)
+	deleting := fmt.Sprintf(`{"id":%q,"state":"deleting","waitingFor":"runner","spec":{"image":"alpine"},"createdAt":"2026-11-08T09:30:00Z"}`, sandbox.ID)
+	d.Intercept("deleteSandbox", fakeserver.Answer(http.StatusAccepted, "application/json", deleting))
+	d.Intercept("deleteSandbox", fakeserver.Answer(http.StatusAccepted, "application/json", deleting))
+	if err := sandbox.Close(context.Background()); err != nil {
+		t.Errorf("Close = %v", err)
+	}
+	if err := sandbox.Release(context.Background()); err != nil {
+		t.Errorf("Release = %v", err)
+	}
+	d.Intercept("deleteVolume", fakeserver.Answer(http.StatusAccepted, "application/json", `{"name":"work","state":"deleting","waitingFor":"runner"}`))
+	if err := client.DeleteVolume(context.Background(), "work"); err != nil {
+		t.Errorf("DeleteVolume = %v", err)
+	}
+}
+
 func TestVolumesAreListedAndLetGo(t *testing.T) {
 	d, client := fake(t)
 	d.PutVolume("kept", 1<<20)

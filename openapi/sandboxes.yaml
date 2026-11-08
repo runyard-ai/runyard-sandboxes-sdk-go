@@ -2239,6 +2239,14 @@ paths:
         A key that acts only on its `own` sandboxes drops only volumes it
         made. One that is somebody else's is answered as a name no volume has
         — `204`, and it is still there.
+
+
+        A volume whose runner is away is deleted when that runner is back:
+        the delete is recorded and answered `202`, and the volume is listed
+        `deleting`, `waitingFor: runner`, until the runner has deleted it.
+        One a sandbox held when its runner last reported is refused `409` as
+        ever, unless that sandbox is itself waiting to be deleted, which its
+        runner does first.
       responses:
         "404":
           $ref: "#/components/responses/NotFound"
@@ -2246,6 +2254,13 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "204":
           description: Gone, or was already.
+        "202":
+          description: >-
+            Its runner is away: the delete is recorded, and carried out when
+            that runner is back. The volume, `deleting`, `waitingFor: runner`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Volume" }
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -2736,6 +2751,15 @@ paths:
         only on its `own` sandboxes, in the body a sandbox that is not there
         is. A delete that is retried after it
         succeeded is answered as one that is gone.
+
+        **A sandbox whose runner is away is deleted when it is back.** Nothing
+        can reach its machine or its disk meanwhile, so the delete is
+        recorded as what that runner is to do, and answered `202`: the
+        sandbox is listed `deleting`, `waitingFor: runner`, until the runner
+        docks again, deletes it (its disk as `disk=` said) and says so; from
+        then on it is not listed. Asked again meanwhile, it is answered the
+        same, the last `disk=` said holding. One whose runner was revoked is
+        `lost`, and is answered `410`.
       parameters:
         - name: disk
           in: query
@@ -2751,6 +2775,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "204":
           description: Gone, or was already.
+        "202":
+          description: >-
+            Its runner is away: the delete is recorded, and carried out when
+            that runner is back. The sandbox, `deleting`, `waitingFor: runner`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sandbox" }
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -7134,13 +7165,14 @@ components:
 
     VolumeState:
       type: string
-      enum: [ready, transferring]
-      x-enum-varnames: [VolumeReady, VolumeTransferring]
+      enum: [ready, transferring, deleting]
+      x-enum-varnames: [VolumeReady, VolumeTransferring, VolumeDeleting]
       description: |
         | state | what it means |
         |---|---|
         | `ready` | on its runner, to be attached |
         | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
+        | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed |
 
     TransferWaitingFor:
       type: string
@@ -7152,6 +7184,8 @@ components:
         waits: `runner` is the runner holding it, or the one it moves to,
         not answering now. Nothing is lost meanwhile: the transfer goes on
         from where it is once that runner is back. Absent while it moves.
+        While it is `deleting`, `runner`: the runner holding it is away, and
+        deletes it once it is back.
 
     VolumeName:
       type: string
@@ -7808,7 +7842,8 @@ components:
         | `failed` | it will not become ready; `error` says why | read the events, then delete |
         | `gone` | the machine is no longer on this host | delete the record |
         | `lost` | its runner was revoked: nothing runs it, and `error` says so (`runner_revoked`) | delete the record |
-      enum: [creating, booting, ready, unreachable, paused, stopped, failed, gone, lost]
+        | `deleting` | deleted while its runner is away (`waitingFor: runner`): it is deleted when that runner is back, and then it is no longer listed | nothing; wait |
+      enum: [creating, booting, ready, unreachable, paused, stopped, failed, gone, lost, deleting]
 
     Sandbox:
       type: object

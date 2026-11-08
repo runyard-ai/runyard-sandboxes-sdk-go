@@ -323,9 +323,10 @@ func (c *Client) wait(ctx context.Context, created genv1.Sandbox) (*Sandbox, err
 				message = *sandbox.Error
 			}
 			return last, errors.New(message)
-		case genv1.SandboxStateGone, genv1.SandboxStateStopped, genv1.SandboxStatePaused, genv1.SandboxStateLost:
-			// None becomes ready by waiting: somebody stopped it or paused it,
-			// the machine left the host, or its runner was revoked. Waiting out the timeout for either was
+		case genv1.SandboxStateGone, genv1.SandboxStateStopped, genv1.SandboxStatePaused, genv1.SandboxStateLost, genv1.SandboxStateDeleting:
+			// None becomes ready by waiting: somebody stopped it, paused it
+			// or deleted it, the machine left the host, or its runner was
+			// revoked. Waiting out the timeout for either was
 			// three minutes of a caller staring at nothing.
 			return last, fmt.Errorf("sandbox %s is %s, and will not become ready", id, sandbox.State)
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
@@ -365,7 +366,7 @@ func (c *Client) untilSettled(ctx context.Context, id genv1.SandboxID) {
 		}
 		switch *event.State {
 		case genv1.SandboxStateReady, genv1.SandboxStateFailed, genv1.SandboxStateGone, genv1.SandboxStateStopped,
-			genv1.SandboxStatePaused, genv1.SandboxStateLost:
+			genv1.SandboxStatePaused, genv1.SandboxStateLost, genv1.SandboxStateDeleting:
 			return
 		case genv1.SandboxStateCreating, genv1.SandboxStateBooting, genv1.SandboxStateUnreachable:
 		}
@@ -826,6 +827,8 @@ func (s *Sandbox) Egress(ctx context.Context) (*genv1.EgressStatus, error) {
 }
 
 // Close drops the sandbox and its disk — a volume included, if it has one.
+// One whose runner is away is dropped when that runner is back: the server
+// accepts it (`202`), lists it `deleting` meanwhile, and Close returns.
 //
 // `defer sandbox.Close(ctx)` is the point of this method existing: a machine
 // that outlives the program that made it costs memory on somebody's host until
@@ -836,7 +839,9 @@ func (s *Sandbox) Close(ctx context.Context) error {
 
 // Release drops the sandbox and keeps its disk: on a volume, for the next
 // sandbox that names it. It returns once the machine is down and the volume
-// is free, so a create that follows it can have the volume at once.
+// is free, so a create that follows it can have the volume at once — save
+// where its runner is away: the server accepts it (`202`), and drops it, and
+// frees its volume, when that runner is back.
 func (s *Sandbox) Release(ctx context.Context) error {
 	return s.drop(ctx, "keep")
 }
@@ -846,6 +851,9 @@ func (s *Sandbox) drop(ctx context.Context, what string) error {
 	res, err := s.client.api.DeleteSandboxWithResponse(ctx, s.ID, &genv1.DeleteSandboxParams{Disk: &disk})
 	if err != nil {
 		return err
+	}
+	if res.StatusCode() == http.StatusAccepted {
+		return nil
 	}
 	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
@@ -865,10 +873,15 @@ func (c *Client) Volumes(ctx context.Context) ([]genv1.Volume, error) {
 
 // DeleteVolume lets a volume go, and what was written on it. Deleting one that
 // is not there succeeds; one a sandbox holds is refused with `volume_in_use`.
+// One whose runner is away is let go when that runner is back: the server
+// accepts it (`202`), lists it `deleting` meanwhile, and this returns.
 func (c *Client) DeleteVolume(ctx context.Context, name string) error {
 	res, err := c.api.DeleteVolumeWithResponse(ctx, name)
 	if err != nil {
 		return err
+	}
+	if res.StatusCode() == http.StatusAccepted {
+		return nil
 	}
 	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }

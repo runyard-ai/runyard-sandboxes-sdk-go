@@ -207,3 +207,42 @@ func TestARunnersListRefusedIsAnError(t *testing.T) {
 		t.Errorf("Approvers = %v", err)
 	}
 }
+
+// A broker's credential, sealed in the caller, is set on a runner that
+// provides that broker and taken away again, and the runner says its kind
+// and when it was set; one it does not provide is the server's refusal.
+func TestABrokersCredentialIsSetOnARunnerAndTakenAway(t *testing.T) {
+	d, client := fake(t)
+	ctx := context.Background()
+	token, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := d.Join(t, token.Secret)
+	d.Provide(t, runner.Id, "llm")
+	box := append([]byte{1}, make([]byte, 65+12+16+8)...)
+	set, err := client.SetRunnerBrokerCredential(ctx, runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialSubscription, Sealed: box})
+	if err != nil || set.Broker != "llm" || set.Kind != genv1.RunnerBrokerCredentialSubscription || set.SetAt.IsZero() {
+		t.Fatalf("set = %+v, %v", set, err)
+	}
+	shown, err := client.Runner(ctx, runner.Id)
+	if err != nil || shown.BrokerCredentials == nil || len(*shown.BrokerCredentials) != 1 {
+		t.Fatalf("shown = %+v, %v", shown.BrokerCredentials, err)
+	}
+	if held := (*shown.BrokerCredentials)[0]; held.Kind == nil || *held.Kind != genv1.RunnerBrokerCredentialSubscription || held.SetAt == nil || !held.SetAt.Equal(set.SetAt) {
+		t.Errorf("held = %+v", held)
+	}
+	if err := client.DeleteRunnerBrokerCredential(ctx, runner.Id, "llm"); err != nil {
+		t.Errorf("taken away = %v", err)
+	}
+	var refused *Error
+	if err := client.DeleteRunnerBrokerCredential(ctx, runner.Id, "llm"); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
+		t.Errorf("taken away twice = %v", err)
+	}
+	if _, err := client.SetRunnerBrokerCredential(ctx, runner.Id, "github", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}); !errors.As(err, &refused) || refused.Status != http.StatusConflict {
+		t.Errorf("one it does not provide = %v", err)
+	}
+	if _, err := client.SetRunnerBrokerCredential(ctx, "r-99", "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
+		t.Errorf("nobody's = %v", err)
+	}
+}

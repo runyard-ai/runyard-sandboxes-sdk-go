@@ -209,6 +209,30 @@ func (c *Client) DeleteSealedCredential(ctx context.Context, subject string) err
 	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
 
+// SetRunnerBrokerCredential sets the credential of a broker the runner
+// provides, sealed to its approved brokerKey (as `sealbox` seals, which a
+// browser does with WebCrypto): the server keeps the box alone and the
+// runner writes what it opens where that broker reads its credential. The
+// answer says its kind and when it was set; the runner's brokerCredentials
+// say once it has written it.
+func (c *Client) SetRunnerBrokerCredential(ctx context.Context, runnerID, broker string, set genv1.RunnerBrokerCredentialWrite) (genv1.RunnerBrokerCredential, error) {
+	res, err := c.api.SetRunnerBrokerCredentialWithResponse(ctx, runnerID, broker, set)
+	if err != nil {
+		return genv1.RunnerBrokerCredential{}, err
+	}
+	return answered(res.JSON200, res.HTTPResponse, res.Body)
+}
+
+// DeleteRunnerBrokerCredential takes away the credential set for a runner's
+// broker: the runner removes the file it wrote it to.
+func (c *Client) DeleteRunnerBrokerCredential(ctx context.Context, runnerID, broker string) error {
+	res, err := c.api.DeleteRunnerBrokerCredentialWithResponse(ctx, runnerID, broker)
+	if err != nil {
+		return err
+	}
+	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
+}
+
 // TransferVolume moves a volume, and the sandbox whose disk it is, to
 // another runner: the answer is the volume as the move starts.
 func (c *Client) TransferVolume(ctx context.Context, name string, ask genv1.VolumeTransfer) (genv1.Volume, error) {

@@ -320,6 +320,8 @@ func (d *Server) routes() http.Handler {
 	handle("POST /v1/runners/{runnerId}/undrain", "undrainRunner", d.undrainRunner)
 	handle("POST /v1/runners/{runnerId}/allow-address", "allowRunnerAddress", d.allowRunnerAddress)
 	handle("POST /v1/runners/{runnerId}/approve", "approveRunner", notInTheFake("judge a passkey's approval"))
+	handle("PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential", "setRunnerBrokerCredential", d.setRunnerBrokerCredential)
+	handle("DELETE /v1/runners/{runnerId}/brokers/{brokerName}/credential", "deleteRunnerBrokerCredential", d.deleteRunnerBrokerCredential)
 	handle("POST /v1/runners/join-tokens", "createJoinToken", d.createJoinToken)
 	handle("GET /v1/runners/join-tokens", "listJoinTokens", d.listJoinTokens)
 	handle("DELETE /v1/runners/join-tokens/{tokenId}", "revokeJoinToken", d.revokeJoinToken)

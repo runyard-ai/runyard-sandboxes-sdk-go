@@ -5247,6 +5247,92 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/runners/{runnerId}/brokers/{brokerName}/credential:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+      - $ref: "#/components/parameters/BrokerName"
+    put:
+      operationId: setRunnerBrokerCredential
+      tags: [Runners]
+      summary: Set the credential of a broker a runner provides, sealed to it
+      description: |
+        Needs `runners.admin`. The third way a runner-provided broker's
+        credential is set (docs/design/runners, "The LLM broker on a
+        runner"): sealed in the browser to the runner's approved
+        `brokerKey`, so that this server, and whoever serves the console,
+        carry ciphertext and nothing else. `sealed` is what `sealbox` makes
+        (ECIES over P-256 with HKDF-SHA256 and AES-256-GCM, as WebCrypto
+        does it) of the credential as the broker reads it from its file: an
+        API key, or a subscription's sign-in as JSON. `kind` says which,
+        and is all that is said of it in the clear.
+
+        The server keeps the ciphertext alone and hands it to that runner as
+        a change of its desired state; the runner opens it with its broker
+        key and writes it where the broker it provides under `brokerName`
+        reads its credential, never logging it. What it reports of it —
+        the kind, when it was set and last used, never the credential — is
+        the runner's `brokerCredentials`. Setting it again replaces it.
+
+        Refused `409` unless the runner is approved and not revoked, and,
+        as it last reported, provides `brokerName` and takes a credential
+        for it: a sealed credential is sent to no runner that would not
+        write it where its broker reads it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerBrokerCredentialWrite" }
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "200":
+          description: Kept, and on its way to the runner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerBrokerCredential" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            `conflict`: the runner is not approved, was revoked, does not
+            provide `brokerName`, or takes no credential for it from its
+            server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: deleteRunnerBrokerCredential
+      tags: [Runners]
+      summary: Take away the credential set for a runner's broker
+      description: |
+        Needs `runners.admin`. The runner is told to remove the file it wrote
+        it to, and the server forgets the ciphertext. A credential set on the
+        runner's host instead is the host's, and is not touched here.
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "204":
+          description: Taken away, and on its way to the runner.
+        "404":
+          description: "`not_found`: no such runner, or no credential was set for this broker of it here."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/credentials/{subject}:
     parameters:
       - name: subject
@@ -8808,6 +8894,14 @@ components:
             reported. One it does not reach answers a sandbox on it with a
             closed connection.
           items: { $ref: "#/components/schemas/BrokerName" }
+        brokerCredentials:
+          type: array
+          description: >-
+            For each broker it provides and takes a credential for from its
+            server (`PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential`),
+            what it holds, as it last reported: the kind, when it was set and
+            when it was last used, never the credential.
+          items: { $ref: "#/components/schemas/RunnerBrokerCredentialState" }
 
     RunnerApproval:
       type: object
@@ -8992,6 +9086,58 @@ components:
         expiresAt: { type: string, format: date-time, description: "What the provider said of the sign-in." }
         writtenAt: { type: string, format: date-time }
         writtenBy: { type: string, description: "The runner that last wrote it, or the person." }
+
+    RunnerBrokerCredentialKind:
+      type: string
+      enum: [apiKey, subscription]
+      x-enum-varnames: [RunnerBrokerCredentialAPIKey, RunnerBrokerCredentialSubscription]
+      description: >-
+        What a broker's credential is: an API key, or a subscription's
+        sign-in (its token as JSON, which the broker renews).
+
+    RunnerBrokerCredentialWrite:
+      type: object
+      additionalProperties: false
+      required: [kind, sealed]
+      properties:
+        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
+        sealed:
+          type: string
+          format: byte
+          maxLength: 87382
+          description: The credential, sealed to the runner's `brokerKey`.
+
+    RunnerBrokerCredential:
+      type: object
+      required: [broker, kind, setAt, setBy]
+      description: "A credential set for a runner's broker, as this server keeps it: never what it is."
+      properties:
+        broker: { $ref: "#/components/schemas/BrokerName" }
+        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
+        setAt: { type: string, format: date-time }
+        setBy: { type: string, format: email }
+
+    RunnerBrokerCredentialState:
+      type: object
+      required: [broker]
+      description: >-
+        What a runner reported of the credential of a broker it provides
+        and takes a credential for from its server: never the credential.
+        Only `broker` while none was set through this server.
+      properties:
+        broker: { $ref: "#/components/schemas/BrokerName" }
+        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
+        setAt:
+          type: string
+          format: date-time
+          description: When the one it holds was set.
+        usedAt:
+          type: string
+          format: date-time
+          description: When a call last reached the broker since, to the minute.
+        refused:
+          type: string
+          description: Why the runner could not write the last one it was sent.
 
     SealedCredentialWrite:
       type: object

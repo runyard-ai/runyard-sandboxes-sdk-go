@@ -21,6 +21,31 @@ import (
 // address. Approving one takes a passkey's assertion, which the fake does not
 // judge: it refuses, as `not_implemented`, as it does what a runner's brokers
 // keep, approvers and credentials both, and moving a volume between runners.
+//
+// A runner's brokers are what a test says it reports (Provide), and the
+// credential of one set from the console is kept as the runner reports it
+// once it has written it: its kind and when it was set. The box is looked at
+// for its shape and kept nowhere, since nothing in the fake could open it,
+// and no runner is held to being approved, since none could be.
+
+// Provide is the runner hostID reporting that it provides brokers, and takes
+// each one's credential from its server, as a runner whose brokers.provides
+// names a credential file for them does.
+func (d *Server) Provide(tb testing.TB, hostID string, brokers ...string) {
+	tb.Helper()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	runner, ok := d.runners[hostID]
+	if !ok {
+		tb.Fatalf("fakeserver: no runner %s has joined", hostID)
+	}
+	provides := slices.Clone(brokers)
+	held := make([]genv1.RunnerBrokerCredentialState, 0, len(brokers))
+	for _, broker := range brokers {
+		held = append(held, genv1.RunnerBrokerCredentialState{Broker: broker})
+	}
+	runner.Provides, runner.BrokerCredentials = &provides, &held
+}
 
 // joinToken is a token minted, and its secret.
 type joinToken struct {
@@ -373,6 +398,77 @@ func (d *Server) updateRunnerSettings(w http.ResponseWriter, r *http.Request) {
 		settings.Residency = *change.Residency
 	}
 	reply(w, http.StatusOK, *settings)
+}
+
+// brokerCredentialOf is the credential the path names, as the runner the
+// path names reports it, under d.mu, or says why there is none to set and
+// returns nil.
+func (d *Server) brokerCredentialOf(w http.ResponseWriter, r *http.Request) (*genv1.Runner, *genv1.RunnerBrokerCredentialState) {
+	runner := d.runnerOf(w, r)
+	if runner == nil {
+		return nil, nil
+	}
+	broker := r.PathValue("brokerName")
+	switch {
+	case runner.State == genv1.RunnerStateRunnerRevoked:
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" was revoked, and is sent nothing")
+		return nil, nil
+	case runner.Provides == nil || !slices.Contains(*runner.Provides, broker):
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" does not provide "+broker+", as it last reported")
+		return nil, nil
+	}
+	if runner.BrokerCredentials != nil {
+		for i := range *runner.BrokerCredentials {
+			if held := &(*runner.BrokerCredentials)[i]; held.Broker == broker {
+				return runner, held
+			}
+		}
+	}
+	refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" takes no credential for "+broker+" from its server")
+	return nil, nil
+}
+
+func (d *Server) setRunnerBrokerCredential(w http.ResponseWriter, r *http.Request) {
+	var ask genv1.RunnerBrokerCredentialWrite
+	if err := strictly(r, &ask); err != nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, err.Error())
+		return
+	}
+	// A sealed box is 0x01, a P-256 point, a nonce and a tag at least.
+	if ask.Kind != genv1.RunnerBrokerCredentialAPIKey && ask.Kind != genv1.RunnerBrokerCredentialSubscription || len(ask.Sealed) < 1+65+12+16 || ask.Sealed[0] != 1 {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a broker's credential is an apiKey or a subscription, sealed to the runner's brokerKey")
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, held := d.brokerCredentialOf(w, r)
+	if held == nil {
+		return
+	}
+	now := d.now().UTC()
+	kind := ask.Kind
+	held.Kind, held.SetAt, held.UsedAt, held.Refused = &kind, &now, nil, nil
+	reply(w, http.StatusOK, genv1.RunnerBrokerCredential{Broker: held.Broker, Kind: kind, SetAt: now, SetBy: "admin@example.com"})
+}
+
+func (d *Server) deleteRunnerBrokerCredential(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	runner := d.runnerOf(w, r)
+	if runner == nil {
+		return
+	}
+	broker := r.PathValue("brokerName")
+	if runner.BrokerCredentials != nil {
+		for i, held := range *runner.BrokerCredentials {
+			if held.Broker == broker && held.Kind != nil {
+				(*runner.BrokerCredentials)[i] = genv1.RunnerBrokerCredentialState{Broker: broker}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+	}
+	refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no credential was set for runner "+runner.Id+"'s broker "+broker)
 }
 
 // notInTheFake answers what the fake does not do, saying so, as a server

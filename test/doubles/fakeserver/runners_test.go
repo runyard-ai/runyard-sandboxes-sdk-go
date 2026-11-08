@@ -291,3 +291,84 @@ func runnerState(t *testing.T, client *genv1.ClientWithResponses, id string) gen
 	}
 	return got.JSON200.State
 }
+
+// A runner's broker's credential is set on a runner that says it provides
+// that broker and takes its credential, kept as that runner reports it, and
+// taken away; what the server refuses, the fake refuses.
+func TestTheFakeKeepsWhatARunnerSaysOfItsBrokersCredentials(t *testing.T) {
+	at := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	d := New(t, WithClock(func() time.Time { return at }))
+	client := typed(t, d, "")
+	ctx := context.Background()
+	join := func() genv1.Runner {
+		minted, err := client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{})
+		if err != nil || minted.JSON201 == nil {
+			t.Fatal(err)
+		}
+		return d.Join(t, minted.JSON201.Secret)
+	}
+	runner, quiet, revoked := join(), join(), join()
+	d.Provide(t, runner.Id, "llm", "codex")
+	d.Provide(t, revoked.Id, "llm")
+	if got := statusOf(client.RevokeRunnerWithResponse(ctx, revoked.Id)); got != 202 {
+		t.Fatalf("revoking = %d", got)
+	}
+	box := append([]byte{1}, make([]byte, 100)...)
+	good := genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}
+	set, err := client.SetRunnerBrokerCredentialWithResponse(ctx, runner.Id, "llm", good)
+	if err != nil || set.JSON200 == nil || set.JSON200.Kind != genv1.RunnerBrokerCredentialAPIKey || !set.JSON200.SetAt.Equal(at) || set.JSON200.SetBy == "" {
+		t.Fatalf("set = %v %s", err, set.Body)
+	}
+	got, _ := client.GetRunnerWithResponse(ctx, runner.Id)
+	if held := *got.JSON200.BrokerCredentials; len(held) != 2 || held[0].Kind == nil || !held[0].SetAt.Equal(at) || held[1].Broker != "codex" || held[1].Kind != nil {
+		t.Errorf("held = %+v", held)
+	}
+	if strings.Contains(string(got.Body), "sealed") {
+		t.Errorf("the box is shown: %s", got.Body)
+	}
+
+	for name, c := range map[string]struct {
+		runner, broker string
+		write          genv1.RunnerBrokerCredentialWrite
+		want           int
+	}{
+		"nobody":                {"r-99", "llm", good, 404},
+		"a revoked runner":      {revoked.Id, "llm", good, 409},
+		"one it does not offer": {runner.Id, "github", good, 409},
+		"a runner that is mute": {quiet.Id, "llm", good, 409},
+		"another kind":          {runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: "password", Sealed: box}, 400},
+		"not a box":             {runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: []byte("sk-ant")}, 400},
+	} {
+		if got := statusOf(client.SetRunnerBrokerCredentialWithResponse(ctx, c.runner, c.broker, c.write)); got != c.want {
+			t.Errorf("%s = %d, want %d", name, got, c.want)
+		}
+	}
+	if got := statusOf(client.SetRunnerBrokerCredentialWithBodyWithResponse(ctx, runner.Id, "llm", "application/json", strings.NewReader(`{"kind":"apiKey","sealed":"AQ==","plaintext":"sk"}`))); got != 400 {
+		t.Errorf("a field the request does not have = %d", got)
+	}
+	d.Provide(t, quiet.Id)
+	if got := statusOf(client.SetRunnerBrokerCredentialWithResponse(ctx, quiet.Id, "llm", good)); got != 409 {
+		t.Errorf("a runner that provides nothing = %d", got)
+	}
+
+	if got := statusOf(client.DeleteRunnerBrokerCredentialWithResponse(ctx, runner.Id, "llm")); got != 204 {
+		t.Errorf("taken away = %d", got)
+	}
+	for name, c := range map[string][2]string{"twice": {runner.Id, "llm"}, "never set": {runner.Id, "codex"}, "nobody's": {"r-99", "llm"}, "a mute runner's": {quiet.Id, "llm"}} {
+		if got := statusOf(client.DeleteRunnerBrokerCredentialWithResponse(ctx, c[0], c[1])); got != 404 {
+			t.Errorf("taken away %s = %d", name, got)
+		}
+	}
+	got, _ = client.GetRunnerWithResponse(ctx, runner.Id)
+	if held := (*got.JSON200.BrokerCredentials)[0]; held.Kind != nil || held.SetAt != nil {
+		t.Errorf("after = %+v", held)
+	}
+	failing := &fatal{}
+	func() {
+		defer func() { _ = recover() }()
+		d.Provide(failing, "r-99", "llm")
+	}()
+	if !failing.failed {
+		t.Error("a runner that never joined provided a broker")
+	}
+}

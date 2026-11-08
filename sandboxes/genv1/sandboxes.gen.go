@@ -47,6 +47,7 @@ const (
 const (
 	ActivityTypeHttp     BrokerActivityType = "http"
 	ActivityTypeRead     BrokerActivityType = "read"
+	ActivityTypeRotation BrokerActivityType = "rotation"
 	ActivityTypeSetting  BrokerActivityType = "setting"
 	ActivityTypeStream   BrokerActivityType = "stream"
 	ActivityTypeTransfer BrokerActivityType = "transfer"
@@ -241,6 +242,12 @@ const (
 	RunnerBrokerCredentialSubscription RunnerBrokerCredentialKind = "subscription"
 )
 
+// Defines values for RunnerBrokerCredentialStateStore.
+const (
+	RunnerBrokerCredentialStoreFile RunnerBrokerCredentialStateStore = "file"
+	RunnerBrokerCredentialStoreTPM  RunnerBrokerCredentialStateStore = "tpm"
+)
+
 // Defines values for RunnerCapacityArch.
 const (
 	ArchAMD64 RunnerCapacityArch = "amd64"
@@ -346,6 +353,11 @@ const (
 	SignInFailed     SignInError = "failed"
 	SignInNotAllowed SignInError = "not_allowed"
 	SignInUnverified SignInError = "unverified"
+)
+
+// Defines values for TransferWaitingFor.
+const (
+	TransferWaitingForRunner TransferWaitingFor = "runner"
 )
 
 // Defines values for TunnelOverlayCorner.
@@ -502,7 +514,9 @@ type Broker struct {
 // `setting`, somebody changing a workspace setting (`setting`);
 // `transfer`, a volume's transfer its target refused, since the source's
 // broker key it was given is not the one the target's own bundle names
-// (`reason` says which runners).
+// (`reason` says which runners); `rotation`, a runner's new sandbox CA
+// its server refused, since it is not signed by the CA the runner was
+// approved with (`runner` says which, and `reason` why).
 //
 // A record carries no body: the bodies of an exchange stay on the
 // runner that saw it (`runner`), and are read with
@@ -551,7 +565,7 @@ type BrokerActivity struct {
 	// Response What the sandbox was answered, after the broker's `Runyard-Activity` was taken off it.
 	Response *BrokerActivityResponse `json:"response,omitempty"`
 
-	// Runner The runner that saw the exchange and keeps its bodies. Absent on a record the server made itself (`read`), and on one kept before bodies stayed on runners.
+	// Runner The runner that saw the exchange and keeps its bodies; on a `setting` of a runner's own (`name`), and on a `rotation`, that runner. Absent on any other record the server made itself (`read`, `setting`), and on one kept before bodies stayed on runners.
 	Runner *string `json:"runner,omitempty"`
 
 	// Sandbox Whose exchange it was. Absent for a record that stands for others (`lost`).
@@ -647,10 +661,13 @@ type BrokerActivitySetting struct {
 	// From What it was, as a person reads it.
 	From string `json:"from"`
 
+	// JoinToken On a `setting` of a join token's own (`allowedSources`), that token's id.
+	JoinToken *string `json:"joinToken,omitempty"`
+
 	// Key The id of the key it was changed with; absent for a person signed in to the console.
 	Key *string `json:"key,omitempty"`
 
-	// Name The setting, as `GET /v1/runners/settings` names it.
+	// Name The setting, as `GET /v1/runners/settings` names it; or `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names.
 	Name string `json:"name"`
 
 	// To What it is now.
@@ -790,6 +807,8 @@ type BuildStepState string
 // with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
 // fingerprint, approved before it) signed the statement of this entry,
 // ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+// For a rotation's overlap a runner has two entries, the CA it
+// rotated from and the new one, the older first.
 type BundleApproval struct {
 	ApprovedAt time.Time `json:"approvedAt"`
 
@@ -813,6 +832,8 @@ type BundleEntry struct {
 	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
 	// fingerprint, approved before it) signed the statement of this entry,
 	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+	// For a rotation's overlap a runner has two entries, the CA it
+	// rotated from and the new one, the older first.
 	Approval  BundleApproval `json:"approval"`
 	BrokerKey string         `json:"brokerKey"`
 
@@ -1403,6 +1424,9 @@ type Error struct {
 
 		// Message For a person reading a log. It may quote something a sandbox produced, so do not render it as anything but text.
 		Message string `json:"message"`
+
+		// Runner On `runner_unreachable`, the runner what was asked is on: its id, name, state, and when it last reported, which is what the server says of what it holds meanwhile.
+		Runner *PlacedOn `json:"runner,omitempty"`
 	} `json:"error"`
 }
 
@@ -1939,6 +1963,12 @@ type JoinTokenRequest struct {
 	RunnerName *RunnerName `json:"runnerName,omitempty"`
 }
 
+// JoinTokenUpdate defines model for JoinTokenUpdate.
+type JoinTokenUpdate struct {
+	// AllowedSources IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike) it may be used from, from now on, replacing what it had, which become the runner's it enrols. Empty is anywhere.
+	AllowedSources []string `json:"allowedSources"`
+}
+
 // Key A key's metadata. Never its secret.
 type Key struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -2299,6 +2329,9 @@ type PlacedOn struct {
 	// Id The runner's hostID, as `GET /v1/runners/{id}` names it.
 	Id string `json:"id"`
 
+	// Name Its name, as `GET /v1/runners/{id}` says it. Absent for a runner the server has no record of.
+	Name *string `json:"name,omitempty"`
+
 	// ObservedAt When it last reported what it holds. Absent until it has: what is said of a sandbox on a runner that is `unreachable` is as of then.
 	ObservedAt *time.Time `json:"observedAt,omitempty"`
 
@@ -2462,6 +2495,8 @@ type Runner struct {
 	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
 	// fingerprint, approved before it) signed the statement of this entry,
 	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+	// For a rotation's overlap a runner has two entries, the CA it
+	// rotated from and the new one, the older first.
 	Approval *BundleApproval `json:"approval,omitempty"`
 
 	// BrokerCredentials For each broker it provides and takes a credential for from its server (`PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential`), what it holds, as it last reported: the kind, when it was set and when it was last used, never the credential.
@@ -2470,8 +2505,14 @@ type Runner struct {
 	// BrokerKey The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
 	BrokerKey string `json:"brokerKey"`
 
-	// CaFingerprint The SHA-256, in hex, of the sandbox CA it reported, once it has: what an admin compares with `runyard-runner status` on the host before approving it.
+	// CaFingerprint The SHA-256, in hex, of the sandbox CA it reported, once it has: what an admin compares with `runyard-runner status` on the host before approving it, and the one it signs its sandboxes' identities with.
 	CaFingerprint *string `json:"caFingerprint,omitempty"`
+
+	// CaRotatedAt When its sandbox CA was last rotated: the new one put in the bundle beside the old (`POST /v1/runners/{runnerId}/rotate-ca`). Absent when it never was.
+	CaRotatedAt *time.Time `json:"caRotatedAt,omitempty"`
+
+	// CaRotationAskedAt While a rotation an admin asked for has not reached the bundle yet, when it was asked.
+	CaRotationAskedAt *time.Time `json:"caRotationAskedAt,omitempty"`
 
 	// Capacity What the runner reported it brings.
 	Capacity RunnerCapacity `json:"capacity"`
@@ -2508,7 +2549,7 @@ type Runner struct {
 	LastRefusal *RunnerRefusal `json:"lastRefusal,omitempty"`
 	LastSeenAt  *time.Time     `json:"lastSeenAt,omitempty"`
 
-	// Name What it is called, from the join token it enrolled with (its `runnerName`), and its hostID when that named none. No other runner that is not revoked has it. A person reads it, and types it to revoke the runner; everything else names a runner by its id.
+	// Name What it is called: from the join token it enrolled with (its `runnerName`), and its hostID when that named none, until an admin renames it (`PATCH /v1/runners/{runnerId}`). No other runner that is not revoked has it. A person reads it, and types it to revoke the runner; everything else names a runner by its id.
 	Name RunnerName `json:"name"`
 
 	// Operation Its latest drain or revoke: the one in progress, or the last one to have ended. Absent when it has had none.
@@ -2522,6 +2563,9 @@ type Runner struct {
 
 	// RecordKey The public half of the key that signs its activity lines, PEM, as it enrolled with it.
 	RecordKey string `json:"recordKey"`
+
+	// RetiringCAFingerprint While a rotation's overlap lasts, the CA it rotated from, still in the bundle until the leaves it signed have expired.
+	RetiringCAFingerprint *string `json:"retiringCAFingerprint,omitempty"`
 
 	// RevokedAt When it was revoked.
 	RevokedAt *time.Time `json:"revokedAt,omitempty"`
@@ -2540,8 +2584,17 @@ type Runner struct {
 	// | `revoked` | cut off, for good |
 	State RunnerState `json:"state"`
 
+	// UnlistedAt When it was removed from the list, once it was revoked and an admin removed it.
+	UnlistedAt *time.Time `json:"unlistedAt,omitempty"`
+
+	// UnlistedBy Who removed it from the list.
+	UnlistedBy *openapi_types.Email `json:"unlistedBy,omitempty"`
+
 	// Version The runyard-runner it reported at enrolment.
 	Version string `json:"version"`
+
+	// WaitingMoves How many moves off this runner wait for an admin to approve it (`POST /v1/runners/{runnerId}/approve`), held at step `waiting_approval`: a pod's runner enrolled before approval was asked of every runner, or one enrolled again by a Rejoin, whose sandboxes and volumes are to move. No runner seals a transfer key to a broker key nobody approved, so none of them is tried until it is approved; then each goes on by itself. Its sandboxes keep running where they are meanwhile. The first move held is an activity record (`transfer`, `refused`, naming the runner) and a line of the server's log. Absent when none waits.
+	WaitingMoves *int `json:"waitingMoves,omitempty"`
 }
 
 // RunnerKeyKind Where its key is held: `tpm` only when a TPM attestation proved it, and `file` otherwise.
@@ -2585,15 +2638,21 @@ type RunnerBrokerCredentialState struct {
 	// Kind What a broker's credential is: an API key, or a subscription's sign-in (its token as JSON, which the broker renews).
 	Kind *RunnerBrokerCredentialKind `json:"kind,omitempty"`
 
-	// Refused Why the runner could not write the last one it was sent.
+	// Refused Why the runner could not write the last one it was sent, or the one it holds as it started.
 	Refused *string `json:"refused,omitempty"`
 
 	// SetAt When the one it holds was set.
 	SetAt *time.Time `json:"setAt,omitempty"`
 
+	// Store Where the runner keeps it at rest: `tpm`, sealed by its TPM, the file its broker reads written from there on a tmpfs alone; `file`, in that file, where the runner has no TPM.
+	Store *RunnerBrokerCredentialStateStore `json:"store,omitempty"`
+
 	// UsedAt When a call last reached the broker since, to the minute.
 	UsedAt *time.Time `json:"usedAt,omitempty"`
 }
+
+// RunnerBrokerCredentialStateStore Where the runner keeps it at rest: `tpm`, sealed by its TPM, the file its broker reads written from there on a tmpfs alone; `file`, in that file, where the runner has no TPM.
+type RunnerBrokerCredentialStateStore string
 
 // RunnerBrokerCredentialWrite defines model for RunnerBrokerCredentialWrite.
 type RunnerBrokerCredentialWrite struct {
@@ -2754,10 +2813,13 @@ type RunnerSettingsUpdate struct {
 // | `revoked` | cut off, for good |
 type RunnerState string
 
-// RunnerUpdate defines model for RunnerUpdate.
+// RunnerUpdate What to change of a runner; what is left out stays as it is.
 type RunnerUpdate struct {
 	// AllowedSources IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike) it may connect from, replacing what it had. Empty is anywhere.
-	AllowedSources []string `json:"allowedSources"`
+	AllowedSources *[]string `json:"allowedSources,omitempty"`
+
+	// Name What it is called from now on.
+	Name *RunnerName `json:"name,omitempty"`
 }
 
 // Sandbox defines model for Sandbox.
@@ -2851,6 +2913,9 @@ type Sandbox struct {
 
 	// TransferringTo The runner it is being moved to, with its volume, while it is: by a transfer of the volume it holds, or by a start its runner had no room for, after which it is started there. It is stopped until it is there.
 	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
+
+	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+	WaitingFor *TransferWaitingFor `json:"waitingFor,omitempty"`
 }
 
 // SandboxBroker defines model for SandboxBroker.
@@ -3490,6 +3555,9 @@ type Taint struct {
 	Route string `json:"route"`
 }
 
+// TransferWaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+type TransferWaitingFor string
+
 // Tunnel defines model for Tunnel.
 type Tunnel struct {
 	// Access Who may reach a tunnel by signing in at the gateway. Nobody else can:
@@ -3845,6 +3913,9 @@ type Volume struct {
 
 	// TransferringTo The runner it is being transferred to, while it is `transferring`.
 	TransferringTo *PlacedOn `json:"transferringTo,omitempty"`
+
+	// WaitingFor While it is being transferred, what its transfer waits for, when it waits: `runner` is the runner holding it, or the one it moves to, not answering now. Nothing is lost meanwhile: the transfer goes on from where it is once that runner is back. Absent while it moves.
+	WaitingFor *TransferWaitingFor `json:"waitingFor,omitempty"`
 }
 
 // VolumeClone What `POST .../volumes/{volumeName}/clone` makes.
@@ -3971,6 +4042,9 @@ type NotRunning = Error
 
 // RunnerFailed Every failure, in one shape.
 type RunnerFailed = Error
+
+// RunnerRevoked Every failure, in one shape.
+type RunnerRevoked = Error
 
 // RunnerUnreachable Every failure, in one shape.
 type RunnerUnreachable = Error
@@ -4117,6 +4191,12 @@ type ListKeysParams struct {
 type GetMyPictureParams struct {
 	// V The picture's version, from `Me.picture`; for caches only.
 	V *string `form:"v,omitempty" json:"v,omitempty"`
+}
+
+// ListRunnersParams defines parameters for ListRunners.
+type ListRunnersParams struct {
+	// Unlisted List the runners removed from the list too, among the others in the order they joined.
+	Unlisted *bool `form:"unlisted,omitempty" json:"unlisted,omitempty"`
 }
 
 // ListSandboxesParams defines parameters for ListSandboxes.
@@ -4345,6 +4425,9 @@ type PutPrincipalJSONRequestBody = PrincipalSpec
 
 // CreateJoinTokenJSONRequestBody defines body for CreateJoinToken for application/json ContentType.
 type CreateJoinTokenJSONRequestBody = JoinTokenRequest
+
+// UpdateJoinTokenJSONRequestBody defines body for UpdateJoinToken for application/json ContentType.
+type UpdateJoinTokenJSONRequestBody = JoinTokenUpdate
 
 // UpdateRunnerSettingsJSONRequestBody defines body for UpdateRunnerSettings for application/json ContentType.
 type UpdateRunnerSettingsJSONRequestBody = RunnerSettingsUpdate
@@ -4723,7 +4806,7 @@ type ClientInterface interface {
 	GetBrokerTrusted(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListRunners request
-	ListRunners(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListRunners(ctx context.Context, params *ListRunnersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJoinTokens request
 	ListJoinTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4735,6 +4818,11 @@ type ClientInterface interface {
 
 	// RevokeJoinToken request
 	RevokeJoinToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateJoinTokenWithBody request with any body
+	UpdateJoinTokenWithBody(ctx context.Context, tokenId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpdateJoinToken(ctx context.Context, tokenId string, body UpdateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetRunnerSettings request
 	GetRunnerSettings(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4778,8 +4866,14 @@ type ClientInterface interface {
 
 	DrainRunner(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RotateRunnerCA request
+	RotateRunnerCA(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UndrainRunner request
 	UndrainRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnlistRunner request
+	UnlistRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSandboxes request
 	ListSandboxes(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5755,8 +5849,8 @@ func (c *Client) GetBrokerTrusted(ctx context.Context, principalId PrincipalID, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListRunners(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListRunnersRequest(c.Server)
+func (c *Client) ListRunners(ctx context.Context, params *ListRunnersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRunnersRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5805,6 +5899,30 @@ func (c *Client) CreateJoinToken(ctx context.Context, body CreateJoinTokenJSONRe
 
 func (c *Client) RevokeJoinToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeJoinTokenRequest(c.Server, tokenId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateJoinTokenWithBody(ctx context.Context, tokenId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateJoinTokenRequestWithBody(c.Server, tokenId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpdateJoinToken(ctx context.Context, tokenId string, body UpdateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateJoinTokenRequest(c.Server, tokenId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6007,8 +6125,32 @@ func (c *Client) DrainRunner(ctx context.Context, runnerId string, body DrainRun
 	return c.Client.Do(req)
 }
 
+func (c *Client) RotateRunnerCA(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateRunnerCARequest(c.Server, runnerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) UndrainRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUndrainRunnerRequest(c.Server, runnerId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UnlistRunner(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnlistRunnerRequest(c.Server, runnerId)
 	if err != nil {
 		return nil, err
 	}
@@ -9284,7 +9426,7 @@ func NewGetBrokerTrustedRequest(server string, principalId PrincipalID, brokerNa
 }
 
 // NewListRunnersRequest generates requests for ListRunners
-func NewListRunnersRequest(server string) (*http.Request, error) {
+func NewListRunnersRequest(server string, params *ListRunnersParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -9300,6 +9442,28 @@ func NewListRunnersRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Unlisted != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "unlisted", runtime.ParamLocationQuery, *params.Unlisted); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -9407,6 +9571,53 @@ func NewRevokeJoinTokenRequest(server string, tokenId string) (*http.Request, er
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateJoinTokenRequest calls the generic UpdateJoinToken builder with application/json body
+func NewUpdateJoinTokenRequest(server string, tokenId string, body UpdateJoinTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateJoinTokenRequestWithBody(server, tokenId, "application/json", bodyReader)
+}
+
+// NewUpdateJoinTokenRequestWithBody generates requests for UpdateJoinToken with any type of body
+func NewUpdateJoinTokenRequestWithBody(server string, tokenId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "tokenId", runtime.ParamLocationPath, tokenId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/join-tokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PATCH", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -9829,6 +10040,40 @@ func NewDrainRunnerRequestWithBody(server string, runnerId string, contentType s
 	return req, nil
 }
 
+// NewRotateRunnerCARequest generates requests for RotateRunnerCA
+func NewRotateRunnerCARequest(server string, runnerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/rotate-ca", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewUndrainRunnerRequest generates requests for UndrainRunner
 func NewUndrainRunnerRequest(server string, runnerId string) (*http.Request, error) {
 	var err error
@@ -9846,6 +10091,40 @@ func NewUndrainRunnerRequest(server string, runnerId string) (*http.Request, err
 	}
 
 	operationPath := fmt.Sprintf("/v1/runners/%s/undrain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUnlistRunnerRequest generates requests for UnlistRunner
+func NewUnlistRunnerRequest(server string, runnerId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/runners/%s/unlist", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13330,7 +13609,7 @@ type ClientWithResponsesInterface interface {
 	GetBrokerTrustedWithResponse(ctx context.Context, principalId PrincipalID, brokerName BrokerName, path TrustedPath, reqEditors ...RequestEditorFn) (*GetBrokerTrustedResponse, error)
 
 	// ListRunnersWithResponse request
-	ListRunnersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error)
+	ListRunnersWithResponse(ctx context.Context, params *ListRunnersParams, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error)
 
 	// ListJoinTokensWithResponse request
 	ListJoinTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListJoinTokensResponse, error)
@@ -13342,6 +13621,11 @@ type ClientWithResponsesInterface interface {
 
 	// RevokeJoinTokenWithResponse request
 	RevokeJoinTokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeJoinTokenResponse, error)
+
+	// UpdateJoinTokenWithBodyWithResponse request with any body
+	UpdateJoinTokenWithBodyWithResponse(ctx context.Context, tokenId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateJoinTokenResponse, error)
+
+	UpdateJoinTokenWithResponse(ctx context.Context, tokenId string, body UpdateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateJoinTokenResponse, error)
 
 	// GetRunnerSettingsWithResponse request
 	GetRunnerSettingsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetRunnerSettingsResponse, error)
@@ -13385,8 +13669,14 @@ type ClientWithResponsesInterface interface {
 
 	DrainRunnerWithResponse(ctx context.Context, runnerId string, body DrainRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error)
 
+	// RotateRunnerCAWithResponse request
+	RotateRunnerCAWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*RotateRunnerCAResponse, error)
+
 	// UndrainRunnerWithResponse request
 	UndrainRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UndrainRunnerResponse, error)
+
+	// UnlistRunnerWithResponse request
+	UnlistRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UnlistRunnerResponse, error)
 
 	// ListSandboxesWithResponse request
 	ListSandboxesWithResponse(ctx context.Context, params *ListSandboxesParams, reqEditors ...RequestEditorFn) (*ListSandboxesResponse, error)
@@ -15062,6 +15352,33 @@ func (r RevokeJoinTokenResponse) StatusCode() int {
 	return 0
 }
 
+type UpdateJoinTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JoinToken
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateJoinTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateJoinTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetRunnerSettingsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -15326,6 +15643,33 @@ func (r DrainRunnerResponse) StatusCode() int {
 	return 0
 }
 
+type RotateRunnerCAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON202      *Runner
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON503      *ControlDBUnavailable
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateRunnerCAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateRunnerCAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type UndrainRunnerResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -15346,6 +15690,32 @@ func (r UndrainRunnerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r UndrainRunnerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UnlistRunnerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Runner
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r UnlistRunnerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnlistRunnerResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15413,6 +15783,7 @@ type DeleteSandboxResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -15466,6 +15837,8 @@ type ListSandboxBrokersResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15492,6 +15865,7 @@ type DetachSandboxBrokerResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *StillBooting
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -15520,6 +15894,7 @@ type AttachSandboxBrokerResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *StillBooting
+	JSON410      *RunnerRevoked
 	JSON422      *Error
 	JSON503      *SandboxUnreachable
 }
@@ -15548,6 +15923,7 @@ type ServeSandboxBrokerResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -15576,6 +15952,7 @@ type RunCommandResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 	JSON504      *Error
 }
@@ -15603,6 +15980,8 @@ type GetSandboxConsoleResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15629,6 +16008,8 @@ type GetSandboxEgressResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15655,7 +16036,9 @@ type SetSandboxEgressResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *EgressNotChangeable
+	JSON410      *RunnerRevoked
 	JSON422      *EgressNotInstallable
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15684,7 +16067,9 @@ type KillConnectionsResponse struct {
 	JSON401 *Unauthorized
 	JSON403 *Forbidden
 	JSON404 *NotFound
+	JSON410 *RunnerRevoked
 	JSON422 *Error
+	JSON503 *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15713,6 +16098,8 @@ type ListEgressRulesResponse struct {
 	JSON401 *Unauthorized
 	JSON403 *Forbidden
 	JSON404 *NotFound
+	JSON410 *RunnerRevoked
+	JSON503 *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15739,7 +16126,9 @@ type DeleteEgressRuleResponse struct {
 	JSON403      *Forbidden
 	JSON404      *Error
 	JSON409      *EgressNotChangeable
+	JSON410      *RunnerRevoked
 	JSON422      *EgressNotInstallable
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15766,6 +16155,8 @@ type GetEgressRuleResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *Error
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15794,7 +16185,9 @@ type PutEgressRuleResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *EgressNotChangeable
+	JSON410      *RunnerRevoked
 	JSON422      *EgressNotInstallable
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15822,7 +16215,9 @@ type PauseEgressRuleResponse struct {
 	JSON403      *Forbidden
 	JSON404      *Error
 	JSON409      *EgressNotChangeable
+	JSON410      *RunnerRevoked
 	JSON422      *EgressNotInstallable
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15850,7 +16245,9 @@ type ResumeEgressRuleResponse struct {
 	JSON403      *Forbidden
 	JSON404      *Error
 	JSON409      *EgressNotChangeable
+	JSON410      *RunnerRevoked
 	JSON422      *EgressNotInstallable
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15877,6 +16274,8 @@ type StreamSandboxEventsResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Gapped
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -15903,6 +16302,7 @@ type DeleteFileResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -15930,6 +16330,7 @@ type ReadFileResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *StreamGapped
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -15957,6 +16358,7 @@ type WriteFileResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON413      *Error
 	JSON503      *SandboxUnreachable
 }
@@ -15986,6 +16388,7 @@ type ListDirResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16038,6 +16441,8 @@ type SetSandboxLabelsResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16064,6 +16469,7 @@ type GetSandboxMetricsResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16091,6 +16497,8 @@ type GetSandboxMetricsHistoryResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16118,6 +16526,7 @@ type PauseSandboxResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON500      *Error
 	JSON503      *SandboxUnreachable
 }
@@ -16147,6 +16556,7 @@ type ListProcessesResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16176,6 +16586,7 @@ type StartProcessResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16203,6 +16614,7 @@ type ReapProcessResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16231,6 +16643,7 @@ type GetProcessResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16258,6 +16671,7 @@ type SignalProcessResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *NotRunning
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16285,6 +16699,7 @@ type ReadProcessStderrResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *StreamGapped
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16312,6 +16727,7 @@ type WriteProcessStdinResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16339,6 +16755,7 @@ type ReadProcessStdoutResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *StreamGapped
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16367,6 +16784,7 @@ type ResumeSandboxResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON500      *Error
 	JSON503      *SandboxUnreachable
 	JSON507      *Error
@@ -16397,6 +16815,8 @@ type SealSandboxResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16424,6 +16844,7 @@ type StartSandboxResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 	JSON507      *Error
 }
@@ -16452,6 +16873,7 @@ type StopSandboxResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16480,6 +16902,7 @@ type ListSystemProcessesResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16508,6 +16931,7 @@ type ListSystemSocketsResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16535,6 +16959,7 @@ type OpenTerminalResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *SandboxUnreachable
 }
 
@@ -16564,6 +16989,8 @@ type ListTunnelsResponse struct {
 	JSON401 *Unauthorized
 	JSON403 *Forbidden
 	JSON404 *NotFound
+	JSON410 *RunnerRevoked
+	JSON503 *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16589,7 +17016,9 @@ type DeleteTunnelResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16616,6 +17045,8 @@ type GetTunnelResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16644,7 +17075,9 @@ type PutTunnelResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16671,6 +17104,7 @@ type GetTunnelActivityResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
 	JSON503      *Error
 }
 
@@ -16698,6 +17132,7 @@ type ListTunnelGuestsResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
 	JSON503      *Error
 }
 
@@ -16724,6 +17159,7 @@ type RevokeTunnelGuestResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *Error
+	JSON410      *RunnerRevoked
 	JSON503      *Error
 }
 
@@ -16751,7 +17187,9 @@ type PauseTunnelResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16778,7 +17216,9 @@ type ResumeTunnelResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16806,7 +17246,9 @@ type CreateTunnelTokenResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NoSuchTunnel
 	JSON409      *Error
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16833,7 +17275,9 @@ type RevokeTunnelTokenResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *Error
+	JSON410      *RunnerRevoked
 	JSON500      *TunnelNotKept
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16860,6 +17304,8 @@ type UnsealSandboxResponse struct {
 	JSON401      *Unauthorized
 	JSON403      *Forbidden
 	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16961,6 +17407,7 @@ type DeleteVolumeResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -16989,6 +17436,7 @@ type CloneVolumeResponse struct {
 	JSON404      *Error
 	JSON409      *Error
 	JSON500      *Error
+	JSON503      *RunnerUnreachable
 	JSON507      *Error
 }
 
@@ -17018,6 +17466,7 @@ type MoveVolumeResponse struct {
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON500      *Error
+	JSON503      *RunnerUnreachable
 }
 
 // Status returns HTTPResponse.Status
@@ -17045,7 +17494,7 @@ type TransferVolumeResponse struct {
 	JSON403      *Forbidden
 	JSON404      *Error
 	JSON409      *Error
-	JSON503      *Error
+	JSON503      *RunnerUnreachable
 	JSON507      *Error
 }
 
@@ -17625,8 +18074,8 @@ func (c *ClientWithResponses) GetBrokerTrustedWithResponse(ctx context.Context, 
 }
 
 // ListRunnersWithResponse request returning *ListRunnersResponse
-func (c *ClientWithResponses) ListRunnersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error) {
-	rsp, err := c.ListRunners(ctx, reqEditors...)
+func (c *ClientWithResponses) ListRunnersWithResponse(ctx context.Context, params *ListRunnersParams, reqEditors ...RequestEditorFn) (*ListRunnersResponse, error) {
+	rsp, err := c.ListRunners(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -17666,6 +18115,23 @@ func (c *ClientWithResponses) RevokeJoinTokenWithResponse(ctx context.Context, t
 		return nil, err
 	}
 	return ParseRevokeJoinTokenResponse(rsp)
+}
+
+// UpdateJoinTokenWithBodyWithResponse request with arbitrary body returning *UpdateJoinTokenResponse
+func (c *ClientWithResponses) UpdateJoinTokenWithBodyWithResponse(ctx context.Context, tokenId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateJoinTokenResponse, error) {
+	rsp, err := c.UpdateJoinTokenWithBody(ctx, tokenId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateJoinTokenResponse(rsp)
+}
+
+func (c *ClientWithResponses) UpdateJoinTokenWithResponse(ctx context.Context, tokenId string, body UpdateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateJoinTokenResponse, error) {
+	rsp, err := c.UpdateJoinToken(ctx, tokenId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateJoinTokenResponse(rsp)
 }
 
 // GetRunnerSettingsWithResponse request returning *GetRunnerSettingsResponse
@@ -17806,6 +18272,15 @@ func (c *ClientWithResponses) DrainRunnerWithResponse(ctx context.Context, runne
 	return ParseDrainRunnerResponse(rsp)
 }
 
+// RotateRunnerCAWithResponse request returning *RotateRunnerCAResponse
+func (c *ClientWithResponses) RotateRunnerCAWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*RotateRunnerCAResponse, error) {
+	rsp, err := c.RotateRunnerCA(ctx, runnerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateRunnerCAResponse(rsp)
+}
+
 // UndrainRunnerWithResponse request returning *UndrainRunnerResponse
 func (c *ClientWithResponses) UndrainRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UndrainRunnerResponse, error) {
 	rsp, err := c.UndrainRunner(ctx, runnerId, reqEditors...)
@@ -17813,6 +18288,15 @@ func (c *ClientWithResponses) UndrainRunnerWithResponse(ctx context.Context, run
 		return nil, err
 	}
 	return ParseUndrainRunnerResponse(rsp)
+}
+
+// UnlistRunnerWithResponse request returning *UnlistRunnerResponse
+func (c *ClientWithResponses) UnlistRunnerWithResponse(ctx context.Context, runnerId string, reqEditors ...RequestEditorFn) (*UnlistRunnerResponse, error) {
+	rsp, err := c.UnlistRunner(ctx, runnerId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnlistRunnerResponse(rsp)
 }
 
 // ListSandboxesWithResponse request returning *ListSandboxesResponse
@@ -21119,6 +21603,67 @@ func ParseRevokeJoinTokenResponse(rsp *http.Response) (*RevokeJoinTokenResponse,
 	return response, nil
 }
 
+// ParseUpdateJoinTokenResponse parses an HTTP response from a UpdateJoinTokenWithResponse call
+func ParseUpdateJoinTokenResponse(rsp *http.Response) (*UpdateJoinTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateJoinTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JoinToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetRunnerSettingsResponse parses an HTTP response from a GetRunnerSettingsWithResponse call
 func ParseGetRunnerSettingsResponse(rsp *http.Response) (*GetRunnerSettingsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -21687,6 +22232,67 @@ func ParseDrainRunnerResponse(rsp *http.Response) (*DrainRunnerResponse, error) 
 	return response, nil
 }
 
+// ParseRotateRunnerCAResponse parses an HTTP response from a RotateRunnerCAWithResponse call
+func ParseRotateRunnerCAResponse(rsp *http.Response) (*RotateRunnerCAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateRunnerCAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ControlDBUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseUndrainRunnerResponse parses an HTTP response from a UndrainRunnerWithResponse call
 func ParseUndrainRunnerResponse(rsp *http.Response) (*UndrainRunnerResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -21707,6 +22313,60 @@ func ParseUndrainRunnerResponse(rsp *http.Response) (*UndrainRunnerResponse, err
 			return nil, err
 		}
 		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnlistRunnerResponse parses an HTTP response from a UnlistRunnerWithResponse call
+func ParseUnlistRunnerResponse(rsp *http.Response) (*UnlistRunnerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnlistRunnerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Runner
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -21905,6 +22565,13 @@ func ParseDeleteSandboxResponse(rsp *http.Response) (*DeleteSandboxResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22020,6 +22687,20 @@ func ParseListSandboxBrokersResponse(rsp *http.Response) (*ListSandboxBrokersRes
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -22073,6 +22754,13 @@ func ParseDetachSandboxBrokerResponse(rsp *http.Response) (*DetachSandboxBrokerR
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -22142,6 +22830,13 @@ func ParseAttachSandboxBrokerResponse(rsp *http.Response) (*AttachSandboxBrokerR
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22209,6 +22904,13 @@ func ParseServeSandboxBrokerResponse(rsp *http.Response) (*ServeSandboxBrokerRes
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -22278,6 +22980,13 @@ func ParseRunCommandResponse(rsp *http.Response) (*RunCommandResponse, error) {
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22339,6 +23048,20 @@ func ParseGetSandboxConsoleResponse(rsp *http.Response) (*GetSandboxConsoleRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -22392,6 +23115,20 @@ func ParseGetSandboxEgressResponse(rsp *http.Response) (*GetSandboxEgressRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22447,12 +23184,26 @@ func ParseSetSandboxEgressResponse(rsp *http.Response) (*SetSandboxEgressRespons
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest EgressNotInstallable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22510,12 +23261,26 @@ func ParseKillConnectionsResponse(rsp *http.Response) (*KillConnectionsResponse,
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22573,6 +23338,20 @@ func ParseListEgressRulesResponse(rsp *http.Response) (*ListEgressRulesResponse,
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -22627,12 +23406,26 @@ func ParseDeleteEgressRuleResponse(rsp *http.Response) (*DeleteEgressRuleRespons
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest EgressNotInstallable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22687,6 +23480,20 @@ func ParseGetEgressRuleResponse(rsp *http.Response) (*GetEgressRuleResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22756,12 +23563,26 @@ func ParsePutEgressRuleResponse(rsp *http.Response) (*PutEgressRuleResponse, err
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest EgressNotInstallable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22824,12 +23645,26 @@ func ParsePauseEgressRuleResponse(rsp *http.Response) (*PauseEgressRuleResponse,
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest EgressNotInstallable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22892,12 +23727,26 @@ func ParseResumeEgressRuleResponse(rsp *http.Response) (*ResumeEgressRuleRespons
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest EgressNotInstallable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -22953,6 +23802,20 @@ func ParseStreamSandboxEventsResponse(rsp *http.Response) (*StreamSandboxEventsR
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -23006,6 +23869,13 @@ func ParseDeleteFileResponse(rsp *http.Response) (*DeleteFileResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -23068,6 +23938,13 @@ func ParseReadFileResponse(rsp *http.Response) (*ReadFileResponse, error) {
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23128,6 +24005,13 @@ func ParseWriteFileResponse(rsp *http.Response) (*WriteFileResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
 		var dest Error
@@ -23203,6 +24087,13 @@ func ParseListDirResponse(rsp *http.Response) (*ListDirResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -23312,6 +24203,20 @@ func ParseSetSandboxLabelsResponse(rsp *http.Response) (*SetSandboxLabelsRespons
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -23365,6 +24270,13 @@ func ParseGetSandboxMetricsResponse(rsp *http.Response) (*GetSandboxMetricsRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -23427,6 +24339,20 @@ func ParseGetSandboxMetricsHistoryResponse(rsp *http.Response) (*GetSandboxMetri
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -23487,6 +24413,13 @@ func ParsePauseSandboxResponse(rsp *http.Response) (*PauseSandboxResponse, error
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -23563,6 +24496,13 @@ func ParseListProcessesResponse(rsp *http.Response) (*ListProcessesResponse, err
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23638,6 +24578,13 @@ func ParseStartProcessResponse(rsp *http.Response) (*StartProcessResponse, error
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23698,6 +24645,13 @@ func ParseReapProcessResponse(rsp *http.Response) (*ReapProcessResponse, error) 
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -23767,6 +24721,13 @@ func ParseGetProcessResponse(rsp *http.Response) (*GetProcessResponse, error) {
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23827,6 +24788,13 @@ func ParseSignalProcessResponse(rsp *http.Response) (*SignalProcessResponse, err
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -23889,6 +24857,13 @@ func ParseReadProcessStderrResponse(rsp *http.Response) (*ReadProcessStderrRespo
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23950,6 +24925,13 @@ func ParseWriteProcessStdinResponse(rsp *http.Response) (*WriteProcessStdinRespo
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -24010,6 +24992,13 @@ func ParseReadProcessStdoutResponse(rsp *http.Response) (*ReadProcessStdoutRespo
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -24078,6 +25067,13 @@ func ParseResumeSandboxResponse(rsp *http.Response) (*ResumeSandboxResponse, err
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest Error
@@ -24161,6 +25157,20 @@ func ParseSealSandboxResponse(rsp *http.Response) (*SealSandboxResponse, error) 
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -24221,6 +25231,13 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -24290,6 +25307,13 @@ func ParseStopSandboxResponse(rsp *http.Response) (*StopSandboxResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -24357,6 +25381,13 @@ func ParseListSystemProcessesResponse(rsp *http.Response) (*ListSystemProcessesR
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -24426,6 +25457,13 @@ func ParseListSystemSocketsResponse(rsp *http.Response) (*ListSystemSocketsRespo
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -24486,6 +25524,13 @@ func ParseOpenTerminalResponse(rsp *http.Response) (*OpenTerminalResponse, error
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable
@@ -24550,6 +25595,20 @@ func ParseListTunnelsResponse(rsp *http.Response) (*ListTunnelsResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -24597,12 +25656,26 @@ func ParseDeleteTunnelResponse(rsp *http.Response) (*DeleteTunnelResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -24657,6 +25730,20 @@ func ParseGetTunnelResponse(rsp *http.Response) (*GetTunnelResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -24726,12 +25813,26 @@ func ParsePutTunnelResponse(rsp *http.Response) (*PutTunnelResponse, error) {
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -24786,6 +25887,13 @@ func ParseGetTunnelActivityResponse(rsp *http.Response) (*GetTunnelActivityRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error
@@ -24848,6 +25956,13 @@ func ParseListTunnelGuestsResponse(rsp *http.Response) (*ListTunnelGuestsRespons
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -24901,6 +26016,13 @@ func ParseRevokeTunnelGuestResponse(rsp *http.Response) (*RevokeTunnelGuestRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error
@@ -24963,12 +26085,26 @@ func ParsePauseTunnelResponse(rsp *http.Response) (*PauseTunnelResponse, error) 
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -25024,12 +26160,26 @@ func ParseResumeTunnelResponse(rsp *http.Response) (*ResumeTunnelResponse, error
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -25092,12 +26242,26 @@ func ParseCreateTunnelTokenResponse(rsp *http.Response) (*CreateTunnelTokenRespo
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -25153,12 +26317,26 @@ func ParseRevokeTunnelTokenResponse(rsp *http.Response) (*RevokeTunnelTokenRespo
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest TunnelNotKept
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -25213,6 +26391,20 @@ func ParseUnsealSandboxResponse(rsp *http.Response) (*UnsealSandboxResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -25409,6 +26601,13 @@ func ParseDeleteVolumeResponse(rsp *http.Response) (*DeleteVolumeResponse, error
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -25476,6 +26675,13 @@ func ParseCloneVolumeResponse(rsp *http.Response) (*CloneVolumeResponse, error) 
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
 		var dest Error
@@ -25552,6 +26758,13 @@ func ParseMoveVolumeResponse(rsp *http.Response) (*MoveVolumeResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest RunnerUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -25614,7 +26827,7 @@ func ParseTransferVolumeResponse(rsp *http.Response) (*TransferVolumeResponse, e
 		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Error
+		var dest RunnerUnreachable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -25801,7 +27014,7 @@ type ServerInterface interface {
 	GetBrokerTrusted(w http.ResponseWriter, r *http.Request, principalId PrincipalID, brokerName BrokerName, path TrustedPath)
 	// The runners of this server
 	// (GET /v1/runners)
-	ListRunners(w http.ResponseWriter, r *http.Request)
+	ListRunners(w http.ResponseWriter, r *http.Request, params ListRunnersParams)
 	// The join tokens minted here
 	// (GET /v1/runners/join-tokens)
 	ListJoinTokens(w http.ResponseWriter, r *http.Request)
@@ -25811,6 +27024,9 @@ type ServerInterface interface {
 	// Revoke a join token
 	// (DELETE /v1/runners/join-tokens/{tokenId})
 	RevokeJoinToken(w http.ResponseWriter, r *http.Request, tokenId string)
+	// Change where a join token may be used from
+	// (PATCH /v1/runners/join-tokens/{tokenId})
+	UpdateJoinToken(w http.ResponseWriter, r *http.Request, tokenId string)
 	// The workspace's settings for its runners
 	// (GET /v1/runners/settings)
 	GetRunnerSettings(w http.ResponseWriter, r *http.Request)
@@ -25823,7 +27039,7 @@ type ServerInterface interface {
 	// One runner
 	// (GET /v1/runners/{runnerId})
 	GetRunner(w http.ResponseWriter, r *http.Request, runnerId string)
-	// Change where a runner may connect from
+	// Rename a runner, or change where it may connect from
 	// (PATCH /v1/runners/{runnerId})
 	UpdateRunner(w http.ResponseWriter, r *http.Request, runnerId string)
 	// Resolve a held runner by allowing the new address
@@ -25841,9 +27057,15 @@ type ServerInterface interface {
 	// Place nothing more on a runner
 	// (POST /v1/runners/{runnerId}/drain)
 	DrainRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Ask an approved runner to rotate its sandbox CA
+	// (POST /v1/runners/{runnerId}/rotate-ca)
+	RotateRunnerCA(w http.ResponseWriter, r *http.Request, runnerId string)
 	// Cancel a runner's drain
 	// (POST /v1/runners/{runnerId}/undrain)
 	UndrainRunner(w http.ResponseWriter, r *http.Request, runnerId string)
+	// Remove a revoked runner from the list
+	// (POST /v1/runners/{runnerId}/unlist)
+	UnlistRunner(w http.ResponseWriter, r *http.Request, runnerId string)
 	// Every sandbox on this host
 	// (GET /v1/sandboxes)
 	ListSandboxes(w http.ResponseWriter, r *http.Request, params ListSandboxesParams)
@@ -27754,6 +28976,8 @@ func (siw *ServerInterfaceWrapper) GetBrokerTrusted(w http.ResponseWriter, r *ht
 // ListRunners operation middleware
 func (siw *ServerInterfaceWrapper) ListRunners(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
@@ -27762,8 +28986,19 @@ func (siw *ServerInterfaceWrapper) ListRunners(w http.ResponseWriter, r *http.Re
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListRunnersParams
+
+	// ------------- Optional query parameter "unlisted" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "unlisted", r.URL.Query(), &params.Unlisted)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "unlisted", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListRunners(w, r)
+		siw.Handler.ListRunners(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -27841,6 +29076,39 @@ func (siw *ServerInterfaceWrapper) RevokeJoinToken(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeJoinToken(w, r, tokenId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateJoinToken operation middleware
+func (siw *ServerInterfaceWrapper) UpdateJoinToken(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "tokenId" -------------
+	var tokenId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tokenId", r.PathValue("tokenId"), &tokenId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tokenId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateJoinToken(w, r, tokenId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28176,6 +29444,39 @@ func (siw *ServerInterfaceWrapper) DrainRunner(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// RotateRunnerCA operation middleware
+func (siw *ServerInterfaceWrapper) RotateRunnerCA(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateRunnerCA(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // UndrainRunner operation middleware
 func (siw *ServerInterfaceWrapper) UndrainRunner(w http.ResponseWriter, r *http.Request) {
 
@@ -28200,6 +29501,39 @@ func (siw *ServerInterfaceWrapper) UndrainRunner(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UndrainRunner(w, r, runnerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnlistRunner operation middleware
+func (siw *ServerInterfaceWrapper) UnlistRunner(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "runnerId" -------------
+	var runnerId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnlistRunner(w, r, runnerId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -31095,6 +32429,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/runners/join-tokens", wrapper.ListJoinTokens)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/join-tokens", wrapper.CreateJoinToken)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/join-tokens/{tokenId}", wrapper.RevokeJoinToken)
+	m.HandleFunc("PATCH "+options.BaseURL+"/v1/runners/join-tokens/{tokenId}", wrapper.UpdateJoinToken)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/runners/settings", wrapper.GetRunnerSettings)
 	m.HandleFunc("PATCH "+options.BaseURL+"/v1/runners/settings", wrapper.UpdateRunnerSettings)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/{runnerId}", wrapper.RevokeRunner)
@@ -31105,7 +32440,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/{runnerId}/brokers/{brokerName}/credential", wrapper.DeleteRunnerBrokerCredential)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/runners/{runnerId}/brokers/{brokerName}/credential", wrapper.SetRunnerBrokerCredential)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/drain", wrapper.DrainRunner)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/rotate-ca", wrapper.RotateRunnerCA)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/undrain", wrapper.UndrainRunner)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/unlist", wrapper.UnlistRunner)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes", wrapper.ListSandboxes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes", wrapper.CreateSandbox)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}", wrapper.DeleteSandbox)

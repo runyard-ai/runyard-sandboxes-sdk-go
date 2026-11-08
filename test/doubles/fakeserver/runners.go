@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,9 @@ import (
 // credential of one set from the console is kept as the runner reports it
 // once it has written it: its kind and when it was set. The box is looked at
 // for its shape and kept nowhere, since nothing in the fake could open it,
-// and no runner is held to being approved, since none could be.
+// and no runner is held to being approved, since none could be: so a
+// rotation of its sandbox CA is asked of any runner not revoked, and is
+// asked, since no runner here makes one.
 
 // Provide is the runner hostID reporting that it provides brokers, and takes
 // each one's credential from its server, as a runner whose brokers.provides
@@ -227,6 +230,28 @@ func (d *Server) listJoinTokens(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, page)
 }
 
+func (d *Server) updateJoinToken(w http.ResponseWriter, r *http.Request) {
+	var change genv1.JoinTokenUpdate
+	if err := strictly(r, &change); err != nil || change.AllowedSources == nil {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "say where it may be used from: allowedSources ([] for anywhere)")
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	i := slices.IndexFunc(d.joinTokens, func(t *joinToken) bool { return t.record.Id == r.PathValue("tokenId") })
+	if i < 0 {
+		refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no join token "+r.PathValue("tokenId")+" was minted here")
+		return
+	}
+	t := &d.joinTokens[i].record
+	if t.Revoked || !d.now().Before(t.ExpiresAt) || t.Uses >= t.MaxUses {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "join token "+t.Id+" is revoked, expired or used up, and enrols nothing more")
+		return
+	}
+	t.AllowedSources = slices.Clone(change.AllowedSources)
+	reply(w, http.StatusOK, *t)
+}
+
 func (d *Server) revokeJoinToken(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -240,14 +265,64 @@ func (d *Server) revokeJoinToken(w http.ResponseWriter, r *http.Request) {
 	refuse(w, http.StatusNotFound, genv1.ErrorCodeNotFound, "no join token "+r.PathValue("tokenId")+" was minted here")
 }
 
-func (d *Server) listRunners(w http.ResponseWriter, _ *http.Request) {
+func (d *Server) listRunners(w http.ResponseWriter, r *http.Request) {
+	unlisted := false
+	if asked := r.URL.Query().Get("unlisted"); asked != "" {
+		var err error
+		if unlisted, err = strconv.ParseBool(asked); err != nil {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "unlisted is true or false, not "+asked)
+			return
+		}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	page := genv1.RunnerPage{Items: []genv1.Runner{}}
 	for _, id := range d.runnerOrder {
-		page.Items = append(page.Items, *d.runners[id])
+		if runner := d.runners[id]; runner.UnlistedAt == nil || unlisted {
+			page.Items = append(page.Items, *runner)
+		}
 	}
 	reply(w, http.StatusOK, page)
+}
+
+// unlistRunner removes a revoked runner from the list, once: as the
+// server, one removed already is answered as it is.
+func (d *Server) unlistRunner(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	runner := d.runnerOf(w, r)
+	if runner == nil {
+		return
+	}
+	if runner.State != genv1.RunnerStateRunnerRevoked {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" is not revoked: only a revoked runner is removed from the list")
+		return
+	}
+	if runner.UnlistedAt == nil {
+		now, by := d.now().UTC(), openapi_types.Email("admin@example.com")
+		runner.UnlistedAt, runner.UnlistedBy = &now, &by
+	}
+	reply(w, http.StatusOK, *runner)
+}
+
+// rotateRunnerCA asks a runner to rotate its sandbox CA: since when, kept
+// as it was asked first while it is asked.
+func (d *Server) rotateRunnerCA(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	runner := d.runnerOf(w, r)
+	if runner == nil {
+		return
+	}
+	if runner.State == genv1.RunnerStateRunnerRevoked {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" is revoked, and has no CA in the bundle to rotate from")
+		return
+	}
+	if runner.CaRotationAskedAt == nil {
+		now := d.now().UTC()
+		runner.CaRotationAskedAt = &now
+	}
+	reply(w, http.StatusAccepted, *runner)
 }
 
 // runnerOf answers the runner the path names, under d.mu, or says there is
@@ -271,8 +346,8 @@ func (d *Server) getRunner(w http.ResponseWriter, r *http.Request) {
 
 func (d *Server) updateRunner(w http.ResponseWriter, r *http.Request) {
 	var change genv1.RunnerUpdate
-	if err := strictly(r, &change); err != nil || change.AllowedSources == nil {
-		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "allowedSources is what it may connect from, and [] for anywhere")
+	if err := strictly(r, &change); err != nil || (change.AllowedSources == nil && change.Name == nil) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "say what to change: name, allowedSources ([] for anywhere), or both")
 		return
 	}
 	d.mu.Lock()
@@ -285,7 +360,16 @@ func (d *Server) updateRunner(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "runner "+runner.Id+" was revoked")
 		return
 	}
-	runner.AllowedSources = slices.Clone(change.AllowedSources)
+	if name := change.Name; name != nil && *name != runner.Name {
+		if d.nameTaken(*name, "") {
+			refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "a runner is called "+*name+" already, or a join token not yet used will call one that")
+			return
+		}
+		runner.Name = *name
+	}
+	if change.AllowedSources != nil {
+		runner.AllowedSources = slices.Clone(*change.AllowedSources)
+	}
 	reply(w, http.StatusOK, *runner)
 }
 

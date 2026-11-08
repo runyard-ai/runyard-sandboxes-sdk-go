@@ -48,7 +48,7 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 	if named := d.Join(t, held.Secret); named.Name != "edge-02" {
 		t.Errorf("the token holding edge-02 enrolled %q", named.Name)
 	}
-	listed, err := client.ListRunnersWithResponse(ctx)
+	listed, err := client.ListRunnersWithResponse(ctx, nil)
 	if err != nil || listed.JSON200 == nil || len(listed.JSON200.Items) != 5 || listed.JSON200.Items[0].Name != "factory-03" {
 		t.Fatalf("listed = %v %s", err, listed.Body)
 	}
@@ -61,9 +61,22 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 	if err != nil || got.JSON200 == nil || got.JSON200.Name != "factory-03" {
 		t.Fatalf("r-01 = %v %s", err, got.Body)
 	}
-	moved, err := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: []string{}})
+	moved, err := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: &[]string{}})
 	if err != nil || moved.JSON200 == nil || len(moved.JSON200.AllowedSources) != 0 {
 		t.Fatalf("anywhere = %v %s", err, moved.Body)
+	}
+	if taken, _ := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{Name: new("edge-02")}); taken.StatusCode() != http.StatusConflict {
+		t.Errorf("renamed to another runner's name = %d %s", taken.StatusCode(), taken.Body)
+	}
+	renamed, err := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{Name: new("factory-04")})
+	if err != nil || renamed.JSON200 == nil || renamed.JSON200.Name != "factory-04" || len(renamed.JSON200.AllowedSources) != 0 {
+		t.Fatalf("renamed = %v %s", err, renamed.Body)
+	}
+	if same, _ := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{Name: new("factory-04")}); same.JSON200 == nil {
+		t.Errorf("renamed to its own name = %d %s", same.StatusCode(), same.Body)
+	}
+	if nothing, _ := client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{}); nothing.StatusCode() != http.StatusBadRequest {
+		t.Errorf("a change of nothing = %d %s", nothing.StatusCode(), nothing.Body)
 	}
 	drained, err := client.DrainRunnerWithResponse(ctx, "r-01", genv1.RunnerDrainRequest{RevokeWhenEmpty: new(true)})
 	if err != nil || drained.JSON202 == nil || drained.JSON202.Kind != genv1.OperationDrain || !drained.JSON202.RevokeWhenEmpty {
@@ -91,7 +104,7 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 
 	// Rejoined, it is itself, pending again.
 	rejoin := mint(genv1.JoinTokenRequest{HostID: new("r-01")})
-	if back := d.Join(t, rejoin.Secret); back.Id != "r-01" || back.Name != "factory-03" || back.State != genv1.RunnerStateRunnerPending {
+	if back := d.Join(t, rejoin.Secret); back.Id != "r-01" || back.Name != "factory-04" || back.State != genv1.RunnerStateRunnerPending {
 		t.Errorf("rejoined as %+v", back)
 	}
 	revoked, err := client.RevokeRunnerWithResponse(ctx, "r-01")
@@ -106,8 +119,9 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 	}
 	for name, status := range map[string]int{
 		"drain":  statusOf(client.DrainRunnerWithResponse(ctx, "r-01", genv1.RunnerDrainRequest{})),
-		"update": statusOf(client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: []string{}})),
+		"update": statusOf(client.UpdateRunnerWithResponse(ctx, "r-01", genv1.RunnerUpdate{AllowedSources: &[]string{}})),
 		"rejoin": statusOf(client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{HostID: new("r-01")})),
+		"rotate": statusOf(client.RotateRunnerCAWithResponse(ctx, "r-01")),
 	} {
 		if status != http.StatusConflict {
 			t.Errorf("%s a revoked runner = %d", name, status)
@@ -115,6 +129,45 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 	}
 	// Its name is free again.
 	mint(genv1.JoinTokenRequest{RunnerName: new("factory-03")})
+
+	// A rotation is asked of a runner not revoked, once.
+	asked, err := client.RotateRunnerCAWithResponse(ctx, "r-02")
+	if err != nil || asked.JSON202 == nil || asked.JSON202.CaRotationAskedAt == nil {
+		t.Fatalf("rotate = %v %s", err, asked.Body)
+	}
+	if again, _ := client.RotateRunnerCAWithResponse(ctx, "r-02"); again.JSON202 == nil || !again.JSON202.CaRotationAskedAt.Equal(*asked.JSON202.CaRotationAskedAt) {
+		t.Errorf("rotated again = %s", again.Body)
+	}
+	if got := statusOf(client.RotateRunnerCAWithResponse(ctx, "r-99")); got != http.StatusNotFound {
+		t.Errorf("rotating nobody = %d", got)
+	}
+
+	// Removed from the list, once, it is listed only when asked for.
+	if got := statusOf(client.UnlistRunnerWithResponse(ctx, "r-02")); got != http.StatusConflict {
+		t.Errorf("unlisting a runner not revoked = %d", got)
+	}
+	unlisted, err := client.UnlistRunnerWithResponse(ctx, "r-01")
+	if err != nil || unlisted.JSON200 == nil || unlisted.JSON200.UnlistedAt == nil || *unlisted.JSON200.UnlistedBy != "admin@example.com" {
+		t.Fatalf("unlist = %v %s", err, unlisted.Body)
+	}
+	if again, _ := client.UnlistRunnerWithResponse(ctx, "r-01"); again.JSON200 == nil || !again.JSON200.UnlistedAt.Equal(*unlisted.JSON200.UnlistedAt) {
+		t.Errorf("unlisted again = %s", again.Body)
+	}
+	if listed, _ := client.ListRunnersWithResponse(ctx, nil); listed.JSON200 == nil || len(listed.JSON200.Items) != 4 || listed.JSON200.Items[0].Id == "r-01" {
+		t.Errorf("listed = %s, without r-01", listed.Body)
+	}
+	if all, _ := client.ListRunnersWithResponse(ctx, &genv1.ListRunnersParams{Unlisted: new(true)}); all.JSON200 == nil || len(all.JSON200.Items) != 5 || all.JSON200.Items[0].UnlistedAt == nil {
+		t.Errorf("listed with the unlisted = %s", all.Body)
+	}
+	if got := statusOf(client.GetRunnerWithResponse(ctx, "r-01")); got != http.StatusOK {
+		t.Errorf("getting a runner unlisted = %d", got)
+	}
+	if got := statusOf(client.ListRunnersWithResponse(ctx, nil, func(_ context.Context, r *http.Request) error {
+		r.URL.RawQuery = "unlisted=sometimes"
+		return nil
+	})); got != http.StatusBadRequest {
+		t.Errorf("unlisted=sometimes = %d", got)
+	}
 }
 
 func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
@@ -147,11 +200,28 @@ func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
 	if got := statusOf(client.CreateJoinTokenWithBodyWithResponse(ctx, "application/json", strings.NewReader(`{"uses":1}`))); got != 400 {
 		t.Errorf("a field the request does not have = %d", got)
 	}
+	for name, c := range map[string]struct {
+		id   string
+		body string
+		want int
+	}{
+		"a token never minted": {"missing", `{"allowedSources":[]}`, 404},
+		"no sources said":      {taken.JSON201.Id, `{}`, 400},
+		"a field it has not":   {taken.JSON201.Id, `{"allowedSources":[],"labels":{}}`, 400},
+		"anywhere":             {taken.JSON201.Id, `{"allowedSources":[]}`, 200},
+	} {
+		if got := statusOf(client.UpdateJoinTokenWithBodyWithResponse(ctx, c.id, "application/json", strings.NewReader(c.body))); got != c.want {
+			t.Errorf("updating, %s = %d, want %d", name, got, c.want)
+		}
+	}
 	if got := statusOf(client.RevokeJoinTokenWithResponse(ctx, "missing")); got != 404 {
 		t.Errorf("revoking a token never minted = %d", got)
 	}
 	if got := statusOf(client.RevokeJoinTokenWithResponse(ctx, taken.JSON201.Id)); got != 204 {
 		t.Errorf("revoking = %d", got)
+	}
+	if got := statusOf(client.UpdateJoinTokenWithResponse(ctx, taken.JSON201.Id, genv1.JoinTokenUpdate{AllowedSources: []string{}})); got != 409 {
+		t.Errorf("updating a revoked token = %d", got)
 	}
 	// Revoked, its name is nobody's.
 	if got := statusOf(client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})); got != 201 {
@@ -159,10 +229,11 @@ func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
 	}
 	for name, status := range map[string]int{
 		"get":      statusOf(client.GetRunnerWithResponse(ctx, "r-99")),
-		"update":   statusOf(client.UpdateRunnerWithResponse(ctx, "r-99", genv1.RunnerUpdate{AllowedSources: []string{}})),
+		"update":   statusOf(client.UpdateRunnerWithResponse(ctx, "r-99", genv1.RunnerUpdate{AllowedSources: &[]string{}})),
 		"drain":    statusOf(client.DrainRunnerWithResponse(ctx, "r-99", genv1.RunnerDrainRequest{})),
 		"undrain":  statusOf(client.UndrainRunnerWithResponse(ctx, "r-99")),
 		"revoke":   statusOf(client.RevokeRunnerWithResponse(ctx, "r-99")),
+		"unlist":   statusOf(client.UnlistRunnerWithResponse(ctx, "r-99")),
 		"allow":    statusOf(client.AllowRunnerAddressWithResponse(ctx, "r-99", genv1.AllowAddress{Address: "198.51.100.7"})),
 		"approve":  statusOf(client.ApproveRunnerWithResponse(ctx, "r-99", genv1.RunnerApproval{})),
 		"approver": statusOf(client.ListApproversWithResponse(ctx)),

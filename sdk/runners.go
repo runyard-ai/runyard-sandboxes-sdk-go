@@ -16,9 +16,24 @@ import (
 // contract's Runners section.
 
 // Runners is every runner, in the order they first joined: revoked ones
-// too, which keep their ids.
+// too, which keep their ids, until an admin removes them from the list
+// (UnlistRunner).
 func (c *Client) Runners(ctx context.Context) ([]genv1.Runner, error) {
-	res, err := c.api.ListRunnersWithResponse(ctx)
+	return c.runners(ctx, false)
+}
+
+// AllRunners is every runner, in the order they first joined, those removed
+// from the list too: they say UnlistedAt and UnlistedBy.
+func (c *Client) AllRunners(ctx context.Context) ([]genv1.Runner, error) {
+	return c.runners(ctx, true)
+}
+
+func (c *Client) runners(ctx context.Context, unlisted bool) ([]genv1.Runner, error) {
+	params := &genv1.ListRunnersParams{}
+	if unlisted {
+		params.Unlisted = &unlisted
+	}
+	res, err := c.api.ListRunnersWithResponse(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +59,19 @@ func (c *Client) SetRunnerSources(ctx context.Context, id string, sources []stri
 	if sources == nil {
 		sources = []string{}
 	}
-	res, err := c.api.UpdateRunnerWithResponse(ctx, id, genv1.RunnerUpdate{AllowedSources: sources})
+	return c.UpdateRunner(ctx, id, genv1.RunnerUpdate{AllowedSources: &sources})
+}
+
+// RenameRunner calls a runner name from now on: refused as a conflict when a
+// runner not revoked, or a join token still usable, holds it, or the runner
+// was revoked. Its id stays.
+func (c *Client) RenameRunner(ctx context.Context, id, name string) (genv1.Runner, error) {
+	return c.UpdateRunner(ctx, id, genv1.RunnerUpdate{Name: &name})
+}
+
+// UpdateRunner changes what change says of a runner, and leaves the rest.
+func (c *Client) UpdateRunner(ctx context.Context, id string, change genv1.RunnerUpdate) (genv1.Runner, error) {
+	res, err := c.api.UpdateRunnerWithResponse(ctx, id, change)
 	if err != nil {
 		return genv1.Runner{}, err
 	}
@@ -93,6 +120,31 @@ func (c *Client) RevokeRunner(ctx context.Context, id string) (genv1.RunnerOpera
 	return answered(res.JSON202, res.HTTPResponse, res.Body)
 }
 
+// UnlistRunner removes a revoked runner from the list: Runners leaves it
+// out from then on, and Runner, AllRunners and its records still have it.
+// One not revoked is refused as a conflict; one removed already is answered
+// as it is.
+func (c *Client) UnlistRunner(ctx context.Context, id string) (genv1.Runner, error) {
+	res, err := c.api.UnlistRunnerWithResponse(ctx, id)
+	if err != nil {
+		return genv1.Runner{}, err
+	}
+	return answered(res.JSON200, res.HTTPResponse, res.Body)
+}
+
+// RotateRunnerCA asks an approved runner to rotate its sandbox CA, which
+// needs nobody's passkey: CaRotationAskedAt says since when, until the new
+// CA is in the bundle, and CaRotatedAt when it was. One pending or revoked
+// is refused as a conflict; asking again while one is under way changes
+// nothing.
+func (c *Client) RotateRunnerCA(ctx context.Context, id string) (genv1.Runner, error) {
+	res, err := c.api.RotateRunnerCAWithResponse(ctx, id)
+	if err != nil {
+		return genv1.Runner{}, err
+	}
+	return answered(res.JSON202, res.HTTPResponse, res.Body)
+}
+
 // ApproveRunner puts a pending runner in the bundle every broker trusts,
 // with an approver's passkey assertion over the statement the contract
 // spells out.
@@ -127,6 +179,20 @@ func (c *Client) JoinTokens(ctx context.Context) ([]genv1.JoinToken, error) {
 		return nil, refused(res.HTTPResponse, res.Body)
 	}
 	return res.JSON200.Items, nil
+}
+
+// SetJoinTokenSources replaces where a join token may be used from, none
+// being anywhere, for every enrolment from now on. A token revoked, expired
+// or used up is refused with `conflict`.
+func (c *Client) SetJoinTokenSources(ctx context.Context, id string, sources []string) (genv1.JoinToken, error) {
+	if sources == nil {
+		sources = []string{}
+	}
+	res, err := c.api.UpdateJoinTokenWithResponse(ctx, id, genv1.JoinTokenUpdate{AllowedSources: sources})
+	if err != nil {
+		return genv1.JoinToken{}, err
+	}
+	return answered(res.JSON200, res.HTTPResponse, res.Body)
 }
 
 // RevokeJoinToken makes a join token enrol nothing more. What it enrolled

@@ -2259,6 +2259,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/volumes/{volumeName}/principal:
     parameters:
       - $ref: "#/components/parameters/VolumeName"
@@ -2311,6 +2313,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/volumes/{volumeName}/clone:
     parameters:
       - $ref: "#/components/parameters/VolumeName"
@@ -2422,6 +2426,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/volumes/{volumeName}/transfer:
     parameters:
       - $ref: "#/components/parameters/VolumeName"
@@ -2452,6 +2458,13 @@ paths:
         volume_transferring`. A target with no room for the volume ends the
         transfer, which `GET /v1/volumes` then no longer says, and the
         server's log says why.
+
+        **Asked while the runner holding it is away**, it is planned all the
+        same, from what that runner last reported: the volume, and the
+        sandbox holding it, which must have been stopped. It is listed
+        `transferring` with `waitingFor: runner`, and goes on once the
+        runner is back. The target must be answering. A runner revoked
+        meanwhile ends it: what it held is `lost`.
       requestBody:
         required: true
         content:
@@ -2486,10 +2499,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "503":
-          description: The runner holding it, or the target, is not answering.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+          $ref: "#/components/responses/RunnerUnreachable"
         "507":
           description: >-
             `capacity_exceeded`: the target has no room for the sandbox that
@@ -2747,6 +2757,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/stop:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -2783,6 +2795,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/start:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -2835,6 +2849,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/unseal:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -2862,6 +2878,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/seal:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -2897,6 +2917,10 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/pause:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -2953,6 +2977,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/resume:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3006,6 +3032,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/labels:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3038,6 +3066,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/events:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3080,6 +3112,10 @@ paths:
           $ref: "#/components/responses/Gapped"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/console:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3116,6 +3152,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/brokers:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3140,6 +3180,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/brokers/{brokerName}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3197,6 +3241,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
     delete:
       operationId: detachSandboxBroker
       tags: [Brokers]
@@ -3222,6 +3268,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3334,6 +3382,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/terminal:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3409,6 +3459,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/metrics:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3445,6 +3497,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/metrics/history:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3485,6 +3539,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/system/processes:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3531,6 +3589,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/system/sockets:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3575,6 +3635,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/egress:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3608,6 +3670,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
     put:
       operationId: setSandboxEgress
       tags: [Network]
@@ -3652,6 +3718,10 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/egress/rules:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3686,6 +3756,10 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3711,6 +3785,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
     put:
       operationId: putEgressRule
       tags: [Network]
@@ -3756,6 +3834,10 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
     delete:
       operationId: deleteEgressRule
       tags: [Network]
@@ -3786,6 +3868,10 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/pause:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3826,6 +3912,10 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/egress/rules/{ruleName}/resume:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3864,6 +3954,10 @@ paths:
           $ref: "#/components/responses/EgressNotChangeable"
         "422":
           $ref: "#/components/responses/EgressNotInstallable"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/egress/connections/kill:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3929,6 +4023,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3962,6 +4060,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -3984,6 +4086,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
     put:
       operationId: putTunnel
       tags: [Tunnels]
@@ -4037,6 +4143,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
     delete:
       operationId: deleteTunnel
       tags: [Tunnels]
@@ -4058,6 +4168,10 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/pause:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4087,6 +4201,10 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/resume:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4114,6 +4232,10 @@ paths:
           $ref: "#/components/responses/TunnelNotKept"
         "404":
           $ref: "#/components/responses/NoSuchTunnel"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4156,6 +4278,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/tokens/{tokenId}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4194,6 +4320,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+        "503":
+          $ref: "#/components/responses/RunnerUnreachable"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4227,6 +4357,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/guests/{email}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4262,6 +4394,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/tunnels/{tunnelName}/activity:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4302,6 +4436,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/commands:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4354,6 +4490,8 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4391,6 +4529,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
     post:
       operationId: startProcess
       tags: [Exec]
@@ -4436,6 +4576,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes/{processId}:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4462,6 +4604,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
     delete:
       operationId: reapProcess
       tags: [Exec]
@@ -4486,6 +4630,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes/{processId}/stdout:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4524,6 +4670,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes/{processId}/stderr:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4558,6 +4706,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes/{processId}/stdin:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4601,6 +4751,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/processes/{processId}/signal:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4633,6 +4785,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/files:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4675,6 +4829,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
     put:
       operationId: writeFile
       tags: [Files]
@@ -4735,6 +4891,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
     delete:
       operationId: deleteFile
       tags: [Files]
@@ -4756,6 +4914,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/sandboxes/{sandboxId}/files/list:
     parameters:
       - $ref: "#/components/parameters/SandboxID"
@@ -4788,6 +4948,8 @@ paths:
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
   /v1/runners:
     get:
       operationId: listRunners
@@ -4796,7 +4958,16 @@ paths:
       description: >-
         Every runner that ever enrolled, in the order they joined: a revoked
         one is listed too, as `revoked`, since its hostID is never given to
-        another.
+        another, until an admin removes it from the list
+        (`POST /v1/runners/{runnerId}/unlist`). One removed is listed only
+        when `unlisted` asks for it, with `unlistedAt` and `unlistedBy`.
+      parameters:
+        - name: unlisted
+          in: query
+          description: >-
+            List the runners removed from the list too, among the others in
+            the order they joined.
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: The runners.
@@ -4833,14 +5004,24 @@ paths:
     patch:
       operationId: updateRunner
       tags: [Runners]
-      summary: Change where a runner may connect from
+      summary: Rename a runner, or change where it may connect from
       description: |
-        Needs `runners.admin`. `allowedSources` replaces the runner's: IPs
-        and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike), or
-        none for anywhere. In force at once: a line held from an address
-        the new list does not allow is dropped, and every request from
-        outside it is refused `403 source_not_allowed`. The change is
-        recorded, with who made it.
+        Needs `runners.admin`. Each field changes only what it says, and one
+        left out is left as it is; a body naming neither is `400`.
+        - `name` renames it, held to the rules a join token's `runnerName`
+          is: never written as a hostID is (`r-07`), and one runner's at a
+          time, so a name that a runner not revoked, or a join token still
+          usable, holds is `409`. Its own name again changes nothing. The
+          runner is told it in its desired state and keeps it on its host;
+          its `id`, which everything acts on it by, stays. The change is an
+          activity record of type `setting` (`name`, with `runner`), from
+          what to what and by whom.
+        - `allowedSources` replaces where it may connect from: IPs and CIDR
+          ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike), or none
+          for anywhere. In force at once: a line held from an address the
+          new list does not allow is dropped, and every request from
+          outside it is refused `403 source_not_allowed`. The change is
+          recorded, with who made it.
       requestBody:
         required: true
         content:
@@ -4857,7 +5038,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: "`conflict`: the runner was revoked, and nothing it may connect from matters any more."
+          description: "`conflict`: the runner was revoked, and is neither renamed nor given anywhere to connect from; or the name is another runner's, or a usable join token's."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -4898,6 +5079,44 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           description: It was revoked by no operation this server recorded, before revoking was one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/runners/{runnerId}/unlist:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: unlistRunner
+      tags: [Runners]
+      summary: Remove a revoked runner from the list
+      description: |
+        Needs `runners.admin`. A revoked runner stays in `GET /v1/runners`,
+        with who revoked it and what was lost, until this removes it: from
+        then on it is listed only when `?unlisted=true` asks for it, and says
+        `unlistedAt` and `unlistedBy`. Nothing else changes: its row, its
+        hostID, which is never given to another, and its records stay for the
+        audit trail, `GET /v1/runners/{runnerId}` still answers it, and its
+        name, free since its revoke, stays free. Only a revoked runner is
+        removed. Idempotent: one removed already is answered as it is, by
+        whoever removed it first.
+      responses:
+        "200":
+          description: Removed from the list, or was already.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`conflict`: the runner is not revoked, and only a revoked runner leaves the list."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5110,6 +5329,43 @@ paths:
         in: path
         required: true
         schema: { type: string }
+    patch:
+      operationId: updateJoinToken
+      tags: [Runners]
+      summary: Change where a join token may be used from
+      description: >-
+        Needs `runners.admin`. Replaces the token's `allowedSources`, in
+        force for every enrolment from this answer on, and for the runners
+        it enrols from then; a runner it enrolled before keeps its own,
+        which `PATCH /v1/runners/{runnerId}` changes. Only a token that
+        can still enrol is changed: one revoked, expired or used up is
+        `409`. The change is an activity record of type `setting`
+        (`allowedSources`, with `joinToken`), from what to what and by
+        whom; the same sources again change nothing and record nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JoinTokenUpdate" }
+      responses:
+        "200":
+          description: The token, changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JoinToken" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The token is revoked, expired or used up, and enrols nothing more.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
     delete:
       operationId: revokeJoinToken
       tags: [Runners]
@@ -5216,6 +5472,9 @@ paths:
         and `approvedAt` is within five minutes of this server's clock.
 
         Approving moves the bundle's generation, and is a line of its log.
+        The moves off it that waited for it (`waitingMoves`, at step
+        `waiting_approval`) go on by themselves once its runners hold the
+        bundle that names it.
       requestBody:
         required: true
         content:
@@ -5242,6 +5501,57 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "422":
           $ref: "#/components/responses/ApprovalInvalid"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/runners/{runnerId}/rotate-ca:
+    parameters:
+      - name: runnerId
+        in: path
+        required: true
+        description: The runner's hostID.
+        schema: { type: string }
+    post:
+      operationId: rotateRunnerCA
+      tags: [Runners]
+      summary: Ask an approved runner to rotate its sandbox CA
+      description: |
+        Needs `runners.admin`, and no passkey: a rotation needs nobody. The
+        runner is told as a change of its desired state, and makes a new
+        sandbox CA (in its TPM, where its key is in one), signs the new CA's
+        bundle entry with the CA it was approved with, and reports it. The
+        server checks that signature against the approved entry for that
+        hostID and puts the new CA in the bundle beside the old, which moves
+        the bundle's generation. The runner signs nothing with the new CA
+        until a broker's refresh interval has passed since the bundle
+        carried it, and then signs with it alone; the old CA leaves the
+        bundle once the leaves it signed have expired. A runner whose key is
+        in a TPM and whose CA's is not rotates by itself, so that its CA
+        moves into the TPM.
+
+        A rotation not signed by the approved CA is refused, and is an
+        activity record (`rotation`, `refused`) and an event of the
+        runner's. Asking again while a rotation is under way changes
+        nothing.
+      responses:
+        "503":
+          $ref: "#/components/responses/ControlDBUnavailable"
+        "202":
+          description: Asked; `caRotationAskedAt` says since when.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            `conflict`: the runner is not approved, or is revoked, so it has
+            no CA in the bundle to rotate from.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "403":
           $ref: "#/components/responses/Forbidden"
         "401":
@@ -6050,6 +6360,23 @@ components:
       description: >-
         The runner it is on is not answering (`runner_unreachable`): it is
         that runner's, and is answered for once the runner is back.
+        `error.runner` names it, with when it last reported, and
+        `Retry-After` says when to ask again. Nothing about it is lost: a
+        runner that went away is unreachable, never revoked for it, and what
+        it holds is as it last reported until it is back
+        (docs/design/runners, "The runners").
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RunnerRevoked:
+      description: >-
+        The runner it was on was revoked (`gone`): it is `lost`, for
+        `runner_revoked`, and nothing will run it again. Its record stays
+        until it is deleted.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -6060,10 +6387,17 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     SandboxUnreachable:
       description: >-
-        The machine exists and its guest is not answering, or the runner it
-        is on is not holding its line (`runner.state` is `unreachable`), so
-        nothing can be asked of it there. Retry: this is the state that comes
-        back, where `failed` is the one that does not.
+        The machine exists and its guest is not answering
+        (`sandbox_unreachable`), or the runner it is on is not answering
+        (`runner_unreachable`, `runner.state` is `unreachable`), so nothing
+        can be asked of it there. Retry: this is the state that comes back,
+        where `failed` is the one that does not. On `runner_unreachable`,
+        `error.runner` names the runner, with when it last reported, and
+        `Retry-After` says when to ask again.
+      headers:
+        Retry-After:
+          description: Seconds to wait before asking again, on `runner_unreachable`.
+          schema: { type: integer }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -6705,6 +7039,12 @@ components:
           type: string
           description: The runner's hostID, as `GET /v1/runners/{id}` names it.
           example: r-02
+        name:
+          type: string
+          description: >-
+            Its name, as `GET /v1/runners/{id}` says it. Absent for a runner
+            the server has no record of.
+          example: factory-02
         state: { $ref: "#/components/schemas/RunnerState" }
         observedAt:
           type: string
@@ -6802,6 +7142,17 @@ components:
         | `ready` | on its runner, to be attached |
         | `transferring` | being moved to another runner (`transferringTo`): attached, cloned and deleted by nobody until it is there |
 
+    TransferWaitingFor:
+      type: string
+      enum: [runner]
+      x-enum-varnames: [TransferWaitingForRunner]
+      readOnly: true
+      description: >-
+        While it is being transferred, what its transfer waits for, when it
+        waits: `runner` is the runner holding it, or the one it moves to,
+        not answering now. Nothing is lost meanwhile: the transfer goes on
+        from where it is once that runner is back. Absent while it moves.
+
     VolumeName:
       type: string
       description: >-
@@ -6842,6 +7193,7 @@ components:
         transferringTo:
           allOf: [{ $ref: "#/components/schemas/PlacedOn" }]
           description: The runner it is being transferred to, while it is `transferring`.
+        waitingFor: { $ref: "#/components/schemas/TransferWaitingFor" }
         createdBy:
           allOf: [{ $ref: "#/components/schemas/Creator" }]
           description: >-
@@ -7479,6 +7831,7 @@ components:
             a transfer of the volume it holds, or by a start its runner had
             no room for, after which it is started there. It is stopped
             until it is there.
+        waitingFor: { $ref: "#/components/schemas/TransferWaitingFor" }
         spec:
           allOf: [{ $ref: "#/components/schemas/SandboxSpec" }]
           description: >-
@@ -8797,8 +9150,9 @@ components:
         name:
           allOf: [{ $ref: "#/components/schemas/RunnerName" }]
           description: >-
-            What it is called, from the join token it enrolled with (its
-            `runnerName`), and its hostID when that named none. No other
+            What it is called: from the join token it enrolled with (its
+            `runnerName`), and its hostID when that named none, until an
+            admin renames it (`PATCH /v1/runners/{runnerId}`). No other
             runner that is not revoked has it. A person reads it, and types
             it to revoke the runner; everything else names a runner by its
             id.
@@ -8862,6 +9216,16 @@ components:
           type: string
           format: email
           description: Who revoked it, or asked for the drain that did.
+        unlistedAt:
+          type: string
+          format: date-time
+          description: >-
+            When it was removed from the list, once it was revoked and an
+            admin removed it.
+        unlistedBy:
+          type: string
+          format: email
+          description: Who removed it from the list.
         operation:
           allOf: [{ $ref: "#/components/schemas/RunnerOperation" }]
           description: >-
@@ -8878,7 +9242,24 @@ components:
           description: >-
             The SHA-256, in hex, of the sandbox CA it reported, once it has:
             what an admin compares with `runyard-runner status` on the host
-            before approving it.
+            before approving it, and the one it signs its sandboxes'
+            identities with.
+        caRotatedAt:
+          type: string
+          format: date-time
+          description: >-
+            When its sandbox CA was last rotated: the new one put in the
+            bundle beside the old (`POST /v1/runners/{runnerId}/rotate-ca`).
+            Absent when it never was.
+        caRotationAskedAt:
+          type: string
+          format: date-time
+          description: While a rotation an admin asked for has not reached the bundle yet, when it was asked.
+        retiringCAFingerprint:
+          type: string
+          description: >-
+            While a rotation's overlap lasts, the CA it rotated from, still in
+            the bundle until the leaves it signed have expired.
         approval: { $ref: "#/components/schemas/BundleApproval" }
         provides:
           type: array
@@ -8902,6 +9283,20 @@ components:
             what it holds, as it last reported: the kind, when it was set and
             when it was last used, never the credential.
           items: { $ref: "#/components/schemas/RunnerBrokerCredentialState" }
+        waitingMoves:
+          type: integer
+          minimum: 1
+          description: >-
+            How many moves off this runner wait for an admin to approve it
+            (`POST /v1/runners/{runnerId}/approve`), held at step
+            `waiting_approval`: a pod's runner enrolled before approval was
+            asked of every runner, or one enrolled again by a Rejoin, whose
+            sandboxes and volumes are to move. No runner seals a transfer
+            key to a broker key nobody approved, so none of them is tried
+            until it is approved; then each goes on by itself. Its sandboxes
+            keep running where they are meanwhile. The first move held is an
+            activity record (`transfer`, `refused`, naming the runner) and a
+            line of the server's log. Absent when none waits.
 
     RunnerApproval:
       type: object
@@ -9026,6 +9421,8 @@ components:
         with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
         fingerprint, approved before it) signed the statement of this entry,
         ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
+        For a rotation's overlap a runner has two entries, the CA it
+        rotated from and the new one, the older first.
       properties:
         kind:
           type: string
@@ -9137,7 +9534,17 @@ components:
           description: When a call last reached the broker since, to the minute.
         refused:
           type: string
-          description: Why the runner could not write the last one it was sent.
+          description: >-
+            Why the runner could not write the last one it was sent, or
+            the one it holds as it started.
+        store:
+          type: string
+          enum: [tpm, file]
+          x-enum-varnames: [RunnerBrokerCredentialStoreTPM, RunnerBrokerCredentialStoreFile]
+          description: >-
+            Where the runner keeps it at rest: `tpm`, sealed by its TPM,
+            the file its broker reads written from there on a tmpfs alone;
+            `file`, in that file, where the runner has no TPM.
 
     SealedCredentialWrite:
       type: object
@@ -9173,8 +9580,11 @@ components:
     RunnerUpdate:
       type: object
       additionalProperties: false
-      required: [allowedSources]
+      description: What to change of a runner; what is left out stays as it is.
       properties:
+        name:
+          allOf: [{ $ref: "#/components/schemas/RunnerName" }]
+          description: What it is called from now on.
         allowedSources:
           type: array
           description: >-
@@ -9318,6 +9728,19 @@ components:
           description: >-
             Binds it to this existing runner (Rejoin): it enrols that runner
             again, as itself, and nothing else, once.
+
+    JoinTokenUpdate:
+      type: object
+      additionalProperties: false
+      required: [allowedSources]
+      properties:
+        allowedSources:
+          type: array
+          description: >-
+            IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6
+            alike) it may be used from, from now on, replacing what it had,
+            which become the runner's it enrols. Empty is anywhere.
+          items: { type: string }
 
     JoinToken:
       type: object
@@ -9855,7 +10278,9 @@ components:
         `setting`, somebody changing a workspace setting (`setting`);
         `transfer`, a volume's transfer its target refused, since the source's
         broker key it was given is not the one the target's own bundle names
-        (`reason` says which runners).
+        (`reason` says which runners); `rotation`, a runner's new sandbox CA
+        its server refused, since it is not signed by the CA the runner was
+        approved with (`runner` says which, and `reason` why).
 
         A record carries no body: the bodies of an exchange stay on the
         runner that saw it (`runner`), and are read with
@@ -9884,8 +10309,8 @@ components:
           description: What kind of broker it went through, when it reached one.
         type:
           type: string
-          enum: [http, upgrade, stream, read, setting, transfer]
-          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting, ActivityTypeTransfer]
+          enum: [http, upgrade, stream, read, setting, transfer, rotation]
+          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting, ActivityTypeTransfer, ActivityTypeRotation]
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
         outcome:
@@ -9917,7 +10342,7 @@ components:
           description: What the broker said the exchange was, in its `Runyard-Activity` header.
         runner:
           type: string
-          description: The runner that saw the exchange and keeps its bodies. Absent on a record the server made itself (`read`), and on one kept before bodies stayed on runners.
+          description: The runner that saw the exchange and keeps its bodies; on a `setting` of a runner's own (`name`), and on a `rotation`, that runner. Absent on any other record the server made itself (`read`, `setting`), and on one kept before bodies stayed on runners.
         read: { $ref: "#/components/schemas/BrokerActivityRead" }
         setting: { $ref: "#/components/schemas/BrokerActivitySetting" }
 
@@ -9928,8 +10353,11 @@ components:
       properties:
         name:
           type: string
-          description: The setting, as `GET /v1/runners/settings` names it.
+          description: "The setting, as `GET /v1/runners/settings` names it; or `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names."
           example: residency
+        joinToken:
+          type: string
+          description: On a `setting` of a join token's own (`allowedSources`), that token's id.
         from:
           type: string
           description: What it was, as a person reads it.
@@ -10236,6 +10664,12 @@ components:
                 one that does not run the hardened identity check
                 (docs/design/runners, "Identity"), as its runners last read its
                 `/.well-known/runyard-broker`.
+            runner:
+              allOf: [{ $ref: "#/components/schemas/PlacedOn" }]
+              description: >-
+                On `runner_unreachable`, the runner what was asked is on: its
+                id, name, state, and when it last reported, which is what
+                the server says of what it holds meanwhile.
             constraint:
               type: string
               enum: [volume, placement, image, brokers, floor, runner]

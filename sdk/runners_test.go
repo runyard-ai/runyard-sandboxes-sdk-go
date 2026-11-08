@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
@@ -23,7 +24,16 @@ func TestARunnerJoinedWithANameIsListedWithIt(t *testing.T) {
 	if _, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")}); CodeOf(err) != "conflict" {
 		t.Errorf("a name a token will give = %v", err)
 	}
+	if changed, err := client.SetJoinTokenSources(ctx, minted.Id, []string{"203.0.113.24/32"}); err != nil || changed.Id != minted.Id || !slices.Equal(changed.AllowedSources, []string{"203.0.113.24/32"}) {
+		t.Errorf("SetJoinTokenSources = %+v, %v", changed, err)
+	}
 	joined := d.Join(t, minted.Secret)
+	if !slices.Equal(joined.AllowedSources, []string{"203.0.113.24/32"}) {
+		t.Errorf("joined with sources %v, want the token's as changed", joined.AllowedSources)
+	}
+	if _, err := client.SetJoinTokenSources(ctx, minted.Id, nil); CodeOf(err) != "conflict" {
+		t.Errorf("SetJoinTokenSources of a token used up = %v", err)
+	}
 	runners, err := client.Runners(ctx)
 	if err != nil || len(runners) != 1 || runners[0].Id != joined.Id || runners[0].Name != "factory-03" {
 		t.Fatalf("Runners = %+v, %v", runners, err)
@@ -42,6 +52,16 @@ func TestARunnerJoinedWithANameIsListedWithIt(t *testing.T) {
 
 	if anywhere, err := client.SetRunnerSources(ctx, joined.Id, nil); err != nil || anywhere.AllowedSources == nil || len(anywhere.AllowedSources) != 0 {
 		t.Errorf("SetRunnerSources(nil) = %+v, %v", anywhere, err)
+	}
+	if renamed, err := client.RenameRunner(ctx, joined.Id, "factory-09"); err != nil || renamed.Name != "factory-09" || renamed.Id != joined.Id {
+		t.Errorf("RenameRunner = %+v, %v", renamed, err)
+	}
+	asked, err := client.RotateRunnerCA(ctx, joined.Id)
+	if err != nil || asked.CaRotationAskedAt == nil {
+		t.Fatalf("RotateRunnerCA = %+v, %v", asked, err)
+	}
+	if again, err := client.RotateRunnerCA(ctx, joined.Id); err != nil || !again.CaRotationAskedAt.Equal(*asked.CaRotationAskedAt) {
+		t.Errorf("RotateRunnerCA again = %+v, %v, want it asked as it was", again, err)
 	}
 	if _, err := client.AllowRunnerAddress(ctx, joined.Id, "198.51.100.7"); CodeOf(err) != "conflict" {
 		t.Errorf("AllowRunnerAddress of a runner not held = %v", err)
@@ -62,6 +82,18 @@ func TestARunnerJoinedWithANameIsListedWithIt(t *testing.T) {
 	}
 	if _, err := client.UndrainRunner(ctx, joined.Id); CodeOf(err) != "conflict" {
 		t.Errorf("UndrainRunner of a revoked runner = %v", err)
+	}
+	if _, err := client.RotateRunnerCA(ctx, joined.Id); CodeOf(err) != "conflict" {
+		t.Errorf("RotateRunnerCA of a revoked runner = %v", err)
+	}
+	if unlisted, err := client.UnlistRunner(ctx, joined.Id); err != nil || unlisted.UnlistedAt == nil {
+		t.Fatalf("UnlistRunner = %+v, %v", unlisted, err)
+	}
+	if listed, err := client.Runners(ctx); err != nil || slices.ContainsFunc(listed, func(r genv1.Runner) bool { return r.Id == joined.Id }) {
+		t.Errorf("Runners = %+v, %v, without the one unlisted", listed, err)
+	}
+	if all, err := client.AllRunners(ctx); err != nil || !slices.ContainsFunc(all, func(r genv1.Runner) bool { return r.Id == joined.Id && r.UnlistedBy != nil }) {
+		t.Errorf("AllRunners = %+v, %v, with the one unlisted", all, err)
 	}
 
 	settings, err := client.RunnerSettings(ctx)
@@ -163,14 +195,19 @@ func TestRunnerCallsThatNeverReachTheServerSaySo(t *testing.T) {
 		"Runners":              func() error { _, err := client.Runners(ctx); return err }(),
 		"Runner":               func() error { _, err := client.Runner(ctx, "r-01"); return err }(),
 		"SetRunnerSources":     func() error { _, err := client.SetRunnerSources(ctx, "r-01", nil); return err }(),
+		"RenameRunner":         func() error { _, err := client.RenameRunner(ctx, "r-01", "a"); return err }(),
 		"AllowRunnerAddress":   func() error { _, err := client.AllowRunnerAddress(ctx, "r-01", "a"); return err }(),
 		"DrainRunner":          func() error { _, err := client.DrainRunner(ctx, "r-01", genv1.RunnerDrainRequest{}); return err }(),
 		"UndrainRunner":        func() error { _, err := client.UndrainRunner(ctx, "r-01"); return err }(),
 		"RevokeRunner":         func() error { _, err := client.RevokeRunner(ctx, "r-01"); return err }(),
+		"UnlistRunner":         func() error { _, err := client.UnlistRunner(ctx, "r-01"); return err }(),
+		"RotateRunnerCA":       func() error { _, err := client.RotateRunnerCA(ctx, "r-01"); return err }(),
+		"AllRunners":           func() error { _, err := client.AllRunners(ctx); return err }(),
 		"ApproveRunner":        func() error { _, err := client.ApproveRunner(ctx, "r-01", genv1.RunnerApproval{}); return err }(),
 		"MintJoinToken":        func() error { _, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{}); return err }(),
 		"JoinTokens":           func() error { _, err := client.JoinTokens(ctx); return err }(),
 		"RevokeJoinToken":      client.RevokeJoinToken(ctx, "x"),
+		"SetJoinTokenSources":  func() error { _, err := client.SetJoinTokenSources(ctx, "x", nil); return err }(),
 		"RunnerSettings":       func() error { _, err := client.RunnerSettings(ctx); return err }(),
 		"UpdateRunnerSettings": func() error { _, err := client.UpdateRunnerSettings(ctx, genv1.RunnerSettingsUpdate{}); return err }(),
 		"Approvers":            func() error { _, err := client.Approvers(ctx); return err }(),

@@ -2718,8 +2718,20 @@ type RunnerDrainRequest struct {
 	RevokeWhenEmpty *bool `json:"revokeWhenEmpty,omitempty"`
 }
 
+// RunnerEgressCeiling The most a sandbox's egress may open on this runner, from its own configuration: a create, a policy or a rule past it is refused for that sandbox (`422`, "runner refused: …"), and the server places no sandbox there whose egress is past it. Names a rule allows by name are not bounded by it. Absent is no ceiling.
+type RunnerEgressCeiling struct {
+	// Internet Whether a rule may open addresses on the internet — be an `internet` rule, or name a range holding any.
+	Internet bool `json:"internet"`
+
+	// PrivateRanges The only addresses that are not on the internet a rule may open, by range; a rule's names may not be answered with them (`allowPrivate`) either. Empty is none; absent is any.
+	PrivateRanges *[]string `json:"privateRanges,omitempty"`
+}
+
 // RunnerFloor The runner's policy floor, as it last reported: the most its own configuration lets one sandbox be, which it refuses past whatever its server asks, and the server places no sandbox past (docs/design/runners, "The runner's policy floor"). A ceiling it does not say is none. Absent until it has reported one.
 type RunnerFloor struct {
+	// Egress The most a sandbox's egress may open on this runner, from its own configuration: a create, a policy or a rule past it is refused for that sandbox (`422`, "runner refused: …"), and the server places no sandbox there whose egress is past it. Names a rule allows by name are not bounded by it. Absent is no ceiling.
+	Egress *RunnerEgressCeiling `json:"egress,omitempty"`
+
 	// MaxDiskBytes The largest disk one sandbox may be given.
 	MaxDiskBytes *int64 `json:"maxDiskBytes,omitempty"`
 
@@ -16871,6 +16883,7 @@ type StartSandboxResponse struct {
 	JSON404      *NotFound
 	JSON409      *Error
 	JSON410      *RunnerRevoked
+	JSON422      *Error
 	JSON503      *SandboxUnreachable
 	JSON507      *Error
 }
@@ -25272,6 +25285,13 @@ func ParseStartSandboxResponse(rsp *http.Response) (*StartSandboxResponse, error
 			return nil, err
 		}
 		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest SandboxUnreachable

@@ -2677,7 +2677,9 @@ paths:
             cannot pull, `nested` it cannot give. Or `unplaceable`: no runner
             may take it for a reason other than room, which the message names
             and `error.constraint` says (`no runner labelled region=eu can
-            reach broker "github"`). A shared broker it is given that does not
+            reach broker "github"`; `floor` when no runner's own floor allows
+            its size or its egress: `runner r-02: egress rule web opens the
+            internet…`). A shared broker it is given that does not
             run the hardened identity check keeps it off every runner but the
             server's own, and `error.broker` names that broker.
           content:
@@ -2858,6 +2860,16 @@ paths:
             This host is full: what its capacity allows of vCPUs or memory,
             overcommitted as its configuration says, leaves no room for this
             sandbox's, and the message says which and by how much.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: >-
+            `unsupported_spec`: the runner it is on refuses it past its own
+            floor (docs/design/runners, "The runner's policy floor"), which
+            the message says ("runner refused: egress rule web opens the
+            internet…"): a sandbox taken up from another runner, or made
+            there before its floor was lowered. Nothing changed.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -6374,7 +6386,9 @@ components:
     EgressNotInstallable:
       description: >-
         The rules are not ones this host can install: the kernel refused
-        them, or this sandbox has no interface. Nothing changed.
+        them, this sandbox has no interface, or its runner refuses them past
+        its own floor ("runner refused: egress rule web opens the internet,
+        and this runner's floor opens none of it"). Nothing changed.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -9360,6 +9374,30 @@ components:
       properties:
         maxMemoryBytes: { type: integer, format: int64, minimum: 1, description: The most memory one sandbox may be given. }
         maxDiskBytes: { type: integer, format: int64, minimum: 1, description: The largest disk one sandbox may be given. }
+        egress: { $ref: "#/components/schemas/RunnerEgressCeiling" }
+
+    RunnerEgressCeiling:
+      type: object
+      additionalProperties: false
+      required: [internet]
+      description: >-
+        The most a sandbox's egress may open on this runner, from its own
+        configuration: a create, a policy or a rule past it is refused for
+        that sandbox (`422`, "runner refused: …"), and the server places no
+        sandbox there whose egress is past it. Names a rule allows by name
+        are not bounded by it. Absent is no ceiling.
+      properties:
+        internet:
+          type: boolean
+          description: Whether a rule may open addresses on the internet — be an `internet` rule, or name a range holding any.
+        privateRanges:
+          type: array
+          items: { type: string }
+          description: >-
+            The only addresses that are not on the internet a rule may
+            open, by range; a rule's names may not be answered with them
+            (`allowPrivate`) either. Empty is none; absent is any.
+          example: [10.20.0.0/16]
 
     RunnerApproval:
       type: object

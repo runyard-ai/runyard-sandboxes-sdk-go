@@ -2507,6 +2507,9 @@ type Runner struct {
 	// BrokerKey The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
 	BrokerKey string `json:"brokerKey"`
 
+	// Builds The registry it pushes the images it builds to (`builds.registry`), as it last reported. Absent from a runner that builds nothing.
+	Builds *string `json:"builds,omitempty"`
+
 	// CaFingerprint The SHA-256, in hex, of the sandbox CA it reported, once it has: what an admin compares with `runyard-runner status` on the host before approving it, and the one it signs its sandboxes' identities with.
 	CaFingerprint *string `json:"caFingerprint,omitempty"`
 
@@ -2527,6 +2530,9 @@ type Runner struct {
 
 	// EnrolledFrom The address it last enrolled from.
 	EnrolledFrom string `json:"enrolledFrom"`
+
+	// Floor The runner's policy floor, as it last reported: the most its own configuration lets one sandbox be, which it refuses past whatever its server asks, and the server places no sandbox past (docs/design/runners, "The runner's policy floor"). A ceiling it does not say is none. Absent until it has reported one.
+	Floor *RunnerFloor `json:"floor,omitempty"`
 
 	// HeldFrom While it is `held`, the second address a request came from: the one `POST /v1/runners/{runnerId}/allow-address` would allow.
 	HeldFrom *string `json:"heldFrom,omitempty"`
@@ -2559,6 +2565,9 @@ type Runner struct {
 
 	// Provides The shared brokers declared with `url: runner` that it provides for itself, as it last reported: where a sandbox given one may be placed.
 	Provides *[]BrokerName `json:"provides,omitempty"`
+
+	// PullFrom The registries it can pull from, as it last reported: where a sandbox whose image is in another is not placed. Absent when it has not said, which is every registry. Never a credential: its registry logins stay in its own configuration.
+	PullFrom *[]string `json:"pullFrom,omitempty"`
 
 	// Reaches The shared brokers it reaches from its own network, as it last reported. One it does not reach answers a sandbox on it with a closed connection.
 	Reaches *[]BrokerName `json:"reaches,omitempty"`
@@ -2707,6 +2716,15 @@ type RunnerCommitments struct {
 type RunnerDrainRequest struct {
 	// RevokeWhenEmpty Revoke the runner by itself once it is empty, for a host being retired. False, for maintenance, unless it says.
 	RevokeWhenEmpty *bool `json:"revokeWhenEmpty,omitempty"`
+}
+
+// RunnerFloor The runner's policy floor, as it last reported: the most its own configuration lets one sandbox be, which it refuses past whatever its server asks, and the server places no sandbox past (docs/design/runners, "The runner's policy floor"). A ceiling it does not say is none. Absent until it has reported one.
+type RunnerFloor struct {
+	// MaxDiskBytes The largest disk one sandbox may be given.
+	MaxDiskBytes *int64 `json:"maxDiskBytes,omitempty"`
+
+	// MaxMemoryBytes The most memory one sandbox may be given.
+	MaxMemoryBytes *int64 `json:"maxMemoryBytes,omitempty"`
 }
 
 // RunnerName A runner's name: lowercase letters, digits and hyphens, starting and ending with a letter or a digit, at most 63 of them.

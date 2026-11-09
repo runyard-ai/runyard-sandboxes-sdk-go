@@ -9310,6 +9310,22 @@ components:
             reported. One it does not reach answers a sandbox on it with a
             closed connection.
           items: { $ref: "#/components/schemas/BrokerName" }
+        pullFrom:
+          type: array
+          description: >-
+            The registries it can pull from, as it last reported: where a
+            sandbox whose image is in another is not placed. Absent when it
+            has not said, which is every registry. Never a credential: its
+            registry logins stay in its own configuration.
+          items: { type: string, example: ghcr.io }
+        builds:
+          type: string
+          description: >-
+            The registry it pushes the images it builds to
+            (`builds.registry`), as it last reported. Absent from a runner
+            that builds nothing.
+          example: registry.acme.internal
+        floor: { $ref: "#/components/schemas/RunnerFloor" }
         brokerCredentials:
           type: array
           description: >-
@@ -9332,6 +9348,18 @@ components:
             keep running where they are meanwhile. The first move held is an
             activity record (`transfer`, `refused`, naming the runner) and a
             line of the server's log. Absent when none waits.
+
+    RunnerFloor:
+      type: object
+      description: >-
+        The runner's policy floor, as it last reported: the most its own
+        configuration lets one sandbox be, which it refuses past whatever its
+        server asks, and the server places no sandbox past (docs/design/runners,
+        "The runner's policy floor"). A ceiling it does not say is none.
+        Absent until it has reported one.
+      properties:
+        maxMemoryBytes: { type: integer, format: int64, minimum: 1, description: The most memory one sandbox may be given. }
+        maxDiskBytes: { type: integer, format: int64, minimum: 1, description: The largest disk one sandbox may be given. }
 
     RunnerApproval:
       type: object

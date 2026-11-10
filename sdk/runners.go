@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/runyard-ai/runyard-sandboxes-sdk-go/sandboxes/genv1"
 )
 
@@ -133,7 +132,7 @@ func (c *Client) UnlistRunner(ctx context.Context, id string) (genv1.Runner, err
 }
 
 // RotateRunnerCA asks an approved runner to rotate its sandbox CA, which
-// needs nobody's passkey: CaRotationAskedAt says since when, until the new
+// needs no approval again: CaRotationAskedAt says since when, until the new
 // CA is in the bundle, and CaRotatedAt when it was. One pending or revoked
 // is refused as a conflict; asking again while one is under way changes
 // nothing.
@@ -145,11 +144,11 @@ func (c *Client) RotateRunnerCA(ctx context.Context, id string) (genv1.Runner, e
 	return answered(res.JSON202, res.HTTPResponse, res.Body)
 }
 
-// ApproveRunner puts a pending runner in the bundle every broker trusts,
-// with an approver's passkey assertion over the statement the contract
-// spells out.
-func (c *Client) ApproveRunner(ctx context.Context, id string, approval genv1.RunnerApproval) (genv1.Runner, error) {
-	res, err := c.api.ApproveRunnerWithResponse(ctx, id, approval)
+// ApproveRunner puts a pending runner in the bundle every broker trusts.
+// approve.ApprovedBy is who approved it, as its approvedBy will say, such
+// as the admin who asked; left nil, it is this client's key's owner.
+func (c *Client) ApproveRunner(ctx context.Context, id string, approve genv1.RunnerApprove) (genv1.Runner, error) {
+	res, err := c.api.ApproveRunnerWithResponse(ctx, id, approve)
 	if err != nil {
 		return genv1.Runner{}, err
 	}
@@ -222,81 +221,6 @@ func (c *Client) UpdateRunnerSettings(ctx context.Context, change genv1.RunnerSe
 		return genv1.RunnerSettings{}, err
 	}
 	return answered(res.JSON200, res.HTTPResponse, res.Body)
-}
-
-// Approvers are the passkeys whose assertions approve runners.
-func (c *Client) Approvers(ctx context.Context) ([]genv1.Approver, error) {
-	res, err := c.api.ListApproversWithResponse(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if res.JSON200 == nil {
-		return nil, refused(res.HTTPResponse, res.Body)
-	}
-	return res.JSON200.Items, nil
-}
-
-// AddApprover adds a passkey that approves runners.
-func (c *Client) AddApprover(ctx context.Context, ask genv1.ApproverRequest) (genv1.Approver, error) {
-	res, err := c.api.AddApproverWithResponse(ctx, ask)
-	if err != nil {
-		return genv1.Approver{}, err
-	}
-	return answered(res.JSON201, res.HTTPResponse, res.Body)
-}
-
-// SealedCredential is the credential a person's brokers on runners use for
-// them, sealed to each approved runner's broker key: what the server keeps
-// of it, which it cannot open.
-func (c *Client) SealedCredential(ctx context.Context, subject string) (genv1.SealedCredential, error) {
-	res, err := c.api.GetSealedCredentialWithResponse(ctx, openapi_types.Email(subject))
-	if err != nil {
-		return genv1.SealedCredential{}, err
-	}
-	return answered(res.JSON200, res.HTTPResponse, res.Body)
-}
-
-// PutSealedCredential replaces subject's sealed credential.
-func (c *Client) PutSealedCredential(ctx context.Context, subject string, sealed genv1.SealedCredentialWrite) (genv1.SealedCredential, error) {
-	res, err := c.api.PutSealedCredentialWithResponse(ctx, openapi_types.Email(subject), sealed)
-	if err != nil {
-		return genv1.SealedCredential{}, err
-	}
-	return answered(res.JSON200, res.HTTPResponse, res.Body)
-}
-
-// DeleteSealedCredential removes subject's sealed credential, everywhere it
-// was sealed to. Removing one that is not there succeeds.
-func (c *Client) DeleteSealedCredential(ctx context.Context, subject string) error {
-	res, err := c.api.DeleteSealedCredentialWithResponse(ctx, openapi_types.Email(subject))
-	if err != nil {
-		return err
-	}
-	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
-}
-
-// SetRunnerBrokerCredential sets the credential of a broker the runner
-// provides, sealed to its approved brokerKey (as `sealbox` seals, which a
-// browser does with WebCrypto): the server keeps the box alone and the
-// runner writes what it opens where that broker reads its credential. The
-// answer says its kind and when it was set; the runner's brokerCredentials
-// say once it has written it.
-func (c *Client) SetRunnerBrokerCredential(ctx context.Context, runnerID, broker string, set genv1.RunnerBrokerCredentialWrite) (genv1.RunnerBrokerCredential, error) {
-	res, err := c.api.SetRunnerBrokerCredentialWithResponse(ctx, runnerID, broker, set)
-	if err != nil {
-		return genv1.RunnerBrokerCredential{}, err
-	}
-	return answered(res.JSON200, res.HTTPResponse, res.Body)
-}
-
-// DeleteRunnerBrokerCredential takes away the credential set for a runner's
-// broker: the runner removes the file it wrote it to.
-func (c *Client) DeleteRunnerBrokerCredential(ctx context.Context, runnerID, broker string) error {
-	res, err := c.api.DeleteRunnerBrokerCredentialWithResponse(ctx, runnerID, broker)
-	if err != nil {
-		return err
-	}
-	return want(http.StatusNoContent, res.HTTPResponse, res.Body)
 }
 
 // TransferVolume moves a volume, and the sandbox whose disk it is, to

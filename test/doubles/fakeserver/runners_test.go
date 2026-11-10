@@ -3,6 +3,7 @@ package fakeserver
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -228,17 +229,16 @@ func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
 		t.Errorf("the name of a token revoked = %d", got)
 	}
 	for name, status := range map[string]int{
-		"get":      statusOf(client.GetRunnerWithResponse(ctx, "r-99")),
-		"update":   statusOf(client.UpdateRunnerWithResponse(ctx, "r-99", genv1.RunnerUpdate{AllowedSources: &[]string{}})),
-		"drain":    statusOf(client.DrainRunnerWithResponse(ctx, "r-99", genv1.RunnerDrainRequest{})),
-		"undrain":  statusOf(client.UndrainRunnerWithResponse(ctx, "r-99")),
-		"revoke":   statusOf(client.RevokeRunnerWithResponse(ctx, "r-99")),
-		"unlist":   statusOf(client.UnlistRunnerWithResponse(ctx, "r-99")),
-		"allow":    statusOf(client.AllowRunnerAddressWithResponse(ctx, "r-99", genv1.AllowAddress{Address: "198.51.100.7"})),
-		"approve":  statusOf(client.ApproveRunnerWithResponse(ctx, "r-99", genv1.RunnerApproval{})),
-		"approver": statusOf(client.ListApproversWithResponse(ctx)),
+		"get":     statusOf(client.GetRunnerWithResponse(ctx, "r-99")),
+		"update":  statusOf(client.UpdateRunnerWithResponse(ctx, "r-99", genv1.RunnerUpdate{AllowedSources: &[]string{}})),
+		"drain":   statusOf(client.DrainRunnerWithResponse(ctx, "r-99", genv1.RunnerDrainRequest{})),
+		"undrain": statusOf(client.UndrainRunnerWithResponse(ctx, "r-99")),
+		"revoke":  statusOf(client.RevokeRunnerWithResponse(ctx, "r-99")),
+		"unlist":  statusOf(client.UnlistRunnerWithResponse(ctx, "r-99")),
+		"allow":   statusOf(client.AllowRunnerAddressWithResponse(ctx, "r-99", genv1.AllowAddress{Address: "198.51.100.7"})),
+		"approve": statusOf(client.ApproveRunnerWithResponse(ctx, "r-99", genv1.RunnerApprove{})),
 	} {
-		if want := map[string]int{"approve": 501, "approver": 501}[name]; (want == 0 && status != 404) || (want != 0 && status != want) {
+		if status != 404 {
 			t.Errorf("%s of no runner = %d", name, status)
 		}
 	}
@@ -286,16 +286,15 @@ func TestTheFakeKeepsRunnerSettings(t *testing.T) {
 	client := typed(t, d, "")
 	ctx := context.Background()
 	got, err := client.GetRunnerSettingsWithResponse(ctx)
-	if err != nil || got.JSON200 == nil || got.JSON200.HardwareKeys != genv1.HardwareKeysPreferred || got.JSON200.Residency.Label != "site" {
+	if err != nil || got.JSON200 == nil || got.JSON200.HardwareKeys != genv1.HardwareKeysPreferred || len(got.JSON200.TrustedMakers) != 0 {
 		t.Fatalf("settings = %v %s", err, got.Body)
 	}
 	changed, err := client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{HardwareKeys: new(genv1.HardwareKeysRequired)})
-	if err != nil || changed.JSON200 == nil || changed.JSON200.HardwareKeys != genv1.HardwareKeysRequired || changed.JSON200.Residency.Crossing != genv1.CrossingRefused {
+	if err != nil || changed.JSON200 == nil || changed.JSON200.HardwareKeys != genv1.HardwareKeysRequired {
 		t.Fatalf("changed = %v %s", err, changed.Body)
 	}
-	moved, err := client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{Residency: &genv1.Residency{Label: "region", Crossing: genv1.CrossingAllowed}})
-	if err != nil || moved.JSON200 == nil || moved.JSON200.Residency.Label != "region" || moved.JSON200.HardwareKeys != genv1.HardwareKeysRequired {
-		t.Fatalf("residency = %v %s", err, moved.Body)
+	if got := statusOf(client.UpdateRunnerSettingsWithBodyWithResponse(ctx, "application/json", strings.NewReader(`{"residency":{"label":"site","crossing":"allowed"}}`))); got != 400 {
+		t.Errorf("a residency, which is no setting = %d", got)
 	}
 	if got := statusOf(client.UpdateRunnerSettingsWithResponse(ctx, genv1.RunnerSettingsUpdate{})); got != 400 {
 		t.Errorf("saying nothing = %d", got)
@@ -363,11 +362,36 @@ func runnerState(t *testing.T, client *genv1.ClientWithResponses, id string) gen
 	return got.JSON200.State
 }
 
-// A runner's broker's credential is set on a runner that says it provides
-// that broker and takes its credential, kept as that runner reports it, and
-// taken away; what the server refuses, the fake refuses.
-func TestTheFakeKeepsWhatARunnerSaysOfItsBrokersCredentials(t *testing.T) {
-	at := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+// A runner provides what a test says it reports, and a runner that never
+// joined provides nothing: the test that says it does fails.
+func TestTheFakeSaysWhatARunnerProvides(t *testing.T) {
+	d := New(t)
+	client := typed(t, d, "")
+	ctx := context.Background()
+	minted, err := client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{})
+	if err != nil || minted.JSON201 == nil {
+		t.Fatal(err)
+	}
+	runner := d.Join(t, minted.JSON201.Secret)
+	d.Provide(t, runner.Id, "llm", "codex")
+	got, err := client.GetRunnerWithResponse(ctx, runner.Id)
+	if err != nil || got.JSON200 == nil || got.JSON200.Provides == nil || !slices.Equal(*got.JSON200.Provides, []string{"llm", "codex"}) {
+		t.Errorf("provides = %v %s", err, got.Body)
+	}
+	failing := &fatal{}
+	func() {
+		defer func() { _ = recover() }()
+		d.Provide(failing, "r-99", "llm")
+	}()
+	if !failing.failed {
+		t.Error("a runner that never joined provided a broker")
+	}
+}
+
+// A pending runner is approved once, online then, saying when and by
+// whom: the body's word, or the fake's administrator's.
+func TestTheFakeApprovesAPendingRunner(t *testing.T) {
+	at := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 	d := New(t, WithClock(func() time.Time { return at }))
 	client := typed(t, d, "")
 	ctx := context.Background()
@@ -378,68 +402,29 @@ func TestTheFakeKeepsWhatARunnerSaysOfItsBrokersCredentials(t *testing.T) {
 		}
 		return d.Join(t, minted.JSON201.Secret)
 	}
-	runner, quiet, revoked := join(), join(), join()
-	d.Provide(t, runner.Id, "llm", "codex")
-	d.Provide(t, revoked.Id, "llm")
-	if got := statusOf(client.RevokeRunnerWithResponse(ctx, revoked.Id)); got != 202 {
-		t.Fatalf("revoking = %d", got)
+	one, two := join(), join()
+	got, err := client.ApproveRunnerWithResponse(ctx, one.Id, genv1.RunnerApprove{ApprovedBy: new("ada@acme.example")})
+	if err != nil || got.JSON200 == nil || got.JSON200.State != genv1.RunnerStateRunnerOnline || *got.JSON200.ApprovedBy != "ada@acme.example" || !got.JSON200.ApprovedAt.Equal(at) {
+		t.Fatalf("approved = %v %s", err, got.Body)
 	}
-	box := append([]byte{1}, make([]byte, 100)...)
-	good := genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}
-	set, err := client.SetRunnerBrokerCredentialWithResponse(ctx, runner.Id, "llm", good)
-	if err != nil || set.JSON200 == nil || set.JSON200.Kind != genv1.RunnerBrokerCredentialAPIKey || !set.JSON200.SetAt.Equal(at) || set.JSON200.SetBy == "" {
-		t.Fatalf("set = %v %s", err, set.Body)
+	if got := statusOf(client.ApproveRunnerWithResponse(ctx, one.Id, genv1.RunnerApprove{})); got != 409 {
+		t.Errorf("approved twice = %d", got)
 	}
-	got, _ := client.GetRunnerWithResponse(ctx, runner.Id)
-	if held := *got.JSON200.BrokerCredentials; len(held) != 2 || held[0].Kind == nil || !held[0].SetAt.Equal(at) || held[1].Broker != "codex" || held[1].Kind != nil {
-		t.Errorf("held = %+v", held)
+	if got := statusOf(client.ApproveRunnerWithBodyWithResponse(ctx, two.Id, "application/json", strings.NewReader(`{"approvedBy":""}`))); got != 400 {
+		t.Errorf("approved by nobody = %d", got)
 	}
-	if strings.Contains(string(got.Body), "sealed") {
-		t.Errorf("the box is shown: %s", got.Body)
+	if got := statusOf(client.ApproveRunnerWithBodyWithResponse(ctx, two.Id, "application/json", strings.NewReader(`{"passkey":"x"}`))); got != 400 {
+		t.Errorf("a field an approval has not = %d", got)
 	}
-
-	for name, c := range map[string]struct {
-		runner, broker string
-		write          genv1.RunnerBrokerCredentialWrite
-		want           int
-	}{
-		"nobody":                {"r-99", "llm", good, 404},
-		"a revoked runner":      {revoked.Id, "llm", good, 409},
-		"one it does not offer": {runner.Id, "github", good, 409},
-		"a runner that is mute": {quiet.Id, "llm", good, 409},
-		"another kind":          {runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: "password", Sealed: box}, 400},
-		"not a box":             {runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: []byte("sk-ant")}, 400},
-	} {
-		if got := statusOf(client.SetRunnerBrokerCredentialWithResponse(ctx, c.runner, c.broker, c.write)); got != c.want {
-			t.Errorf("%s = %d, want %d", name, got, c.want)
-		}
+	unsaid, err := client.ApproveRunnerWithBodyWithResponse(ctx, two.Id, "application/json", http.NoBody)
+	if err != nil || unsaid.JSON200 == nil || *unsaid.JSON200.ApprovedBy != "admin@example.com" {
+		t.Errorf("approved with no body = %v %s", err, unsaid.Body)
 	}
-	if got := statusOf(client.SetRunnerBrokerCredentialWithBodyWithResponse(ctx, runner.Id, "llm", "application/json", strings.NewReader(`{"kind":"apiKey","sealed":"AQ==","plaintext":"sk"}`))); got != 400 {
-		t.Errorf("a field the request does not have = %d", got)
+	// Enrolled again, it waits for approval as a new one would.
+	if got := statusOf(client.RevokeRunnerWithResponse(ctx, two.Id)); got != 202 {
+		t.Errorf("revoked = %d", got)
 	}
-	d.Provide(t, quiet.Id)
-	if got := statusOf(client.SetRunnerBrokerCredentialWithResponse(ctx, quiet.Id, "llm", good)); got != 409 {
-		t.Errorf("a runner that provides nothing = %d", got)
-	}
-
-	if got := statusOf(client.DeleteRunnerBrokerCredentialWithResponse(ctx, runner.Id, "llm")); got != 204 {
-		t.Errorf("taken away = %d", got)
-	}
-	for name, c := range map[string][2]string{"twice": {runner.Id, "llm"}, "never set": {runner.Id, "codex"}, "nobody's": {"r-99", "llm"}, "a mute runner's": {quiet.Id, "llm"}} {
-		if got := statusOf(client.DeleteRunnerBrokerCredentialWithResponse(ctx, c[0], c[1])); got != 404 {
-			t.Errorf("taken away %s = %d", name, got)
-		}
-	}
-	got, _ = client.GetRunnerWithResponse(ctx, runner.Id)
-	if held := (*got.JSON200.BrokerCredentials)[0]; held.Kind != nil || held.SetAt != nil {
-		t.Errorf("after = %+v", held)
-	}
-	failing := &fatal{}
-	func() {
-		defer func() { _ = recover() }()
-		d.Provide(failing, "r-99", "llm")
-	}()
-	if !failing.failed {
-		t.Error("a runner that never joined provided a broker")
+	if got := statusOf(client.ApproveRunnerWithResponse(ctx, two.Id, genv1.RunnerApprove{})); got != 409 {
+		t.Errorf("a revoked runner approved = %d", got)
 	}
 }

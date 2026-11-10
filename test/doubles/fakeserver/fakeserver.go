@@ -181,6 +181,10 @@ type sandbox struct {
 	output  map[string]string
 	events  []genv1.SandboxEvent
 	changed chan struct{}
+	// grants is the credential lent for a turn to each runner-provided
+	// broker, by its name, as the sandbox's runner holds it: in memory, and
+	// forgotten when the sandbox stops or goes.
+	grants map[string]genv1.GrantWrite
 }
 
 type volume struct {
@@ -274,6 +278,8 @@ func (d *Server) routes() http.Handler {
 	handle("PUT /v1/sandboxes/{id}/brokers/{broker}", "attachSandboxBroker", d.attachSandboxBroker)
 	handle("DELETE /v1/sandboxes/{id}/brokers/{broker}", "detachSandboxBroker", d.detachSandboxBroker)
 	handle("GET /v1/sandboxes/{id}/brokers/{broker}/serve", "serveSandboxBroker", d.serveSandboxBroker)
+	handle("PUT /v1/sandboxes/{id}/brokers/{broker}/grant", "putSandboxBrokerGrant", d.putGrant)
+	handle("DELETE /v1/sandboxes/{id}/brokers/{broker}/grant", "deleteSandboxBrokerGrant", d.deleteGrant)
 	handle("POST /v1/sandboxes/{id}/commands", "runCommand", d.runCommand)
 	handle("GET /v1/sandboxes/{id}/files", "readFile", d.readFile)
 	handle("PUT /v1/sandboxes/{id}/files", "writeFile", d.writeFile)
@@ -321,20 +327,13 @@ func (d *Server) routes() http.Handler {
 	handle("POST /v1/runners/{runnerId}/unlist", "unlistRunner", d.unlistRunner)
 	handle("POST /v1/runners/{runnerId}/rotate-ca", "rotateRunnerCA", d.rotateRunnerCA)
 	handle("POST /v1/runners/{runnerId}/allow-address", "allowRunnerAddress", d.allowRunnerAddress)
-	handle("POST /v1/runners/{runnerId}/approve", "approveRunner", notInTheFake("judge a passkey's approval"))
-	handle("PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential", "setRunnerBrokerCredential", d.setRunnerBrokerCredential)
-	handle("DELETE /v1/runners/{runnerId}/brokers/{brokerName}/credential", "deleteRunnerBrokerCredential", d.deleteRunnerBrokerCredential)
+	handle("POST /v1/runners/{runnerId}/approve", "approveRunner", d.approveRunner)
 	handle("POST /v1/runners/join-tokens", "createJoinToken", d.createJoinToken)
 	handle("GET /v1/runners/join-tokens", "listJoinTokens", d.listJoinTokens)
 	handle("PATCH /v1/runners/join-tokens/{tokenId}", "updateJoinToken", d.updateJoinToken)
 	handle("DELETE /v1/runners/join-tokens/{tokenId}", "revokeJoinToken", d.revokeJoinToken)
 	handle("GET /v1/runners/settings", "getRunnerSettings", d.getRunnerSettings)
 	handle("PATCH /v1/runners/settings", "updateRunnerSettings", d.updateRunnerSettings)
-	handle("GET /v1/approvers", "listApprovers", notInTheFake("keep approvers"))
-	handle("POST /v1/approvers", "addApprover", notInTheFake("keep approvers"))
-	handle("GET /v1/credentials/{subject}", "getSealedCredential", notInTheFake("keep sealed credentials"))
-	handle("PUT /v1/credentials/{subject}", "putSealedCredential", notInTheFake("keep sealed credentials"))
-	handle("DELETE /v1/credentials/{subject}", "deleteSealedCredential", notInTheFake("keep sealed credentials"))
 	handle("POST /v1/volumes/{name}/transfer", "transferVolume", notInTheFake("move volumes between runners"))
 	handle("GET /v1/usage", "getUsage", d.getUsage)
 	return mux
@@ -454,6 +453,10 @@ func (d *Server) Settle(id genv1.SandboxID, state genv1.SandboxState, message st
 
 func (d *Server) settle(s *sandbox, state genv1.SandboxState, message string) {
 	s.record.State = state
+	if state != genv1.SandboxStateReady && state != genv1.SandboxStatePaused {
+		// A runner forgets what was lent to a sandbox that stopped.
+		s.grants = nil
+	}
 	if state != genv1.SandboxStateReady {
 		// A broker a caller serves is a running machine's: stopped or
 		// paused, the caller is hung up on and the broker goes.

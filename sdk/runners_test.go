@@ -105,67 +105,54 @@ func TestARunnerJoinedWithANameIsListedWithIt(t *testing.T) {
 	}
 }
 
-// What the fake does not judge — a passkey, a credential, a move between
-// runners — is answered for it by the test, and the SDK reads the answer.
-func TestWhatARunnersAdministratorApprovesAndSealsIsAMethodEach(t *testing.T) {
+// A pending runner is approved, by whoever the call names or the key's
+// owner, once; what the fake does not do — a move between runners — is
+// answered for it by the test, and the SDK reads the answer.
+func TestARunnersAdministratorApprovesItAndMovesWhatItHolds(t *testing.T) {
 	d, client := fake(t)
 	ctx := context.Background()
-	approved := genv1.Runner{Id: "r-01", Name: "factory-03", State: genv1.RunnerStateRunnerOnline}
-	answer := func(status int, body any) fakeserver.Interceptor {
-		return func(w http.ResponseWriter, _ *http.Request, _ http.HandlerFunc) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			if body != nil {
-				_ = json.NewEncoder(w).Encode(body)
-			}
-		}
+	token, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})
+	if err != nil {
+		t.Fatal(err)
 	}
-	d.Intercept("approveRunner", answer(200, approved))
-	d.Intercept("listApprovers", answer(200, genv1.ApproverPage{Items: []genv1.Approver{{Name: "ada"}}}))
-	d.Intercept("addApprover", answer(201, genv1.Approver{Name: "grace"}))
-	d.Intercept("getSealedCredential", answer(200, genv1.SealedCredential{Subject: "ada@example.com"}))
-	d.Intercept("putSealedCredential", answer(200, genv1.SealedCredential{Subject: "ada@example.com"}))
-	d.Intercept("deleteSealedCredential", answer(204, nil))
-	d.Intercept("transferVolume", answer(202, genv1.Volume{Name: "data"}))
+	runner := d.Join(t, token.Secret)
+	approved, err := client.ApproveRunner(ctx, runner.Id, genv1.RunnerApprove{ApprovedBy: new("ada@acme.example")})
+	if err != nil || approved.State != genv1.RunnerStateRunnerOnline || approved.ApprovedBy == nil || *approved.ApprovedBy != "ada@acme.example" || approved.ApprovedAt == nil {
+		t.Errorf("ApproveRunner = %+v, %v", approved, err)
+	}
+	var refused *Error
+	if _, err := client.ApproveRunner(ctx, runner.Id, genv1.RunnerApprove{}); !errors.As(err, &refused) || refused.Status != http.StatusConflict {
+		t.Errorf("approved twice = %v", err)
+	}
+	if _, err := client.ApproveRunner(ctx, "r-99", genv1.RunnerApprove{}); CodeOf(err) != "not_found" {
+		t.Errorf("nobody = %v", err)
+	}
+	other := d.Join(t, mustMint(t, client).Secret)
+	if got, err := client.ApproveRunner(ctx, other.Id, genv1.RunnerApprove{}); err != nil || got.ApprovedBy == nil || *got.ApprovedBy == "" {
+		t.Errorf("approved by the key's owner = %+v, %v", got, err)
+	}
 
-	if got, err := client.ApproveRunner(ctx, "r-01", genv1.RunnerApproval{}); err != nil || got.Name != "factory-03" {
-		t.Errorf("ApproveRunner = %+v, %v", got, err)
-	}
-	if got, err := client.Approvers(ctx); err != nil || len(got) != 1 || got[0].Name != "ada" {
-		t.Errorf("Approvers = %+v, %v", got, err)
-	}
-	if got, err := client.AddApprover(ctx, genv1.ApproverRequest{}); err != nil || got.Name != "grace" {
-		t.Errorf("AddApprover = %+v, %v", got, err)
-	}
-	if got, err := client.SealedCredential(ctx, "ada@example.com"); err != nil || got.Subject != "ada@example.com" {
-		t.Errorf("SealedCredential = %+v, %v", got, err)
-	}
-	if got, err := client.PutSealedCredential(ctx, "ada@example.com", genv1.SealedCredentialWrite{}); err != nil || got.Subject != "ada@example.com" {
-		t.Errorf("PutSealedCredential = %+v, %v", got, err)
-	}
-	if err := client.DeleteSealedCredential(ctx, "ada@example.com"); err != nil {
-		t.Errorf("DeleteSealedCredential = %v", err)
-	}
+	d.Intercept("transferVolume", fakeserver.Interceptor(func(w http.ResponseWriter, _ *http.Request, _ http.HandlerFunc) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(genv1.Volume{Name: "data"})
+	}))
 	if got, err := client.TransferVolume(ctx, "data", genv1.VolumeTransfer{}); err != nil || got.Name != "data" {
 		t.Errorf("TransferVolume = %+v, %v", got, err)
 	}
-	// Not intercepted, each is the fake's refusal, as the caller's error.
-	for name, err := range map[string]error{
-		"ApproveRunner":    func() error { _, err := client.ApproveRunner(ctx, "r-01", genv1.RunnerApproval{}); return err }(),
-		"Approvers":        func() error { _, err := client.Approvers(ctx); return err }(),
-		"AddApprover":      func() error { _, err := client.AddApprover(ctx, genv1.ApproverRequest{}); return err }(),
-		"SealedCredential": func() error { _, err := client.SealedCredential(ctx, "ada@example.com"); return err }(),
-		"PutSealedCredential": func() error {
-			_, err := client.PutSealedCredential(ctx, "ada@example.com", genv1.SealedCredentialWrite{})
-			return err
-		}(),
-		"DeleteSealedCredential": client.DeleteSealedCredential(ctx, "ada@example.com"),
-		"TransferVolume":         func() error { _, err := client.TransferVolume(ctx, "data", genv1.VolumeTransfer{}); return err }(),
-	} {
-		if CodeOf(err) != "not_implemented" {
-			t.Errorf("%s = %v", name, err)
-		}
+	if _, err := client.TransferVolume(ctx, "data", genv1.VolumeTransfer{}); CodeOf(err) != "not_implemented" {
+		t.Errorf("TransferVolume, not intercepted = %v", err)
 	}
+}
+
+// mustMint is a join token, minted.
+func mustMint(t *testing.T, client *Client) genv1.JoinTokenCreated {
+	t.Helper()
+	token, err := client.MintJoinToken(context.Background(), genv1.JoinTokenRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 // The SDK reads /v1/usage, narrowed as it is asked.
@@ -203,23 +190,15 @@ func TestRunnerCallsThatNeverReachTheServerSaySo(t *testing.T) {
 		"UnlistRunner":         func() error { _, err := client.UnlistRunner(ctx, "r-01"); return err }(),
 		"RotateRunnerCA":       func() error { _, err := client.RotateRunnerCA(ctx, "r-01"); return err }(),
 		"AllRunners":           func() error { _, err := client.AllRunners(ctx); return err }(),
-		"ApproveRunner":        func() error { _, err := client.ApproveRunner(ctx, "r-01", genv1.RunnerApproval{}); return err }(),
+		"ApproveRunner":        func() error { _, err := client.ApproveRunner(ctx, "r-01", genv1.RunnerApprove{}); return err }(),
 		"MintJoinToken":        func() error { _, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{}); return err }(),
 		"JoinTokens":           func() error { _, err := client.JoinTokens(ctx); return err }(),
 		"RevokeJoinToken":      client.RevokeJoinToken(ctx, "x"),
 		"SetJoinTokenSources":  func() error { _, err := client.SetJoinTokenSources(ctx, "x", nil); return err }(),
 		"RunnerSettings":       func() error { _, err := client.RunnerSettings(ctx); return err }(),
 		"UpdateRunnerSettings": func() error { _, err := client.UpdateRunnerSettings(ctx, genv1.RunnerSettingsUpdate{}); return err }(),
-		"Approvers":            func() error { _, err := client.Approvers(ctx); return err }(),
-		"AddApprover":          func() error { _, err := client.AddApprover(ctx, genv1.ApproverRequest{}); return err }(),
-		"SealedCredential":     func() error { _, err := client.SealedCredential(ctx, "a@example.com"); return err }(),
-		"PutSealedCredential": func() error {
-			_, err := client.PutSealedCredential(ctx, "a@example.com", genv1.SealedCredentialWrite{})
-			return err
-		}(),
-		"DeleteSealedCredential": client.DeleteSealedCredential(ctx, "a@example.com"),
-		"TransferVolume":         func() error { _, err := client.TransferVolume(ctx, "data", genv1.VolumeTransfer{}); return err }(),
-		"Usage":                  func() error { _, err := client.Usage(ctx, UsageOf{}); return err }(),
+		"TransferVolume":       func() error { _, err := client.TransferVolume(ctx, "data", genv1.VolumeTransfer{}); return err }(),
+		"Usage":                func() error { _, err := client.Usage(ctx, UsageOf{}); return err }(),
 	} {
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("%s = %v", name, err)
@@ -231,7 +210,7 @@ func TestRunnerCallsThatNeverReachTheServerSaySo(t *testing.T) {
 func TestARunnersListRefusedIsAnError(t *testing.T) {
 	d, client := fake(t)
 	ctx := context.Background()
-	for _, op := range []string{"listRunners", "listJoinTokens", "listApprovers"} {
+	for _, op := range []string{"listRunners", "listJoinTokens"} {
 		d.Intercept(op, fakeserver.Refuse(http.StatusForbidden, genv1.ErrorCodeForbidden, "runners.read"))
 	}
 	if _, err := client.Runners(ctx); CodeOf(err) != "forbidden" {
@@ -239,47 +218,5 @@ func TestARunnersListRefusedIsAnError(t *testing.T) {
 	}
 	if _, err := client.JoinTokens(ctx); CodeOf(err) != "forbidden" {
 		t.Errorf("JoinTokens = %v", err)
-	}
-	if _, err := client.Approvers(ctx); CodeOf(err) != "forbidden" {
-		t.Errorf("Approvers = %v", err)
-	}
-}
-
-// A broker's credential, sealed in the caller, is set on a runner that
-// provides that broker and taken away again, and the runner says its kind
-// and when it was set; one it does not provide is the server's refusal.
-func TestABrokersCredentialIsSetOnARunnerAndTakenAway(t *testing.T) {
-	d, client := fake(t)
-	ctx := context.Background()
-	token, err := client.MintJoinToken(ctx, genv1.JoinTokenRequest{RunnerName: new("factory-03")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := d.Join(t, token.Secret)
-	d.Provide(t, runner.Id, "llm")
-	box := append([]byte{1}, make([]byte, 65+12+16+8)...)
-	set, err := client.SetRunnerBrokerCredential(ctx, runner.Id, "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialSubscription, Sealed: box})
-	if err != nil || set.Broker != "llm" || set.Kind != genv1.RunnerBrokerCredentialSubscription || set.SetAt.IsZero() {
-		t.Fatalf("set = %+v, %v", set, err)
-	}
-	shown, err := client.Runner(ctx, runner.Id)
-	if err != nil || shown.BrokerCredentials == nil || len(*shown.BrokerCredentials) != 1 {
-		t.Fatalf("shown = %+v, %v", shown.BrokerCredentials, err)
-	}
-	if held := (*shown.BrokerCredentials)[0]; held.Kind == nil || *held.Kind != genv1.RunnerBrokerCredentialSubscription || held.SetAt == nil || !held.SetAt.Equal(set.SetAt) {
-		t.Errorf("held = %+v", held)
-	}
-	if err := client.DeleteRunnerBrokerCredential(ctx, runner.Id, "llm"); err != nil {
-		t.Errorf("taken away = %v", err)
-	}
-	var refused *Error
-	if err := client.DeleteRunnerBrokerCredential(ctx, runner.Id, "llm"); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
-		t.Errorf("taken away twice = %v", err)
-	}
-	if _, err := client.SetRunnerBrokerCredential(ctx, runner.Id, "github", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}); !errors.As(err, &refused) || refused.Status != http.StatusConflict {
-		t.Errorf("one it does not provide = %v", err)
-	}
-	if _, err := client.SetRunnerBrokerCredential(ctx, "r-99", "llm", genv1.RunnerBrokerCredentialWrite{Kind: genv1.RunnerBrokerCredentialAPIKey, Sealed: box}); !errors.As(err, &refused) || refused.Status != http.StatusNotFound {
-		t.Errorf("nobody's = %v", err)
 	}
 }

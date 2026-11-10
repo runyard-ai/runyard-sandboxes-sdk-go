@@ -877,8 +877,8 @@ paths:
 
         **Each runner has a CA of its own**, and signs its own sandboxes'
         identities and no other's. `GET /v1/ca/bundle` is the same set with
-        each CA bound to the one runner it may sign for, and the passkey
-        approval that put it there, for an upstream that checks both.
+        each CA bound to the one runner it may sign for, for an upstream
+        that checks that too.
 
         This is the other half of the broker plane: an operator declares an
         upstream here, and gives that upstream this. Everything the upstream
@@ -925,18 +925,16 @@ paths:
       summary: The approved bundle, each CA bound to its runner
       description: |
         Every approved runner's entry: its sandbox CA, the hostID that CA may
-        sign for and no other, its assigned labels, the public halves of its
-        record key and its broker key, and the approval that put it here —
-        a workspace approver's passkey assertion over all of them, or, for a
-        rotated CA, the signature of the CA it replaced. Beside them, the
-        workspace credential key's public half, signed by the runner that
-        made it, once one has.
+        sign for and no other, its assigned labels, and the public halves of
+        its record key and its broker key. During a rotation's overlap a
+        runner has two entries, the CA it rotated from first.
 
-        **The server cannot add an entry an upstream would accept**: each
-        approval is checked by the upstream against the approver keys it was
-        given when it was installed (`GET /v1/approvers`). What a passkey
-        signed is `statement` of `RunnerApproval`, which the upstream makes
-        again from the entry.
+        **An upstream trusts this server's word for it**, as it trusts this
+        server's TLS certificate for the bundle itself: a runner is in it
+        once a workspace admin approved it (`POST
+        /v1/runners/{runnerId}/approve`), and leaves it when revoked. The
+        generation only moves forward, so an upstream that follows it never
+        takes back a runner it was told was revoked.
 
         Conditional and held exactly as `GET /v1/ca` is, with the same ETag:
         the two are one bundle, written two ways.
@@ -958,98 +956,6 @@ paths:
           $ref: "#/components/responses/BundleNotModified"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/ca/log:
-    get:
-      operationId: getCALog
-      tags: [Brokers]
-      summary: Every change to the bundle, hash-chained
-      description: |
-        Oldest first: each approver added, each runner approved, each CA
-        rotated, each runner revoked or enrolled again, and the workspace
-        credential key published. Each line's `hash` is the SHA-256, in hex,
-        of the previous line's `hash` followed by this line's `body`, so a
-        line changed or taken out afterwards breaks every hash after it; the
-        first line's previous hash is empty.
-      parameters:
-        - name: after
-          in: query
-          description: Only the lines after this seq.
-          schema: { type: integer, format: int64, minimum: 0, default: 0 }
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "200":
-          description: The lines.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/BundleLogPage" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /v1/approvers:
-    get:
-      operationId: listApprovers
-      tags: [Runners]
-      summary: The workspace's approver keys
-      description: |
-        The public keys of the passkeys that may approve a runner, oldest
-        first. An upstream is given these once, when it is installed, and
-        checks every bundle entry's approval against them; whoever installs
-        it compares their ids with what the console shows.
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "200":
-          description: The approvers.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ApproverPage" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    post:
-      operationId: addApprover
-      tags: [Runners]
-      summary: Add an approver key
-      description: |
-        Needs `runners.admin`, and an assertion by a passkey over the
-        addition (`ApproverStatement`): by an approver this workspace has
-        already, or — for the first, when there is none — by the passkey
-        being added, which proves it is held by whoever adds it. Nothing
-        else adds one, so a server cannot make itself an approver.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ApproverRequest" }
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "201":
-          description: Added.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Approver" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          description: That key is an approver already.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "422":
-          $ref: "#/components/responses/ApprovalInvalid"
         "403":
           $ref: "#/components/responses/Forbidden"
         "401":
@@ -2365,9 +2271,8 @@ paths:
         copied between runners only by a transfer the server plans — when a
         sandbox made on it does not fit where it is, or when an admin moves
         it (`POST /v1/volumes/{volumeName}/transfer`) — through the server,
-        encrypted end to end, and never across the workspace's residency
-        lines unless its settings allow it (`GET /v1/runners/settings`). A
-        volume that is not there anywhere is `404 not_found`.
+        encrypted end to end. A volume that is not there anywhere is `404
+        not_found`.
 
         **Bound to a principal as the source is, unless the call says
         otherwise.** `principal` absent, the clone is bound to the principal
@@ -2459,11 +2364,6 @@ paths:
         Runners never connect to each other. Once the target has checked
         its copy the volume is the target's, and the source deletes its own.
 
-        **Within the workspace's residency lines.** A volume is not moved
-        between runners whose values of the residency label differ (`site`
-        by default; `GET /v1/runners/settings`), unless the workspace's
-        settings allow a volume to cross them: refused `409 residency`.
-
         **A volume a sandbox holds moves with that sandbox**, under its id,
         and only while it is stopped: one that is not is refused `409
         volume_in_use`. The target must have room for the sandbox (`507`),
@@ -2504,7 +2404,6 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: >-
-            `residency`: the target is on the other side of a residency line.
             `volume_in_use`: a sandbox that is not stopped holds it, or it is
             being cloned.
             `volume_transferring`: it is being transferred already.
@@ -2665,8 +2564,8 @@ paths:
             the volume it names is being moved to another runner, with a
             `Retry-After`. A sandbox naming a volume no sandbox holds, whose
             runner cannot take it, has the server plan that volume's transfer
-            to a runner that can, within the workspace's residency lines, and
-            is answered so: made again with the same `Idempotency-Key` once
+            to a runner that can, within the sandbox's `placement`, and is
+            answered so: made again with the same `Idempotency-Key` once
             the volume is there (`GET /v1/volumes`), it is placed with it.
           content:
             application/json:
@@ -2844,9 +2743,8 @@ paths:
 
         Its vCPUs and memory are held again, and measured first against
         its runner's capacity. **One its runner has no room for is moved**,
-        with its volume, to a runner that has, meets its spec and is within
-        the workspace's residency lines (`GET /v1/runners/settings`), and is
-        started there: answered `202` stopped, with `transferringTo`, and
+        with its volume, to a runner that has, meets its spec — its
+        `placement` among it — and is started there: answered `202` stopped, with `transferringTo`, and
         the same id. So is one whose runner is draining to be revoked. Only
         when no runner can take it is it `507` `capacity_exceeded`, or `409`
         `runner_draining`. One being moved already is answered as it is.
@@ -3305,6 +3203,94 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/StillBooting"
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+  /v1/sandboxes/{sandboxId}/brokers/{brokerName}/grant:
+    parameters:
+      - $ref: "#/components/parameters/SandboxID"
+      - $ref: "#/components/parameters/BrokerName"
+    put:
+      operationId: putSandboxBrokerGrant
+      tags: [Brokers]
+      summary: Lend a sandbox's runner-provided broker a credential for one turn
+      description: |
+        The per-turn grant (docs/design/runners, "Where the credential is
+        kept: the per-turn grant"): whoever keeps a model credential lends
+        it to the broker the sandbox's runner provides under `brokerName`,
+        for this sandbox alone and until `expiresAt`, and takes it back with
+        `DELETE` when the turn ends. A new grant replaces the one the
+        sandbox had for that broker.
+
+        This server passes it to the runner as a call and keeps nothing of
+        it: the credential is never stored, logged or recorded here, and the
+        runner holds it in memory alone, serving it to that broker on a
+        socket of the broker's own. The sandbox's history says a credential
+        was lent, for which turn and until when, and never what it was.
+
+        The runner forgets it at `expiresAt`, at `DELETE`, when the sandbox
+        stops, is deleted or leaves it, and when it restarts: a caller whose
+        turn outlives one of those grants again.
+
+        Needs `network.write`, as attaching the broker does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantWrite" }
+      responses:
+        "204":
+          description: Lent; the broker serves it from the sandbox's next call.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >-
+            `not_provided`: the shared broker of that name is not declared
+            `url: runner`, or the sandbox's runner does not provide it
+            taking grants. Or `conflict`: the sandbox is not running, and
+            a grant would be forgotten as it was given.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: >-
+            `bad_request`: `expiresAt` is in the past, or more than 24 hours
+            ahead: a grant is for one turn, and is lent again while the turn
+            lasts. Or `account` is missing from a `subscription` to `openai`,
+            or given on any other grant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          $ref: "#/components/responses/SandboxUnreachable"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "410":
+          $ref: "#/components/responses/RunnerRevoked"
+    delete:
+      operationId: deleteSandboxBrokerGrant
+      tags: [Brokers]
+      summary: Take back the credential lent for a turn
+      description: |
+        The runner forgets the grant at once: the broker's next call for
+        this sandbox finds none (`grant_missing`). Taking back a grant that
+        is not there succeeds, so every way a turn ends may call it.
+      responses:
+        "204":
+          description: Forgotten, or was never there.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/SandboxUnreachable"
         "401":
@@ -5432,9 +5418,8 @@ paths:
       tags: [Runners]
       summary: The workspace's settings for its runners
       description: >-
-        Whether runners must hold their keys in a TPM, the TPM makers whose
-        endorsement certificates this server trusts to prove one, and the
-        workspace's residency lines.
+        Whether runners must hold their keys in a TPM, and the TPM makers
+        whose endorsement certificates this server trusts to prove one.
       responses:
         "200":
           description: The settings.
@@ -5459,15 +5444,6 @@ paths:
         refused with the reason. A runner enrolled before keeps its
         certificate until it renews. Off by default, since a workspace that
         turns it on cannot add a host without a TPM.
-
-        `residency` names the assigned label whose values draw the
-        workspace's lines, `site` by default, and whether a volume may cross
-        one: `refused` by default, so a volume is never transferred between
-        runners whose values differ, and a runner without the label is on a
-        side of its own. The label is an assigned one, signed at approval,
-        because a runner must not be able to move itself across a line.
-        Changing it is an activity record of its own (`type: setting`). What
-        is absent is left as it is.
       requestBody:
         required: true
         content:
@@ -5501,28 +5477,27 @@ paths:
     post:
       operationId: approveRunner
       tags: [Runners]
-      summary: Approve a runner with a passkey
+      summary: Approve a pending runner
       description: |
-        Needs `runners.admin`, and a workspace approver's passkey (WebAuthn)
-        assertion over the runner's entry: `statement` of `RunnerApproval`,
-        made from what the runner reported and `approvedAt`. Until then the
-        runner is `pending`: in no bundle, and given no sandbox.
+        Needs `runners.admin`. Until then the runner is `pending`: in no
+        bundle, and given no sandbox. Approving puts its sandbox CA in the
+        bundle every upstream trusts (`GET /v1/ca/bundle`), which moves the
+        bundle's generation, and writes down when and by whom: the runner's
+        `approvedAt` and `approvedBy`, and an `approved` event of its own.
 
-        The assertion is checked here, and put in the runner's bundle entry
-        as it was made, so that every upstream checks it again for itself:
-        the server only carries it. Its challenge is the SHA-256 of the
-        statement; it is for the approver's `rpId`, with the user present;
-        and `approvedAt` is within five minutes of this server's clock.
+        `approvedBy` is who approved it, as whoever asks says: the console
+        names the admin who clicked, after a recent sign-in. Without it, it
+        is the calling key's owner. Compare the runner's CA fingerprint with
+        what `runyard-runner status` prints on its host before approving.
 
-        Approving moves the bundle's generation, and is a line of its log.
         The moves off it that waited for it (`waitingMoves`, at step
         `waiting_approval`) go on by themselves once its runners hold the
         bundle that names it.
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RunnerApproval" }
+            schema: { $ref: "#/components/schemas/RunnerApprove" }
       responses:
         "503":
           $ref: "#/components/responses/ControlDBUnavailable"
@@ -5542,8 +5517,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "422":
-          $ref: "#/components/responses/ApprovalInvalid"
         "403":
           $ref: "#/components/responses/Forbidden"
         "401":
@@ -5561,13 +5534,14 @@ paths:
       tags: [Runners]
       summary: Ask an approved runner to rotate its sandbox CA
       description: |
-        Needs `runners.admin`, and no passkey: a rotation needs nobody. The
-        runner is told as a change of its desired state, and makes a new
-        sandbox CA (in its TPM, where its key is in one), signs the new CA's
-        bundle entry with the CA it was approved with, and reports it. The
-        server checks that signature against the approved entry for that
-        hostID and puts the new CA in the bundle beside the old, which moves
-        the bundle's generation. The runner signs nothing with the new CA
+        Needs `runners.admin`. The runner is told as a change of its desired
+        state, and makes a new sandbox CA (in its TPM, where its key is in
+        one), signs the new CA's entry with the CA it was approved with, and
+        reports it. This server alone checks that signature, against the
+        approved CA for that hostID, and puts the new CA in the bundle beside
+        the old, which moves the bundle's generation: the bundle carries no
+        proof of it, and an upstream follows the rotation as it follows any
+        change to the bundle. The runner signs nothing with the new CA
         until a broker's refresh interval has passed since the bundle
         carried it, and then signs with it alone; the old CA leaves the
         bundle once the leaves it signed have expired. A runner whose key is
@@ -5595,177 +5569,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/runners/{runnerId}/brokers/{brokerName}/credential:
-    parameters:
-      - name: runnerId
-        in: path
-        required: true
-        description: The runner's hostID.
-        schema: { type: string }
-      - $ref: "#/components/parameters/BrokerName"
-    put:
-      operationId: setRunnerBrokerCredential
-      tags: [Runners]
-      summary: Set the credential of a broker a runner provides, sealed to it
-      description: |
-        Needs `runners.admin`. The third way a runner-provided broker's
-        credential is set (docs/design/runners, "The LLM broker on a
-        runner"): sealed in the browser to the runner's approved
-        `brokerKey`, so that this server, and whoever serves the console,
-        carry ciphertext and nothing else. `sealed` is what `sealbox` makes
-        (ECIES over P-256 with HKDF-SHA256 and AES-256-GCM, as WebCrypto
-        does it) of the credential as the broker reads it from its file: an
-        API key, or a subscription's sign-in as JSON. `kind` says which,
-        and is all that is said of it in the clear.
-
-        The server keeps the ciphertext alone and hands it to that runner as
-        a change of its desired state; the runner opens it with its broker
-        key and writes it where the broker it provides under `brokerName`
-        reads its credential, never logging it. What it reports of it —
-        the kind, when it was set and last used, never the credential — is
-        the runner's `brokerCredentials`. Setting it again replaces it.
-
-        Refused `409` unless the runner is approved and not revoked, and,
-        as it last reported, provides `brokerName` and takes a credential
-        for it: a sealed credential is sent to no runner that would not
-        write it where its broker reads it.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/RunnerBrokerCredentialWrite" }
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "200":
-          description: Kept, and on its way to the runner.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/RunnerBrokerCredential" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          description: >-
-            `conflict`: the runner is not approved, was revoked, does not
-            provide `brokerName`, or takes no credential for it from its
-            server.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      operationId: deleteRunnerBrokerCredential
-      tags: [Runners]
-      summary: Take away the credential set for a runner's broker
-      description: |
-        Needs `runners.admin`. The runner is told to remove the file it wrote
-        it to, and the server forgets the ciphertext. A credential set on the
-        runner's host instead is the host's, and is not touched here.
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "204":
-          description: Taken away, and on its way to the runner.
-        "404":
-          description: "`not_found`: no such runner, or no credential was set for this broker of it here."
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /v1/credentials/{subject}:
-    parameters:
-      - name: subject
-        in: path
-        required: true
-        description: >-
-          The person whose subscription it is, by the email they sign in
-          with: the subject a session acting for them names.
-        schema: { type: string, format: email }
-    get:
-      operationId: getSealedCredential
-      tags: [Runners]
-      summary: A person's sealed subscription
-      description: |
-        Ciphertext, encrypted to the workspace credential key, which only
-        this workspace's runners hold: this server cannot open it. A person
-        reads their own; an administrator anybody's.
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "200":
-          description: The sealed credential and its version.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SealedCredential" }
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    put:
-      operationId: putSealedCredential
-      tags: [Runners]
-      summary: Connect a person's subscription, sealed
-      description: |
-        What the console, or `ryclaude login`, sends once a person has signed
-        in to their provider: `{code, verifier}`, encrypted in the browser
-        (or on their machine) to the workspace credential key published in
-        `GET /v1/ca/bundle`. A runner opens it, trades the code for tokens,
-        and writes them back sealed the same way. A person connects their
-        own; an administrator anybody's.
-
-        Compare-and-swap: `version` is the version this replaces, `0` for
-        none, and the answer is the new one. Refused while a runner holds
-        the renewal lease, since it is about to write.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/SealedCredentialWrite" }
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "200":
-          description: Written.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SealedCredential" }
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "409":
-          description: The version moved, or a runner holds the lease.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    delete:
-      operationId: deleteSealedCredential
-      tags: [Runners]
-      summary: Disconnect a person's subscription
-      description: Idempotent. What a runner holds of it in memory lapses with its access token.
-      responses:
-        "503":
-          $ref: "#/components/responses/ControlDBUnavailable"
-        "204":
-          description: Gone, or was never there.
         "403":
           $ref: "#/components/responses/Forbidden"
         "401":
@@ -6283,15 +6086,6 @@ components:
       headers:
         ETag:
           $ref: "#/components/headers/BundleETag"
-    ApprovalInvalid:
-      description: >-
-        The passkey assertion does not verify: not by an approver of this
-        workspace, not over this statement, not for the approver's relying
-        party, without the user present, or signed too long ago. Code
-        `approval_invalid`, and the message says which.
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: >-
         No key or session, or one this server will not accept — missing,
@@ -9121,10 +8915,9 @@ components:
 
     RunnerSettings:
       type: object
-      required: [hardwareKeys, trustedMakers, residency]
+      required: [hardwareKeys, trustedMakers]
       properties:
         hardwareKeys: { $ref: "#/components/schemas/HardwareKeys" }
-        residency: { $ref: "#/components/schemas/Residency" }
         trustedMakers:
           type: array
           description: "The TPM makers' endorsement CAs this server trusts, by name, from `tpm.endorsementRoots` in its configuration: a key in a TPM of none of them is `file`."
@@ -9134,29 +8927,6 @@ components:
       minProperties: 1
       properties:
         hardwareKeys: { $ref: "#/components/schemas/HardwareKeys" }
-        residency: { $ref: "#/components/schemas/Residency" }
-    Residency:
-      type: object
-      description: >-
-        Where the workspace's volumes may go: the assigned label whose values
-        draw its residency lines, and whether a volume may cross one.
-      required: [label, crossing]
-      additionalProperties: false
-      properties:
-        label:
-          type: string
-          minLength: 1
-          maxLength: 63
-          description: An assigned label's key. `site` until changed.
-          example: site
-        crossing:
-          type: string
-          enum: [refused, allowed]
-          x-enum-varnames: [CrossingRefused, CrossingAllowed]
-          description: >-
-            `refused`, the default: a volume is never transferred between
-            runners whose values of `label` differ. `allowed`: it moves
-            freely, for a workspace that docked runners for capacity.
     HardwareKeys:
       type: string
       enum: [preferred, required]
@@ -9309,7 +9079,16 @@ components:
           description: >-
             While a rotation's overlap lasts, the CA it rotated from, still in
             the bundle until the leaves it signed have expired.
-        approval: { $ref: "#/components/schemas/BundleApproval" }
+        approvedAt:
+          type: string
+          format: date-time
+          description: When it was approved. Absent while it is pending.
+        approvedBy:
+          type: string
+          description: >-
+            Who approved it, as the approval said: a workspace admin's email
+            for one approved in the console, `cli:<user>` or what `-as` named
+            for one approved on the command line. Absent while it is pending.
         provides:
           type: array
           description: >-
@@ -9340,14 +9119,6 @@ components:
             that builds nothing.
           example: registry.acme.internal
         floor: { $ref: "#/components/schemas/RunnerFloor" }
-        brokerCredentials:
-          type: array
-          description: >-
-            For each broker it provides and takes a credential for from its
-            server (`PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential`),
-            what it holds, as it last reported: the kind, when it was set and
-            when it was last used, never the credential.
-          items: { $ref: "#/components/schemas/RunnerBrokerCredentialState" }
         waitingMoves:
           type: integer
           minimum: 1
@@ -9399,91 +9170,17 @@ components:
             (`allowPrivate`) either. Empty is none; absent is any.
           example: [10.20.0.0/16]
 
-    RunnerApproval:
+    RunnerApprove:
       type: object
       additionalProperties: false
-      required: [approvedAt, assertion]
-      description: |
-        A passkey's approval of one runner. What it signs, `statement`, is
-        this JSON, with no whitespace, its keys in this order and a label's
-        keys sorted, and `approvedAt` in UTC to the second:
-
-        `{"tenant":…,"hostID":…,"caFingerprint":…,"labels":{…},"recordKey":…,"brokerKey":…,"approvedAt":"2026-11-05T10:00:00Z"}`
-
-        — the runner's, as `GET /v1/runners/{id}` shows them, and the
-        server's tenant (`GET /v1/ca/bundle`). The assertion's challenge is
-        the statement's SHA-256.
+      description: Who approves a runner, when it is not the calling key's owner.
       properties:
-        approvedAt: { type: string, format: date-time }
-        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
-
-    PasskeyAssertion:
-      type: object
-      additionalProperties: false
-      required: [approver, authenticatorData, clientDataJSON, signature]
-      description: What `navigator.credentials.get()` answered, by the approver whose passkey it was.
-      properties:
-        approver:
+        approvedBy:
           type: string
-          description: The approver's id.
-        authenticatorData: { type: string, format: byte }
-        clientDataJSON: { type: string, format: byte }
-        signature: { type: string, format: byte }
-
-    Approver:
-      type: object
-      required: [id, name, publicKey, credentialId, rpId, addedAt, addedBy, assertion]
-      properties:
-        id:
-          type: string
-          description: The SHA-256 of its public key, in hex.
-        name:
-          type: string
-          description: Whose passkey it is, as a person reads it.
-        publicKey:
-          type: string
-          format: byte
-          description: Its public key, DER (SubjectPublicKeyInfo), as `getPublicKey()` gave it. P-256 or Ed25519.
-        credentialId:
-          type: string
-          format: byte
-          description: The passkey's credential id, which the console asks it for by.
-        rpId:
-          type: string
-          description: The relying party the passkey was made for, which its assertions name.
-        addedAt: { type: string, format: date-time }
-        addedBy:
-          type: string
-          description: The id of the approver whose assertion added it; its own, for the first.
-        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
-
-    ApproverRequest:
-      type: object
-      additionalProperties: false
-      required: [name, publicKey, credentialId, rpId, addedAt, assertion]
-      description: |
-        A passkey to add as an approver, and an existing approver's assertion
-        over its addition — or its own, for the first. What is signed is
-
-        `{"tenant":…,"approver":…,"name":…,"rpId":…,"addedAt":"2026-11-05T10:00:00Z"}`
-
-        as `RunnerApproval`'s statement is written, `approver` being the new
-        key's id.
-      properties:
-        name: { type: string, minLength: 1, maxLength: 200 }
-        publicKey: { type: string, format: byte }
-        credentialId: { type: string, format: byte }
-        rpId: { type: string, minLength: 1, maxLength: 253 }
-        addedAt: { type: string, format: date-time }
-        assertion: { $ref: "#/components/schemas/PasskeyAssertion" }
-
-    ApproverPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/Approver" }
+          minLength: 1
+          maxLength: 200
+          description: As the runner's `approvedBy` will say it, such as the admin's email.
+          example: ada@acme.example
 
     CABundle:
       type: object
@@ -9497,11 +9194,10 @@ components:
         entries:
           type: array
           items: { $ref: "#/components/schemas/BundleEntry" }
-        credentialKey: { $ref: "#/components/schemas/CredentialKey" }
 
     BundleEntry:
       type: object
-      required: [hostID, certificate, fingerprint, labels, recordKey, brokerKey, approval]
+      required: [hostID, certificate, fingerprint, labels, recordKey, brokerKey]
       description: One approved runner's sandbox CA, bound to the one hostID it may sign for.
       properties:
         hostID: { type: string }
@@ -9512,153 +9208,53 @@ components:
           additionalProperties: { type: string }
         recordKey: { type: string }
         brokerKey: { type: string }
-        approval: { $ref: "#/components/schemas/BundleApproval" }
 
-    BundleApproval:
+    GrantWrite:
       type: object
-      required: [kind, approvedAt, signature]
-      description: |
-        `passkey`: an approver's assertion over the entry's statement, made
-        with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
-        fingerprint, approved before it) signed the statement of this entry,
-        ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
-        For a rotation's overlap a runner has two entries, the CA it
-        rotated from and the new one, the older first.
+      additionalProperties: false
+      required: [kind, credential, api, turn, expiresAt]
+      description: >-
+        A model credential lent to one sandbox's runner-provided broker for
+        one turn. The runner serves it as it is to the broker, which builds
+        each call's credential from it and never renews it.
       properties:
         kind:
           type: string
-          enum: [passkey, rotation]
-          x-enum-varnames: [ApprovalPasskey, ApprovalRotation]
-        approvedAt: { type: string, format: date-time }
-        approver: { type: string, description: "For `passkey`: the approver's id." }
-        authenticatorData: { type: string, format: byte }
-        clientDataJSON: { type: string, format: byte }
-        signature: { type: string, format: byte }
-        previous: { type: string, description: "For `rotation`: the fingerprint of the CA it replaced." }
-
-    CredentialKey:
-      type: object
-      required: [publicKey, hostID, signature]
-      description: |
-        The workspace credential key's public half, which a person's
-        subscription is sealed to: made by the workspace's first approved
-        runner, `hostID`, and signed with that runner's broker key (ECDSA
-        over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
-        Its private half is only ever on runners.
-      properties:
-        publicKey: { type: string, description: "PEM, P-256." }
-        hostID: { type: string }
-        signature: { type: string, format: byte }
-
-    BundleLogPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/BundleLogLine" }
-
-    BundleLogLine:
-      type: object
-      required: [seq, generation, at, kind, body, prev, hash]
-      properties:
-        seq: { type: integer, format: int64 }
-        generation: { type: integer, format: int64, description: The bundle's generation once this was written. }
-        at: { type: string, format: date-time }
-        kind:
+          enum: [apiKey, subscription]
+          x-enum-varnames: [GrantAPIKey, GrantSubscription]
+          description: >-
+            `apiKey`: an API key. `subscription`: a subscription's access
+            token, which the broker sends as a bearer.
+        credential:
           type: string
-          enum: [approver, approved, rotated, revoked, rejoined, credential_key]
-          x-enum-varnames: [LogApprover, LogApproved, LogRotated, LogRevoked, LogRejoined, LogCredentialKey]
-        hostID: { type: string }
-        body: { type: string, description: "What happened, JSON, as it was hashed." }
-        prev: { type: string }
-        hash: { type: string }
-
-    SealedCredential:
-      type: object
-      required: [subject, version, sealed, writtenAt]
-      properties:
-        subject: { type: string, format: email }
-        version: { type: integer, format: int64 }
-        sealed: { type: string, format: byte, description: Encrypted to the workspace credential key. }
-        expiresAt: { type: string, format: date-time, description: "What the provider said of the sign-in." }
-        writtenAt: { type: string, format: date-time }
-        writtenBy: { type: string, description: "The runner that last wrote it, or the person." }
-
-    RunnerBrokerCredentialKind:
-      type: string
-      enum: [apiKey, subscription]
-      x-enum-varnames: [RunnerBrokerCredentialAPIKey, RunnerBrokerCredentialSubscription]
-      description: >-
-        What a broker's credential is: an API key, or a subscription's
-        sign-in (its token as JSON, which the broker renews).
-
-    RunnerBrokerCredentialWrite:
-      type: object
-      additionalProperties: false
-      required: [kind, sealed]
-      properties:
-        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
-        sealed:
+          minLength: 1
+          maxLength: 16384
+          description: The key or the access token. Never stored, logged or recorded.
+        api:
           type: string
-          format: byte
-          maxLength: 87382
-          description: The credential, sealed to the runner's `brokerKey`.
-
-    RunnerBrokerCredential:
-      type: object
-      required: [broker, kind, setAt, setBy]
-      description: "A credential set for a runner's broker, as this server keeps it: never what it is."
-      properties:
-        broker: { $ref: "#/components/schemas/BrokerName" }
-        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
-        setAt: { type: string, format: date-time }
-        setBy: { type: string, format: email }
-
-    RunnerBrokerCredentialState:
-      type: object
-      required: [broker]
-      description: >-
-        What a runner reported of the credential of a broker it provides
-        and takes a credential for from its server: never the credential.
-        Only `broker` while none was set through this server.
-      properties:
-        broker: { $ref: "#/components/schemas/BrokerName" }
-        kind: { $ref: "#/components/schemas/RunnerBrokerCredentialKind" }
-        setAt:
+          enum: [anthropic, openai]
+          x-enum-varnames: [GrantAnthropic, GrantOpenAI]
+          description: The API it is for; the broker refuses a call for another.
+        account:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >-
+            The ChatGPT account id a ChatGPT sign-in's calls name, which the
+            broker sets on each call it carries with this grant. Not a
+            secret. Required for a `subscription` to `openai`, and refused
+            (422) on any other grant.
+        turn:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The turn it is lent for, as its lender names it, for the sandbox's history and the broker's records.
+        expiresAt:
           type: string
           format: date-time
-          description: When the one it holds was set.
-        usedAt:
-          type: string
-          format: date-time
-          description: When a call last reached the broker since, to the minute.
-        refused:
-          type: string
           description: >-
-            Why the runner could not write the last one it was sent, or
-            the one it holds as it started.
-        store:
-          type: string
-          enum: [tpm, file]
-          x-enum-varnames: [RunnerBrokerCredentialStoreTPM, RunnerBrokerCredentialStoreFile]
-          description: >-
-            Where the runner keeps it at rest: `tpm`, sealed by its TPM,
-            the file its broker reads written from there on a tmpfs alone;
-            `file`, in that file, where the runner has no TPM.
-
-    SealedCredentialWrite:
-      type: object
-      additionalProperties: false
-      required: [version, sealed]
-      properties:
-        version:
-          type: integer
-          format: int64
-          minimum: 0
-          description: The version this replaces, 0 for none.
-        sealed: { type: string, format: byte, maxLength: 87382 }
-        expiresAt: { type: string, format: date-time }
+            When the runner forgets it, if nothing took it back first: in
+            the future, and at most 24 hours ahead.
 
     RunnerRefusal:
       type: object
@@ -10454,8 +10050,8 @@ components:
       properties:
         name:
           type: string
-          description: "The setting, as `GET /v1/runners/settings` names it; or `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names."
-          example: residency
+          description: "The setting: `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names."
+          example: allowedSources
         joinToken:
           type: string
           description: On a `setting` of a join token's own (`allowedSources`), that token's id.
@@ -10895,7 +10491,6 @@ components:
         - volume_exists
         - volume_principal
         - volume_transferring
-        - residency
         - broker_in_use
         - principal_in_use
         - principal_deleting
@@ -10911,8 +10506,8 @@ components:
         - runner_draining
         - timeout
         - upstream_error
-        - approval_invalid
         - runner_unreachable
+        - not_provided
         - gone
         - not_implemented
         - internal

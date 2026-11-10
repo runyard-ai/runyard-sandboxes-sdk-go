@@ -84,22 +84,6 @@ const (
 	BuildStepStateRunning BuildStepState = "running"
 )
 
-// Defines values for BundleApprovalKind.
-const (
-	ApprovalPasskey  BundleApprovalKind = "passkey"
-	ApprovalRotation BundleApprovalKind = "rotation"
-)
-
-// Defines values for BundleLogLineKind.
-const (
-	LogApproved      BundleLogLineKind = "approved"
-	LogApprover      BundleLogLineKind = "approver"
-	LogCredentialKey BundleLogLineKind = "credential_key"
-	LogRejoined      BundleLogLineKind = "rejoined"
-	LogRevoked       BundleLogLineKind = "revoked"
-	LogRotated       BundleLogLineKind = "rotated"
-)
-
 // Defines values for CostKind.
 const (
 	CostKindImage   CostKind = "image"
@@ -140,7 +124,6 @@ const (
 
 // Defines values for ErrorCode.
 const (
-	ErrorCodeApprovalInvalid    ErrorCode = "approval_invalid"
 	ErrorCodeBadRequest         ErrorCode = "bad_request"
 	ErrorCodeBrokerInUse        ErrorCode = "broker_in_use"
 	ErrorCodeBuildsUnconfigured ErrorCode = "builds_unconfigured"
@@ -155,11 +138,11 @@ const (
 	ErrorCodeNoTrustedPlane     ErrorCode = "no_trusted_plane"
 	ErrorCodeNotFound           ErrorCode = "not_found"
 	ErrorCodeNotImplemented     ErrorCode = "not_implemented"
+	ErrorCodeNotProvided        ErrorCode = "not_provided"
 	ErrorCodePrincipalDeleting  ErrorCode = "principal_deleting"
 	ErrorCodePrincipalInUse     ErrorCode = "principal_in_use"
 	ErrorCodePrincipalRetired   ErrorCode = "principal_retired"
 	ErrorCodeRecipeInvalid      ErrorCode = "recipe_invalid"
-	ErrorCodeResidency          ErrorCode = "residency"
 	ErrorCodeRunnerDraining     ErrorCode = "runner_draining"
 	ErrorCodeRunnerUnreachable  ErrorCode = "runner_unreachable"
 	ErrorCodeSandboxFailed      ErrorCode = "sandbox_failed"
@@ -176,6 +159,18 @@ const (
 	ErrorCodeVolumeInUse        ErrorCode = "volume_in_use"
 	ErrorCodeVolumePrincipal    ErrorCode = "volume_principal"
 	ErrorCodeVolumeTransferring ErrorCode = "volume_transferring"
+)
+
+// Defines values for GrantWriteApi.
+const (
+	GrantAnthropic GrantWriteApi = "anthropic"
+	GrantOpenAI    GrantWriteApi = "openai"
+)
+
+// Defines values for GrantWriteKind.
+const (
+	GrantAPIKey       GrantWriteKind = "apiKey"
+	GrantSubscription GrantWriteKind = "subscription"
 )
 
 // Defines values for HardwareKeys.
@@ -224,28 +219,10 @@ const (
 	Udp PublishedPortProtocol = "udp"
 )
 
-// Defines values for ResidencyCrossing.
-const (
-	CrossingAllowed ResidencyCrossing = "allowed"
-	CrossingRefused ResidencyCrossing = "refused"
-)
-
 // Defines values for RunnerKeyKind.
 const (
 	KeyKindFile RunnerKeyKind = "file"
 	KeyKindTPM  RunnerKeyKind = "tpm"
-)
-
-// Defines values for RunnerBrokerCredentialKind.
-const (
-	RunnerBrokerCredentialAPIKey       RunnerBrokerCredentialKind = "apiKey"
-	RunnerBrokerCredentialSubscription RunnerBrokerCredentialKind = "subscription"
-)
-
-// Defines values for RunnerBrokerCredentialStateStore.
-const (
-	RunnerBrokerCredentialStoreFile RunnerBrokerCredentialStateStore = "file"
-	RunnerBrokerCredentialStoreTPM  RunnerBrokerCredentialStateStore = "tpm"
 )
 
 // Defines values for RunnerCapacityArch.
@@ -428,55 +405,6 @@ type ActivityHeaders map[string][]string
 type AllowAddress struct {
 	// Address The address to allow, which is the held runner's `heldFrom`.
 	Address string `json:"address"`
-}
-
-// Approver defines model for Approver.
-type Approver struct {
-	AddedAt time.Time `json:"addedAt"`
-
-	// AddedBy The id of the approver whose assertion added it; its own, for the first.
-	AddedBy string `json:"addedBy"`
-
-	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
-	Assertion PasskeyAssertion `json:"assertion"`
-
-	// CredentialId The passkey's credential id, which the console asks it for by.
-	CredentialId []byte `json:"credentialId"`
-
-	// Id The SHA-256 of its public key, in hex.
-	Id string `json:"id"`
-
-	// Name Whose passkey it is, as a person reads it.
-	Name string `json:"name"`
-
-	// PublicKey Its public key, DER (SubjectPublicKeyInfo), as `getPublicKey()` gave it. P-256 or Ed25519.
-	PublicKey []byte `json:"publicKey"`
-
-	// RpId The relying party the passkey was made for, which its assertions name.
-	RpId string `json:"rpId"`
-}
-
-// ApproverPage defines model for ApproverPage.
-type ApproverPage struct {
-	Items []Approver `json:"items"`
-}
-
-// ApproverRequest A passkey to add as an approver, and an existing approver's assertion
-// over its addition — or its own, for the first. What is signed is
-//
-// `{"tenant":…,"approver":…,"name":…,"rpId":…,"addedAt":"2026-11-05T10:00:00Z"}`
-//
-// as `RunnerApproval`'s statement is written, `approver` being the new
-// key's id.
-type ApproverRequest struct {
-	AddedAt time.Time `json:"addedAt"`
-
-	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
-	Assertion    PasskeyAssertion `json:"assertion"`
-	CredentialId []byte           `json:"credentialId"`
-	Name         string           `json:"name"`
-	PublicKey    []byte           `json:"publicKey"`
-	RpId         string           `json:"rpId"`
 }
 
 // AuthMethods How a person may sign in to this server's console.
@@ -669,7 +597,7 @@ type BrokerActivitySetting struct {
 	// Key The id of the key it was changed with; absent for a person signed in to the console.
 	Key *string `json:"key,omitempty"`
 
-	// Name The setting, as `GET /v1/runners/settings` names it; or `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names.
+	// Name The setting: `name`, a runner's own, which `runner` names; or `allowedSources`, a join token's, which `joinToken` names.
 	Name string `json:"name"`
 
 	// To What it is now.
@@ -805,39 +733,9 @@ type BuildStep struct {
 // BuildStepState defines model for BuildStep.State.
 type BuildStepState string
 
-// BundleApproval `passkey`: an approver's assertion over the entry's statement, made
-// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
-// fingerprint, approved before it) signed the statement of this entry,
-// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
-// For a rotation's overlap a runner has two entries, the CA it
-// rotated from and the new one, the older first.
-type BundleApproval struct {
-	ApprovedAt time.Time `json:"approvedAt"`
-
-	// Approver For `passkey`: the approver's id.
-	Approver          *string            `json:"approver,omitempty"`
-	AuthenticatorData *[]byte            `json:"authenticatorData,omitempty"`
-	ClientDataJSON    *[]byte            `json:"clientDataJSON,omitempty"`
-	Kind              BundleApprovalKind `json:"kind"`
-
-	// Previous For `rotation`: the fingerprint of the CA it replaced.
-	Previous  *string `json:"previous,omitempty"`
-	Signature []byte  `json:"signature"`
-}
-
-// BundleApprovalKind defines model for BundleApproval.Kind.
-type BundleApprovalKind string
-
 // BundleEntry One approved runner's sandbox CA, bound to the one hostID it may sign for.
 type BundleEntry struct {
-	// Approval `passkey`: an approver's assertion over the entry's statement, made
-	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
-	// fingerprint, approved before it) signed the statement of this entry,
-	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
-	// For a rotation's overlap a runner has two entries, the CA it
-	// rotated from and the new one, the older first.
-	Approval  BundleApproval `json:"approval"`
-	BrokerKey string         `json:"brokerKey"`
+	BrokerKey string `json:"brokerKey"`
 
 	// Certificate Its sandbox CA, PEM.
 	Certificate string `json:"certificate"`
@@ -849,39 +747,9 @@ type BundleEntry struct {
 	RecordKey   string            `json:"recordKey"`
 }
 
-// BundleLogLine defines model for BundleLogLine.
-type BundleLogLine struct {
-	At time.Time `json:"at"`
-
-	// Body What happened, JSON, as it was hashed.
-	Body string `json:"body"`
-
-	// Generation The bundle's generation once this was written.
-	Generation int64             `json:"generation"`
-	Hash       string            `json:"hash"`
-	HostID     *string           `json:"hostID,omitempty"`
-	Kind       BundleLogLineKind `json:"kind"`
-	Prev       string            `json:"prev"`
-	Seq        int64             `json:"seq"`
-}
-
-// BundleLogLineKind defines model for BundleLogLine.Kind.
-type BundleLogLineKind string
-
-// BundleLogPage defines model for BundleLogPage.
-type BundleLogPage struct {
-	Items []BundleLogLine `json:"items"`
-}
-
 // CABundle defines model for CABundle.
 type CABundle struct {
-	// CredentialKey The workspace credential key's public half, which a person's
-	// subscription is sealed to: made by the workspace's first approved
-	// runner, `hostID`, and signed with that runner's broker key (ECDSA
-	// over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
-	// Its private half is only ever on runners.
-	CredentialKey *CredentialKey `json:"credentialKey,omitempty"`
-	Entries       []BundleEntry  `json:"entries"`
+	Entries []BundleEntry `json:"entries"`
 
 	// Generation Moved by every approval, rotation and revocation; never goes back.
 	Generation int64  `json:"generation"`
@@ -1091,19 +959,6 @@ type Creator struct {
 
 	// User The person who was signed in to the console, or the owner of the key the call carried.
 	User openapi_types.Email `json:"user"`
-}
-
-// CredentialKey The workspace credential key's public half, which a person's
-// subscription is sealed to: made by the workspace's first approved
-// runner, `hostID`, and signed with that runner's broker key (ECDSA
-// over the SHA-256 of `runyard credential key\n<tenant>\n<publicKey>`).
-// Its private half is only ever on runners.
-type CredentialKey struct {
-	HostID string `json:"hostID"`
-
-	// PublicKey PEM, P-256.
-	PublicKey string `json:"publicKey"`
-	Signature []byte `json:"signature"`
 }
 
 // DirListing defines model for DirListing.
@@ -1485,6 +1340,33 @@ type GapError struct {
 	FirstSeq int64 `json:"firstSeq"`
 	LastSeq  int64 `json:"lastSeq"`
 }
+
+// GrantWrite A model credential lent to one sandbox's runner-provided broker for one turn. The runner serves it as it is to the broker, which builds each call's credential from it and never renews it.
+type GrantWrite struct {
+	// Account The ChatGPT account id a ChatGPT sign-in's calls name, which the broker sets on each call it carries with this grant. Not a secret. Required for a `subscription` to `openai`, and refused (422) on any other grant.
+	Account *string `json:"account,omitempty"`
+
+	// Api The API it is for; the broker refuses a call for another.
+	Api GrantWriteApi `json:"api"`
+
+	// Credential The key or the access token. Never stored, logged or recorded.
+	Credential string `json:"credential"`
+
+	// ExpiresAt When the runner forgets it, if nothing took it back first: in the future, and at most 24 hours ahead.
+	ExpiresAt time.Time `json:"expiresAt"`
+
+	// Kind `apiKey`: an API key. `subscription`: a subscription's access token, which the broker sends as a bearer.
+	Kind GrantWriteKind `json:"kind"`
+
+	// Turn The turn it is lent for, as its lender names it, for the sandbox's history and the broker's records.
+	Turn string `json:"turn"`
+}
+
+// GrantWriteApi The API it is for; the broker refuses a call for another.
+type GrantWriteApi string
+
+// GrantWriteKind `apiKey`: an API key. `subscription`: a subscription's access token, which the broker sends as a bearer.
+type GrantWriteKind string
 
 // HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
 type HardwareKeys string
@@ -2292,15 +2174,6 @@ type Page struct {
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
-// PasskeyAssertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
-type PasskeyAssertion struct {
-	// Approver The approver's id.
-	Approver          string `json:"approver"`
-	AuthenticatorData []byte `json:"authenticatorData"`
-	ClientDataJSON    []byte `json:"clientDataJSON"`
-	Signature         []byte `json:"signature"`
-}
-
 // PasswordSignIn An address, and the password the server's htpasswd file holds for it.
 type PasswordSignIn struct {
 	Email    string `json:"email"`
@@ -2461,18 +2334,6 @@ type PublishedPort struct {
 // PublishedPortProtocol defines model for PublishedPort.Protocol.
 type PublishedPortProtocol string
 
-// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
-type Residency struct {
-	// Crossing `refused`, the default: a volume is never transferred between runners whose values of `label` differ. `allowed`: it moves freely, for a workspace that docked runners for capacity.
-	Crossing ResidencyCrossing `json:"crossing"`
-
-	// Label An assigned label's key. `site` until changed.
-	Label string `json:"label"`
-}
-
-// ResidencyCrossing `refused`, the default: a volume is never transferred between runners whose values of `label` differ. `allowed`: it moves freely, for a workspace that docked runners for capacity.
-type ResidencyCrossing string
-
 // ResolvedName One address pinned open: the name that resolved to it, and the rule that allowed that name. A name two rules allow is listed once for each, with each rule's ports and each rule's expiry.
 type ResolvedName struct {
 	Address string `json:"address"`
@@ -2493,16 +2354,11 @@ type Runner struct {
 	// AllowedSources The addresses and ranges it may connect from. Empty is anywhere.
 	AllowedSources []string `json:"allowedSources"`
 
-	// Approval `passkey`: an approver's assertion over the entry's statement, made
-	// with `approvedAt`. `rotation`: the CA it replaced (`previous`, by
-	// fingerprint, approved before it) signed the statement of this entry,
-	// ECDSA over its SHA-256, so a runner rotating its CA needs nobody.
-	// For a rotation's overlap a runner has two entries, the CA it
-	// rotated from and the new one, the older first.
-	Approval *BundleApproval `json:"approval,omitempty"`
+	// ApprovedAt When it was approved. Absent while it is pending.
+	ApprovedAt *time.Time `json:"approvedAt,omitempty"`
 
-	// BrokerCredentials For each broker it provides and takes a credential for from its server (`PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential`), what it holds, as it last reported: the kind, when it was set and when it was last used, never the credential.
-	BrokerCredentials *[]RunnerBrokerCredentialState `json:"brokerCredentials,omitempty"`
+	// ApprovedBy Who approved it, as the approval said: a workspace admin's email for one approved in the console, `cli:<user>` or what `-as` named for one approved on the command line. Absent while it is pending.
+	ApprovedBy *string `json:"approvedBy,omitempty"`
 
 	// BrokerKey The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
 	BrokerKey string `json:"brokerKey"`
@@ -2611,67 +2467,10 @@ type Runner struct {
 // RunnerKeyKind Where its key is held: `tpm` only when a TPM attestation proved it, and `file` otherwise.
 type RunnerKeyKind string
 
-// RunnerApproval A passkey's approval of one runner. What it signs, `statement`, is
-// this JSON, with no whitespace, its keys in this order and a label's
-// keys sorted, and `approvedAt` in UTC to the second:
-//
-// `{"tenant":…,"hostID":…,"caFingerprint":…,"labels":{…},"recordKey":…,"brokerKey":…,"approvedAt":"2026-11-05T10:00:00Z"}`
-//
-// — the runner's, as `GET /v1/runners/{id}` shows them, and the
-// server's tenant (`GET /v1/ca/bundle`). The assertion's challenge is
-// the statement's SHA-256.
-type RunnerApproval struct {
-	ApprovedAt time.Time `json:"approvedAt"`
-
-	// Assertion What `navigator.credentials.get()` answered, by the approver whose passkey it was.
-	Assertion PasskeyAssertion `json:"assertion"`
-}
-
-// RunnerBrokerCredential A credential set for a runner's broker, as this server keeps it: never what it is.
-type RunnerBrokerCredential struct {
-	// Broker Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
-	Broker BrokerName `json:"broker"`
-
-	// Kind What a broker's credential is: an API key, or a subscription's sign-in (its token as JSON, which the broker renews).
-	Kind  RunnerBrokerCredentialKind `json:"kind"`
-	SetAt time.Time                  `json:"setAt"`
-	SetBy openapi_types.Email        `json:"setBy"`
-}
-
-// RunnerBrokerCredentialKind What a broker's credential is: an API key, or a subscription's sign-in (its token as JSON, which the broker renews).
-type RunnerBrokerCredentialKind string
-
-// RunnerBrokerCredentialState What a runner reported of the credential of a broker it provides and takes a credential for from its server: never the credential. Only `broker` while none was set through this server.
-type RunnerBrokerCredentialState struct {
-	// Broker Lower-case letters, digits and dashes, starting and ending with a letter or digit. Narrow because it becomes more than a name: it is a key in `/run/runyard/brokers.json` and, upper-cased, part of the `RUNYARD_BROKER_<NAME>_URL` variable in `brokers.env`, where anything wider would be a name two brokers could collide on.
-	Broker BrokerName `json:"broker"`
-
-	// Kind What a broker's credential is: an API key, or a subscription's sign-in (its token as JSON, which the broker renews).
-	Kind *RunnerBrokerCredentialKind `json:"kind,omitempty"`
-
-	// Refused Why the runner could not write the last one it was sent, or the one it holds as it started.
-	Refused *string `json:"refused,omitempty"`
-
-	// SetAt When the one it holds was set.
-	SetAt *time.Time `json:"setAt,omitempty"`
-
-	// Store Where the runner keeps it at rest: `tpm`, sealed by its TPM, the file its broker reads written from there on a tmpfs alone; `file`, in that file, where the runner has no TPM.
-	Store *RunnerBrokerCredentialStateStore `json:"store,omitempty"`
-
-	// UsedAt When a call last reached the broker since, to the minute.
-	UsedAt *time.Time `json:"usedAt,omitempty"`
-}
-
-// RunnerBrokerCredentialStateStore Where the runner keeps it at rest: `tpm`, sealed by its TPM, the file its broker reads written from there on a tmpfs alone; `file`, in that file, where the runner has no TPM.
-type RunnerBrokerCredentialStateStore string
-
-// RunnerBrokerCredentialWrite defines model for RunnerBrokerCredentialWrite.
-type RunnerBrokerCredentialWrite struct {
-	// Kind What a broker's credential is: an API key, or a subscription's sign-in (its token as JSON, which the broker renews).
-	Kind RunnerBrokerCredentialKind `json:"kind"`
-
-	// Sealed The credential, sealed to the runner's `brokerKey`.
-	Sealed []byte `json:"sealed"`
+// RunnerApprove Who approves a runner, when it is not the calling key's owner.
+type RunnerApprove struct {
+	// ApprovedBy As the runner's `approvedBy` will say it, such as the admin's email.
+	ApprovedBy *string `json:"approvedBy,omitempty"`
 }
 
 // RunnerCapacity What the runner reported it brings.
@@ -2818,9 +2617,6 @@ type RunnerSettings struct {
 	// HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
 	HardwareKeys HardwareKeys `json:"hardwareKeys"`
 
-	// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
-	Residency Residency `json:"residency"`
-
 	// TrustedMakers The TPM makers' endorsement CAs this server trusts, by name, from `tpm.endorsementRoots` in its configuration: a key in a TPM of none of them is `file`.
 	TrustedMakers []string `json:"trustedMakers"`
 }
@@ -2829,9 +2625,6 @@ type RunnerSettings struct {
 type RunnerSettingsUpdate struct {
 	// HardwareKeys `preferred`, the default: a runner holds its key in a TPM where its host has one, and in a file otherwise. `required`: a runner must prove its key is in a TPM, or it is refused.
 	HardwareKeys *HardwareKeys `json:"hardwareKeys,omitempty"`
-
-	// Residency Where the workspace's volumes may go: the assigned label whose values draw its residency lines, and whether a volume may cross one.
-	Residency *Residency `json:"residency,omitempty"`
 }
 
 // RunnerState | state | what it means |
@@ -3515,30 +3308,6 @@ type SandboxUsagePoint struct {
 // able to do. Only an administrator's key may hold it.
 type Scope string
 
-// SealedCredential defines model for SealedCredential.
-type SealedCredential struct {
-	// ExpiresAt What the provider said of the sign-in.
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-
-	// Sealed Encrypted to the workspace credential key.
-	Sealed    []byte              `json:"sealed"`
-	Subject   openapi_types.Email `json:"subject"`
-	Version   int64               `json:"version"`
-	WrittenAt time.Time           `json:"writtenAt"`
-
-	// WrittenBy The runner that last wrote it, or the person.
-	WrittenBy *string `json:"writtenBy,omitempty"`
-}
-
-// SealedCredentialWrite defines model for SealedCredentialWrite.
-type SealedCredentialWrite struct {
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	Sealed    []byte     `json:"sealed"`
-
-	// Version The version this replaces, 0 for none.
-	Version int64 `json:"version"`
-}
-
 // SignInError Why a sign-in came back without a session, in `signInError` on the
 // console's address.
 //
@@ -4047,9 +3816,6 @@ type TunnelName = string
 // TunnelTokenID defines model for TunnelTokenID.
 type TunnelTokenID = string
 
-// ApprovalInvalid Every failure, in one shape.
-type ApprovalInvalid = Error
-
 // BadRequest Every failure, in one shape.
 type BadRequest = Error
 
@@ -4176,13 +3942,6 @@ type GetCABundleParams struct {
 
 	// IfNoneMatch The ETag of the bundle the caller holds; `304` while it is still the bundle.
 	IfNoneMatch *BundleIfNoneMatch `json:"If-None-Match,omitempty"`
-}
-
-// GetCALogParams defines parameters for GetCALog.
-type GetCALogParams struct {
-	// After Only the lines after this seq.
-	After *int64 `form:"after,omitempty" json:"after,omitempty"`
-	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetCostsParams defines parameters for GetCosts.
@@ -4436,9 +4195,6 @@ type GetUsageParams struct {
 	Runner *string `form:"runner,omitempty" json:"runner,omitempty"`
 }
 
-// AddApproverJSONRequestBody defines body for AddApprover for application/json ContentType.
-type AddApproverJSONRequestBody = ApproverRequest
-
 // SignInWithPasswordJSONRequestBody defines body for SignInWithPassword for application/json ContentType.
 type SignInWithPasswordJSONRequestBody = PasswordSignIn
 
@@ -4447,9 +4203,6 @@ type PutBrokerJSONRequestBody = BrokerUpstream
 
 // CreateBuildJSONRequestBody defines body for CreateBuild for application/json ContentType.
 type CreateBuildJSONRequestBody = BuildRequest
-
-// PutSealedCredentialJSONRequestBody defines body for PutSealedCredential for application/json ContentType.
-type PutSealedCredentialJSONRequestBody = SealedCredentialWrite
 
 // PullImageJSONRequestBody defines body for PullImage for application/json ContentType.
 type PullImageJSONRequestBody = ImageRequest
@@ -4476,10 +4229,7 @@ type UpdateRunnerJSONRequestBody = RunnerUpdate
 type AllowRunnerAddressJSONRequestBody = AllowAddress
 
 // ApproveRunnerJSONRequestBody defines body for ApproveRunner for application/json ContentType.
-type ApproveRunnerJSONRequestBody = RunnerApproval
-
-// SetRunnerBrokerCredentialJSONRequestBody defines body for SetRunnerBrokerCredential for application/json ContentType.
-type SetRunnerBrokerCredentialJSONRequestBody = RunnerBrokerCredentialWrite
+type ApproveRunnerJSONRequestBody = RunnerApprove
 
 // DrainRunnerJSONRequestBody defines body for DrainRunner for application/json ContentType.
 type DrainRunnerJSONRequestBody = RunnerDrainRequest
@@ -4489,6 +4239,9 @@ type CreateSandboxJSONRequestBody = SandboxSpec
 
 // AttachSandboxBrokerJSONRequestBody defines body for AttachSandboxBroker for application/json ContentType.
 type AttachSandboxBrokerJSONRequestBody = SandboxBrokerAttach
+
+// PutSandboxBrokerGrantJSONRequestBody defines body for PutSandboxBrokerGrant for application/json ContentType.
+type PutSandboxBrokerGrantJSONRequestBody = GrantWrite
 
 // RunCommandJSONRequestBody defines body for RunCommand for application/json ContentType.
 type RunCommandJSONRequestBody = CommandRequest
@@ -4697,14 +4450,6 @@ type ClientInterface interface {
 	// GetBrokerActivityBody request
 	GetBrokerActivityBody(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListApprovers request
-	ListApprovers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AddApproverWithBody request with any body
-	AddApproverWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	AddApprover(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetAuth request
 	GetAuth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4759,25 +4504,11 @@ type ClientInterface interface {
 	// GetCABundle request
 	GetCABundle(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetCALog request
-	GetCALog(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetCosts request
 	GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCounts request
 	GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeleteSealedCredential request
-	DeleteSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSealedCredential request
-	GetSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PutSealedCredentialWithBody request with any body
-	PutSealedCredentialWithBody(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PutSealedCredential(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetDocs request
 	GetDocs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4890,14 +4621,6 @@ type ClientInterface interface {
 
 	ApproveRunner(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteRunnerBrokerCredential request
-	DeleteRunnerBrokerCredential(ctx context.Context, runnerId string, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetRunnerBrokerCredentialWithBody request with any body
-	SetRunnerBrokerCredentialWithBody(ctx context.Context, runnerId string, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	SetRunnerBrokerCredential(ctx context.Context, runnerId string, brokerName BrokerName, body SetRunnerBrokerCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// DrainRunnerWithBody request with any body
 	DrainRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -4936,6 +4659,14 @@ type ClientInterface interface {
 	AttachSandboxBrokerWithBody(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSandboxBrokerGrant request
+	DeleteSandboxBrokerGrant(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutSandboxBrokerGrantWithBody request with any body
+	PutSandboxBrokerGrantWithBody(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PutSandboxBrokerGrant(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body PutSandboxBrokerGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ServeSandboxBroker request
 	ServeSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5274,42 +5005,6 @@ func (c *Client) GetBrokerActivityBody(ctx context.Context, activityId BrokerAct
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListApprovers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListApproversRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) AddApproverWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddApproverRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) AddApprover(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAddApproverRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) GetAuth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAuthRequest(c.Server)
 	if err != nil {
@@ -5538,18 +5233,6 @@ func (c *Client) GetCABundle(ctx context.Context, params *GetCABundleParams, req
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetCALog(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetCALogRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) GetCosts(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCostsRequest(c.Server, params)
 	if err != nil {
@@ -5564,54 +5247,6 @@ func (c *Client) GetCosts(ctx context.Context, params *GetCostsParams, reqEditor
 
 func (c *Client) GetCounts(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCountsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) DeleteSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteSealedCredentialRequest(c.Server, subject)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSealedCredential(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSealedCredentialRequest(c.Server, subject)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutSealedCredentialWithBody(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutSealedCredentialRequestWithBody(c.Server, subject, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PutSealedCredential(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPutSealedCredentialRequest(c.Server, subject, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6102,42 +5737,6 @@ func (c *Client) ApproveRunner(ctx context.Context, runnerId string, body Approv
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteRunnerBrokerCredential(ctx context.Context, runnerId string, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteRunnerBrokerCredentialRequest(c.Server, runnerId, brokerName)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetRunnerBrokerCredentialWithBody(ctx context.Context, runnerId string, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetRunnerBrokerCredentialRequestWithBody(c.Server, runnerId, brokerName, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) SetRunnerBrokerCredential(ctx context.Context, runnerId string, brokerName BrokerName, body SetRunnerBrokerCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetRunnerBrokerCredentialRequest(c.Server, runnerId, brokerName, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 func (c *Client) DrainRunnerWithBody(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainRunnerRequestWithBody(c.Server, runnerId, contentType, body)
 	if err != nil {
@@ -6296,6 +5895,42 @@ func (c *Client) AttachSandboxBrokerWithBody(ctx context.Context, sandboxId Sand
 
 func (c *Client) AttachSandboxBroker(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAttachSandboxBrokerRequest(c.Server, sandboxId, brokerName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteSandboxBrokerGrant(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSandboxBrokerGrantRequest(c.Server, sandboxId, brokerName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutSandboxBrokerGrantWithBody(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSandboxBrokerGrantRequestWithBody(c.Server, sandboxId, brokerName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PutSandboxBrokerGrant(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body PutSandboxBrokerGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutSandboxBrokerGrantRequest(c.Server, sandboxId, brokerName, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7617,73 +7252,6 @@ func NewGetBrokerActivityBodyRequest(server string, activityId BrokerActivityID)
 	return req, nil
 }
 
-// NewListApproversRequest generates requests for ListApprovers
-func NewListApproversRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/approvers")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAddApproverRequest calls the generic AddApprover builder with application/json body
-func NewAddApproverRequest(server string, body AddApproverJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAddApproverRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewAddApproverRequestWithBody generates requests for AddApprover with any type of body
-func NewAddApproverRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/approvers")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewGetAuthRequest generates requests for GetAuth
 func NewGetAuthRequest(server string) (*http.Request, error) {
 	var err error
@@ -8423,71 +7991,6 @@ func NewGetCABundleRequest(server string, params *GetCABundleParams) (*http.Requ
 	return req, nil
 }
 
-// NewGetCALogRequest generates requests for GetCALog
-func NewGetCALogRequest(server string, params *GetCALogParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/ca/log")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		queryValues := queryURL.Query()
-
-		if params.After != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "after", runtime.ParamLocationQuery, *params.After); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		if params.Limit != nil {
-
-			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "limit", runtime.ParamLocationQuery, *params.Limit); err != nil {
-				return nil, err
-			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
-				return nil, err
-			} else {
-				for k, v := range parsed {
-					for _, v2 := range v {
-						queryValues.Add(k, v2)
-					}
-				}
-			}
-
-		}
-
-		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewGetCostsRequest generates requests for GetCosts
 func NewGetCostsRequest(server string, params *GetCostsParams) (*http.Request, error) {
 	var err error
@@ -8592,121 +8095,6 @@ func NewGetCountsRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewDeleteSealedCredentialRequest generates requests for DeleteSealedCredential
-func NewDeleteSealedCredentialRequest(server string, subject openapi_types.Email) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetSealedCredentialRequest generates requests for GetSealedCredential
-func NewGetSealedCredentialRequest(server string, subject openapi_types.Email) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPutSealedCredentialRequest calls the generic PutSealedCredential builder with application/json body
-func NewPutSealedCredentialRequest(server string, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPutSealedCredentialRequestWithBody(server, subject, "application/json", bodyReader)
-}
-
-// NewPutSealedCredentialRequestWithBody generates requests for PutSealedCredential with any type of body
-func NewPutSealedCredentialRequestWithBody(server string, subject openapi_types.Email, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "subject", runtime.ParamLocationPath, subject)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/credentials/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PUT", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -9935,101 +9323,6 @@ func NewApproveRunnerRequestWithBody(server string, runnerId string, contentType
 	return req, nil
 }
 
-// NewDeleteRunnerBrokerCredentialRequest generates requests for DeleteRunnerBrokerCredential
-func NewDeleteRunnerBrokerCredentialRequest(server string, runnerId string, brokerName BrokerName) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/runners/%s/brokers/%s/credential", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewSetRunnerBrokerCredentialRequest calls the generic SetRunnerBrokerCredential builder with application/json body
-func NewSetRunnerBrokerCredentialRequest(server string, runnerId string, brokerName BrokerName, body SetRunnerBrokerCredentialJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetRunnerBrokerCredentialRequestWithBody(server, runnerId, brokerName, "application/json", bodyReader)
-}
-
-// NewSetRunnerBrokerCredentialRequestWithBody generates requests for SetRunnerBrokerCredential with any type of body
-func NewSetRunnerBrokerCredentialRequestWithBody(server string, runnerId string, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "runnerId", runtime.ParamLocationPath, runnerId)
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/runners/%s/brokers/%s/credential", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("PUT", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewDrainRunnerRequest calls the generic DrainRunner builder with application/json body
 func NewDrainRunnerRequest(server string, runnerId string, body DrainRunnerJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -10545,6 +9838,101 @@ func NewAttachSandboxBrokerRequestWithBody(server string, sandboxId SandboxID, b
 	}
 
 	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("PUT", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteSandboxBrokerGrantRequest generates requests for DeleteSandboxBrokerGrant
+func NewDeleteSandboxBrokerGrantRequest(server string, sandboxId SandboxID, brokerName BrokerName) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s/grant", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutSandboxBrokerGrantRequest calls the generic PutSandboxBrokerGrant builder with application/json body
+func NewPutSandboxBrokerGrantRequest(server string, sandboxId SandboxID, brokerName BrokerName, body PutSandboxBrokerGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutSandboxBrokerGrantRequestWithBody(server, sandboxId, brokerName, "application/json", bodyReader)
+}
+
+// NewPutSandboxBrokerGrantRequestWithBody generates requests for PutSandboxBrokerGrant with any type of body
+func NewPutSandboxBrokerGrantRequestWithBody(server string, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "sandboxId", runtime.ParamLocationPath, sandboxId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "brokerName", runtime.ParamLocationPath, brokerName)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sandboxes/%s/brokers/%s/grant", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13500,14 +12888,6 @@ type ClientWithResponsesInterface interface {
 	// GetBrokerActivityBodyWithResponse request
 	GetBrokerActivityBodyWithResponse(ctx context.Context, activityId BrokerActivityID, reqEditors ...RequestEditorFn) (*GetBrokerActivityBodyResponse, error)
 
-	// ListApproversWithResponse request
-	ListApproversWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListApproversResponse, error)
-
-	// AddApproverWithBodyWithResponse request with any body
-	AddApproverWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddApproverResponse, error)
-
-	AddApproverWithResponse(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*AddApproverResponse, error)
-
 	// GetAuthWithResponse request
 	GetAuthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthResponse, error)
 
@@ -13562,25 +12942,11 @@ type ClientWithResponsesInterface interface {
 	// GetCABundleWithResponse request
 	GetCABundleWithResponse(ctx context.Context, params *GetCABundleParams, reqEditors ...RequestEditorFn) (*GetCABundleResponse, error)
 
-	// GetCALogWithResponse request
-	GetCALogWithResponse(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*GetCALogResponse, error)
-
 	// GetCostsWithResponse request
 	GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error)
 
 	// GetCountsWithResponse request
 	GetCountsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCountsResponse, error)
-
-	// DeleteSealedCredentialWithResponse request
-	DeleteSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteSealedCredentialResponse, error)
-
-	// GetSealedCredentialWithResponse request
-	GetSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*GetSealedCredentialResponse, error)
-
-	// PutSealedCredentialWithBodyWithResponse request with any body
-	PutSealedCredentialWithBodyWithResponse(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error)
-
-	PutSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error)
 
 	// GetDocsWithResponse request
 	GetDocsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetDocsResponse, error)
@@ -13693,14 +13059,6 @@ type ClientWithResponsesInterface interface {
 
 	ApproveRunnerWithResponse(ctx context.Context, runnerId string, body ApproveRunnerJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveRunnerResponse, error)
 
-	// DeleteRunnerBrokerCredentialWithResponse request
-	DeleteRunnerBrokerCredentialWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteRunnerBrokerCredentialResponse, error)
-
-	// SetRunnerBrokerCredentialWithBodyWithResponse request with any body
-	SetRunnerBrokerCredentialWithBodyWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetRunnerBrokerCredentialResponse, error)
-
-	SetRunnerBrokerCredentialWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, body SetRunnerBrokerCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*SetRunnerBrokerCredentialResponse, error)
-
 	// DrainRunnerWithBodyWithResponse request with any body
 	DrainRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error)
 
@@ -13739,6 +13097,14 @@ type ClientWithResponsesInterface interface {
 	AttachSandboxBrokerWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
 
 	AttachSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body AttachSandboxBrokerJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachSandboxBrokerResponse, error)
+
+	// DeleteSandboxBrokerGrantWithResponse request
+	DeleteSandboxBrokerGrantWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteSandboxBrokerGrantResponse, error)
+
+	// PutSandboxBrokerGrantWithBodyWithResponse request with any body
+	PutSandboxBrokerGrantWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSandboxBrokerGrantResponse, error)
+
+	PutSandboxBrokerGrantWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body PutSandboxBrokerGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSandboxBrokerGrantResponse, error)
 
 	// ServeSandboxBrokerWithResponse request
 	ServeSandboxBrokerWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, params *ServeSandboxBrokerParams, reqEditors ...RequestEditorFn) (*ServeSandboxBrokerResponse, error)
@@ -14209,59 +13575,6 @@ func (r GetBrokerActivityBodyResponse) StatusCode() int {
 	return 0
 }
 
-type ListApproversResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ApproverPage
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r ListApproversResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListApproversResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type AddApproverResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON201      *Approver
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON409      *Error
-	JSON422      *ApprovalInvalid
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r AddApproverResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AddApproverResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type GetAuthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14663,32 +13976,6 @@ func (r GetCABundleResponse) StatusCode() int {
 	return 0
 }
 
-type GetCALogResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *BundleLogPage
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r GetCALogResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetCALogResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
 type GetCostsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14734,83 +14021,6 @@ func (r GetCountsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCountsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteSealedCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteSealedCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteSealedCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type GetSealedCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *SealedCredential
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r GetSealedCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetSealedCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type PutSealedCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *SealedCredential
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON409      *Error
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r PutSealedCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PutSealedCredentialResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15580,7 +14790,6 @@ type ApproveRunnerResponse struct {
 	JSON403      *Forbidden
 	JSON404      *NotFound
 	JSON409      *Error
-	JSON422      *ApprovalInvalid
 	JSON503      *ControlDBUnavailable
 }
 
@@ -15594,59 +14803,6 @@ func (r ApproveRunnerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ApproveRunnerResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type DeleteRunnerBrokerCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *Error
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r DeleteRunnerBrokerCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeleteRunnerBrokerCredentialResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type SetRunnerBrokerCredentialResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *RunnerBrokerCredential
-	JSON400      *BadRequest
-	JSON401      *Unauthorized
-	JSON403      *Forbidden
-	JSON404      *NotFound
-	JSON409      *Error
-	JSON503      *ControlDBUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r SetRunnerBrokerCredentialResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetRunnerBrokerCredentialResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -15947,6 +15103,62 @@ func (r AttachSandboxBrokerResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r AttachSandboxBrokerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteSandboxBrokerGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON410      *RunnerRevoked
+	JSON503      *SandboxUnreachable
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSandboxBrokerGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSandboxBrokerGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PutSandboxBrokerGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON409      *Error
+	JSON410      *RunnerRevoked
+	JSON422      *Error
+	JSON503      *SandboxUnreachable
+}
+
+// Status returns HTTPResponse.Status
+func (r PutSandboxBrokerGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutSandboxBrokerGrantResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -17662,32 +16874,6 @@ func (c *ClientWithResponses) GetBrokerActivityBodyWithResponse(ctx context.Cont
 	return ParseGetBrokerActivityBodyResponse(rsp)
 }
 
-// ListApproversWithResponse request returning *ListApproversResponse
-func (c *ClientWithResponses) ListApproversWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListApproversResponse, error) {
-	rsp, err := c.ListApprovers(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListApproversResponse(rsp)
-}
-
-// AddApproverWithBodyWithResponse request with arbitrary body returning *AddApproverResponse
-func (c *ClientWithResponses) AddApproverWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddApproverResponse, error) {
-	rsp, err := c.AddApproverWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAddApproverResponse(rsp)
-}
-
-func (c *ClientWithResponses) AddApproverWithResponse(ctx context.Context, body AddApproverJSONRequestBody, reqEditors ...RequestEditorFn) (*AddApproverResponse, error) {
-	rsp, err := c.AddApprover(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAddApproverResponse(rsp)
-}
-
 // GetAuthWithResponse request returning *GetAuthResponse
 func (c *ClientWithResponses) GetAuthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAuthResponse, error) {
 	rsp, err := c.GetAuth(ctx, reqEditors...)
@@ -17856,15 +17042,6 @@ func (c *ClientWithResponses) GetCABundleWithResponse(ctx context.Context, param
 	return ParseGetCABundleResponse(rsp)
 }
 
-// GetCALogWithResponse request returning *GetCALogResponse
-func (c *ClientWithResponses) GetCALogWithResponse(ctx context.Context, params *GetCALogParams, reqEditors ...RequestEditorFn) (*GetCALogResponse, error) {
-	rsp, err := c.GetCALog(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetCALogResponse(rsp)
-}
-
 // GetCostsWithResponse request returning *GetCostsResponse
 func (c *ClientWithResponses) GetCostsWithResponse(ctx context.Context, params *GetCostsParams, reqEditors ...RequestEditorFn) (*GetCostsResponse, error) {
 	rsp, err := c.GetCosts(ctx, params, reqEditors...)
@@ -17881,41 +17058,6 @@ func (c *ClientWithResponses) GetCountsWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseGetCountsResponse(rsp)
-}
-
-// DeleteSealedCredentialWithResponse request returning *DeleteSealedCredentialResponse
-func (c *ClientWithResponses) DeleteSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*DeleteSealedCredentialResponse, error) {
-	rsp, err := c.DeleteSealedCredential(ctx, subject, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteSealedCredentialResponse(rsp)
-}
-
-// GetSealedCredentialWithResponse request returning *GetSealedCredentialResponse
-func (c *ClientWithResponses) GetSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, reqEditors ...RequestEditorFn) (*GetSealedCredentialResponse, error) {
-	rsp, err := c.GetSealedCredential(ctx, subject, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSealedCredentialResponse(rsp)
-}
-
-// PutSealedCredentialWithBodyWithResponse request with arbitrary body returning *PutSealedCredentialResponse
-func (c *ClientWithResponses) PutSealedCredentialWithBodyWithResponse(ctx context.Context, subject openapi_types.Email, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error) {
-	rsp, err := c.PutSealedCredentialWithBody(ctx, subject, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutSealedCredentialResponse(rsp)
-}
-
-func (c *ClientWithResponses) PutSealedCredentialWithResponse(ctx context.Context, subject openapi_types.Email, body PutSealedCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSealedCredentialResponse, error) {
-	rsp, err := c.PutSealedCredential(ctx, subject, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePutSealedCredentialResponse(rsp)
 }
 
 // GetDocsWithResponse request returning *GetDocsResponse
@@ -18269,32 +17411,6 @@ func (c *ClientWithResponses) ApproveRunnerWithResponse(ctx context.Context, run
 	return ParseApproveRunnerResponse(rsp)
 }
 
-// DeleteRunnerBrokerCredentialWithResponse request returning *DeleteRunnerBrokerCredentialResponse
-func (c *ClientWithResponses) DeleteRunnerBrokerCredentialWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteRunnerBrokerCredentialResponse, error) {
-	rsp, err := c.DeleteRunnerBrokerCredential(ctx, runnerId, brokerName, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeleteRunnerBrokerCredentialResponse(rsp)
-}
-
-// SetRunnerBrokerCredentialWithBodyWithResponse request with arbitrary body returning *SetRunnerBrokerCredentialResponse
-func (c *ClientWithResponses) SetRunnerBrokerCredentialWithBodyWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetRunnerBrokerCredentialResponse, error) {
-	rsp, err := c.SetRunnerBrokerCredentialWithBody(ctx, runnerId, brokerName, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetRunnerBrokerCredentialResponse(rsp)
-}
-
-func (c *ClientWithResponses) SetRunnerBrokerCredentialWithResponse(ctx context.Context, runnerId string, brokerName BrokerName, body SetRunnerBrokerCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*SetRunnerBrokerCredentialResponse, error) {
-	rsp, err := c.SetRunnerBrokerCredential(ctx, runnerId, brokerName, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetRunnerBrokerCredentialResponse(rsp)
-}
-
 // DrainRunnerWithBodyWithResponse request with arbitrary body returning *DrainRunnerResponse
 func (c *ClientWithResponses) DrainRunnerWithBodyWithResponse(ctx context.Context, runnerId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DrainRunnerResponse, error) {
 	rsp, err := c.DrainRunnerWithBody(ctx, runnerId, contentType, body, reqEditors...)
@@ -18416,6 +17532,32 @@ func (c *ClientWithResponses) AttachSandboxBrokerWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseAttachSandboxBrokerResponse(rsp)
+}
+
+// DeleteSandboxBrokerGrantWithResponse request returning *DeleteSandboxBrokerGrantResponse
+func (c *ClientWithResponses) DeleteSandboxBrokerGrantWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, reqEditors ...RequestEditorFn) (*DeleteSandboxBrokerGrantResponse, error) {
+	rsp, err := c.DeleteSandboxBrokerGrant(ctx, sandboxId, brokerName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSandboxBrokerGrantResponse(rsp)
+}
+
+// PutSandboxBrokerGrantWithBodyWithResponse request with arbitrary body returning *PutSandboxBrokerGrantResponse
+func (c *ClientWithResponses) PutSandboxBrokerGrantWithBodyWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutSandboxBrokerGrantResponse, error) {
+	rsp, err := c.PutSandboxBrokerGrantWithBody(ctx, sandboxId, brokerName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSandboxBrokerGrantResponse(rsp)
+}
+
+func (c *ClientWithResponses) PutSandboxBrokerGrantWithResponse(ctx context.Context, sandboxId SandboxID, brokerName BrokerName, body PutSandboxBrokerGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*PutSandboxBrokerGrantResponse, error) {
+	rsp, err := c.PutSandboxBrokerGrant(ctx, sandboxId, brokerName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutSandboxBrokerGrantResponse(rsp)
 }
 
 // ServeSandboxBrokerWithResponse request returning *ServeSandboxBrokerResponse
@@ -19405,121 +18547,6 @@ func ParseGetBrokerActivityBodyResponse(rsp *http.Response) (*GetBrokerActivityB
 	return response, nil
 }
 
-// ParseListApproversResponse parses an HTTP response from a ListApproversWithResponse call
-func ParseListApproversResponse(rsp *http.Response) (*ListApproversResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListApproversResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ApproverPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAddApproverResponse parses an HTTP response from a AddApproverWithResponse call
-func ParseAddApproverResponse(rsp *http.Response) (*AddApproverResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AddApproverResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest Approver
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ApprovalInvalid
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetAuthResponse parses an HTTP response from a GetAuthWithResponse call
 func ParseGetAuthResponse(rsp *http.Response) (*GetAuthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -20276,60 +19303,6 @@ func ParseGetCABundleResponse(rsp *http.Response) (*GetCABundleResponse, error) 
 	return response, nil
 }
 
-// ParseGetCALogResponse parses an HTTP response from a GetCALogWithResponse call
-func ParseGetCALogResponse(rsp *http.Response) (*GetCALogResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetCALogResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest BundleLogPage
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseGetCostsResponse parses an HTTP response from a GetCostsWithResponse call
 func ParseGetCostsResponse(rsp *http.Response) (*GetCostsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -20425,161 +19398,6 @@ func ParseGetCountsResponse(rsp *http.Response) (*GetCountsResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteSealedCredentialResponse parses an HTTP response from a DeleteSealedCredentialWithResponse call
-func ParseDeleteSealedCredentialResponse(rsp *http.Response) (*DeleteSealedCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteSealedCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetSealedCredentialResponse parses an HTTP response from a GetSealedCredentialWithResponse call
-func ParseGetSealedCredentialResponse(rsp *http.Response) (*GetSealedCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetSealedCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SealedCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePutSealedCredentialResponse parses an HTTP response from a PutSealedCredentialWithResponse call
-func ParsePutSealedCredentialResponse(rsp *http.Response) (*PutSealedCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PutSealedCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SealedCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
 
 	}
 
@@ -22077,128 +20895,6 @@ func ParseApproveRunnerResponse(rsp *http.Response) (*ApproveRunnerResponse, err
 		}
 		response.JSON409 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ApprovalInvalid
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDeleteRunnerBrokerCredentialResponse parses an HTTP response from a DeleteRunnerBrokerCredentialWithResponse call
-func ParseDeleteRunnerBrokerCredentialResponse(rsp *http.Response) (*DeleteRunnerBrokerCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeleteRunnerBrokerCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ControlDBUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseSetRunnerBrokerCredentialResponse parses an HTTP response from a SetRunnerBrokerCredentialWithResponse call
-func ParseSetRunnerBrokerCredentialResponse(rsp *http.Response) (*SetRunnerBrokerCredentialResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetRunnerBrokerCredentialResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest RunnerBrokerCredential
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest ControlDBUnavailable
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22872,6 +21568,142 @@ func ParseAttachSandboxBrokerResponse(rsp *http.Response) (*AttachSandboxBrokerR
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest StillBooting
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSandboxBrokerGrantResponse parses an HTTP response from a DeleteSandboxBrokerGrantWithResponse call
+func ParseDeleteSandboxBrokerGrantResponse(rsp *http.Response) (*DeleteSandboxBrokerGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSandboxBrokerGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest RunnerRevoked
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest SandboxUnreachable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePutSandboxBrokerGrantResponse parses an HTTP response from a PutSandboxBrokerGrantWithResponse call
+func ParsePutSandboxBrokerGrantResponse(rsp *http.Response) (*PutSandboxBrokerGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutSandboxBrokerGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -26944,12 +25776,6 @@ type ServerInterface interface {
 	// A record's bodies, fetched from the runner that keeps them
 	// (GET /v1/activity/{activityId}/body)
 	GetBrokerActivityBody(w http.ResponseWriter, r *http.Request, activityId BrokerActivityID)
-	// The workspace's approver keys
-	// (GET /v1/approvers)
-	ListApprovers(w http.ResponseWriter, r *http.Request)
-	// Add an approver key
-	// (POST /v1/approvers)
-	AddApprover(w http.ResponseWriter, r *http.Request)
 	// How a person may sign in here
 	// (GET /v1/auth)
 	GetAuth(w http.ResponseWriter, r *http.Request)
@@ -26998,24 +25824,12 @@ type ServerInterface interface {
 	// The approved bundle, each CA bound to its runner
 	// (GET /v1/ca/bundle)
 	GetCABundle(w http.ResponseWriter, r *http.Request, params GetCABundleParams)
-	// Every change to the bundle, hash-chained
-	// (GET /v1/ca/log)
-	GetCALog(w http.ResponseWriter, r *http.Request, params GetCALogParams)
 	// What this server's sandboxes have cost
 	// (GET /v1/costs)
 	GetCosts(w http.ResponseWriter, r *http.Request, params GetCostsParams)
 	// How many of each thing this host has
 	// (GET /v1/counts)
 	GetCounts(w http.ResponseWriter, r *http.Request)
-	// Disconnect a person's subscription
-	// (DELETE /v1/credentials/{subject})
-	DeleteSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
-	// A person's sealed subscription
-	// (GET /v1/credentials/{subject})
-	GetSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
-	// Connect a person's subscription, sealed
-	// (PUT /v1/credentials/{subject})
-	PutSealedCredential(w http.ResponseWriter, r *http.Request, subject openapi_types.Email)
 	// This document, rendered
 	// (GET /v1/docs)
 	GetDocs(w http.ResponseWriter, r *http.Request)
@@ -27106,15 +25920,9 @@ type ServerInterface interface {
 	// Resolve a held runner by allowing the new address
 	// (POST /v1/runners/{runnerId}/allow-address)
 	AllowRunnerAddress(w http.ResponseWriter, r *http.Request, runnerId string)
-	// Approve a runner with a passkey
+	// Approve a pending runner
 	// (POST /v1/runners/{runnerId}/approve)
 	ApproveRunner(w http.ResponseWriter, r *http.Request, runnerId string)
-	// Take away the credential set for a runner's broker
-	// (DELETE /v1/runners/{runnerId}/brokers/{brokerName}/credential)
-	DeleteRunnerBrokerCredential(w http.ResponseWriter, r *http.Request, runnerId string, brokerName BrokerName)
-	// Set the credential of a broker a runner provides, sealed to it
-	// (PUT /v1/runners/{runnerId}/brokers/{brokerName}/credential)
-	SetRunnerBrokerCredential(w http.ResponseWriter, r *http.Request, runnerId string, brokerName BrokerName)
 	// Place nothing more on a runner
 	// (POST /v1/runners/{runnerId}/drain)
 	DrainRunner(w http.ResponseWriter, r *http.Request, runnerId string)
@@ -27148,6 +25956,12 @@ type ServerInterface interface {
 	// Give a sandbox a broker, while it runs
 	// (PUT /v1/sandboxes/{sandboxId}/brokers/{brokerName})
 	AttachSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
+	// Take back the credential lent for a turn
+	// (DELETE /v1/sandboxes/{sandboxId}/brokers/{brokerName}/grant)
+	DeleteSandboxBrokerGrant(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
+	// Lend a sandbox's runner-provided broker a credential for one turn
+	// (PUT /v1/sandboxes/{sandboxId}/brokers/{brokerName}/grant)
+	PutSandboxBrokerGrant(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName)
 	// Give a sandbox a broker this caller serves, over a WebSocket
 	// (GET /v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve)
 	ServeSandboxBroker(w http.ResponseWriter, r *http.Request, sandboxId SandboxID, brokerName BrokerName, params ServeSandboxBrokerParams)
@@ -27665,50 +26479,6 @@ func (siw *ServerInterfaceWrapper) GetBrokerActivityBody(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBrokerActivityBody(w, r, activityId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// ListApprovers operation middleware
-func (siw *ServerInterfaceWrapper) ListApprovers(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListApprovers(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AddApprover operation middleware
-func (siw *ServerInterfaceWrapper) AddApprover(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AddApprover(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -28246,49 +27016,6 @@ func (siw *ServerInterfaceWrapper) GetCABundle(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// GetCALog operation middleware
-func (siw *ServerInterfaceWrapper) GetCALog(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetCALogParams
-
-	// ------------- Optional query parameter "after" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "after", r.URL.Query(), &params.After)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
-		return
-	}
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetCALog(w, r, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetCosts operation middleware
 func (siw *ServerInterfaceWrapper) GetCosts(w http.ResponseWriter, r *http.Request) {
 
@@ -28353,105 +27080,6 @@ func (siw *ServerInterfaceWrapper) GetCounts(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCounts(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DeleteSealedCredential operation middleware
-func (siw *ServerInterfaceWrapper) DeleteSealedCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "subject" -------------
-	var subject openapi_types.Email
-
-	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteSealedCredential(w, r, subject)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetSealedCredential operation middleware
-func (siw *ServerInterfaceWrapper) GetSealedCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "subject" -------------
-	var subject openapi_types.Email
-
-	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetSealedCredential(w, r, subject)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PutSealedCredential operation middleware
-func (siw *ServerInterfaceWrapper) PutSealedCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "subject" -------------
-	var subject openapi_types.Email
-
-	err = runtime.BindStyledParameterWithOptions("simple", "subject", r.PathValue("subject"), &subject, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "subject", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutSealedCredential(w, r, subject)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -29388,90 +28016,6 @@ func (siw *ServerInterfaceWrapper) ApproveRunner(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteRunnerBrokerCredential operation middleware
-func (siw *ServerInterfaceWrapper) DeleteRunnerBrokerCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "runnerId" -------------
-	var runnerId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "brokerName" -------------
-	var brokerName BrokerName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteRunnerBrokerCredential(w, r, runnerId, brokerName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SetRunnerBrokerCredential operation middleware
-func (siw *ServerInterfaceWrapper) SetRunnerBrokerCredential(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-
-	// ------------- Path parameter "runnerId" -------------
-	var runnerId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "runnerId", r.PathValue("runnerId"), &runnerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "runnerId", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "brokerName" -------------
-	var brokerName BrokerName
-
-	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
-
-	ctx = context.WithValue(ctx, SessionScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SetRunnerBrokerCredential(w, r, runnerId, brokerName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // DrainRunner operation middleware
 func (siw *ServerInterfaceWrapper) DrainRunner(w http.ResponseWriter, r *http.Request) {
 
@@ -29908,6 +28452,90 @@ func (siw *ServerInterfaceWrapper) AttachSandboxBroker(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AttachSandboxBroker(w, r, sandboxId, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSandboxBrokerGrant operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSandboxBrokerGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxId" -------------
+	var sandboxId SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxId", r.PathValue("sandboxId"), &sandboxId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandboxId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSandboxBrokerGrant(w, r, sandboxId, brokerName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSandboxBrokerGrant operation middleware
+func (siw *ServerInterfaceWrapper) PutSandboxBrokerGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "sandboxId" -------------
+	var sandboxId SandboxID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sandboxId", r.PathValue("sandboxId"), &sandboxId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sandboxId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "brokerName" -------------
+	var brokerName BrokerName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "brokerName", r.PathValue("brokerName"), &brokerName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "brokerName", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, ApiKeyScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSandboxBrokerGrant(w, r, sandboxId, brokerName)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -32443,8 +31071,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/activity", wrapper.ListBrokerActivity)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/activity/{activityId}", wrapper.GetBrokerActivity)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/activity/{activityId}/body", wrapper.GetBrokerActivityBody)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/approvers", wrapper.ListApprovers)
-	m.HandleFunc("POST "+options.BaseURL+"/v1/approvers", wrapper.AddApprover)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth", wrapper.GetAuth)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google", wrapper.BeginGoogleSignIn)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/auth/google/callback", wrapper.CompleteGoogleSignIn)
@@ -32461,12 +31087,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/builds/{buildId}/log", wrapper.ReadBuildLog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/ca", wrapper.GetCA)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/ca/bundle", wrapper.GetCABundle)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/ca/log", wrapper.GetCALog)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/costs", wrapper.GetCosts)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/counts", wrapper.GetCounts)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/credentials/{subject}", wrapper.DeleteSealedCredential)
-	m.HandleFunc("GET "+options.BaseURL+"/v1/credentials/{subject}", wrapper.GetSealedCredential)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/credentials/{subject}", wrapper.PutSealedCredential)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/docs", wrapper.GetDocs)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/commitments", wrapper.GetHostCommitments)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/host/metrics/history", wrapper.GetHostMetricsHistory)
@@ -32498,8 +31120,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("PATCH "+options.BaseURL+"/v1/runners/{runnerId}", wrapper.UpdateRunner)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/allow-address", wrapper.AllowRunnerAddress)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/approve", wrapper.ApproveRunner)
-	m.HandleFunc("DELETE "+options.BaseURL+"/v1/runners/{runnerId}/brokers/{brokerName}/credential", wrapper.DeleteRunnerBrokerCredential)
-	m.HandleFunc("PUT "+options.BaseURL+"/v1/runners/{runnerId}/brokers/{brokerName}/credential", wrapper.SetRunnerBrokerCredential)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/drain", wrapper.DrainRunner)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/rotate-ca", wrapper.RotateRunnerCA)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/runners/{runnerId}/undrain", wrapper.UndrainRunner)
@@ -32511,6 +31131,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers", wrapper.ListSandboxBrokers)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.DetachSandboxBroker)
 	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}", wrapper.AttachSandboxBroker)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}/grant", wrapper.DeleteSandboxBrokerGrant)
+	m.HandleFunc("PUT "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}/grant", wrapper.PutSandboxBrokerGrant)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/brokers/{brokerName}/serve", wrapper.ServeSandboxBroker)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/sandboxes/{sandboxId}/commands", wrapper.RunCommand)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/sandboxes/{sandboxId}/console", wrapper.GetSandboxConsole)

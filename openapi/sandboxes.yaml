@@ -9119,6 +9119,7 @@ components:
             that builds nothing.
           example: registry.acme.internal
         floor: { $ref: "#/components/schemas/RunnerFloor" }
+        holding: { $ref: "#/components/schemas/RunnerHolding" }
         waitingMoves:
           type: integer
           minimum: 1
@@ -9133,6 +9134,26 @@ components:
             keep running where they are meanwhile. The first move held is an
             activity record (`transfer`, `refused`, naming the runner) and a
             line of the server's log. Absent when none waits.
+
+    RunnerHolding:
+      type: object
+      description: >-
+        What a runner holds now, as this server's rows say: counts, never
+        what any of it is. One holding no sandbox and no volume can be
+        revoked losing nothing — what a pod's runner is waited on for before
+        its workspace is the server alone. Absent when the rows could not be
+        read: not known is not nothing held.
+      required: [sandboxes, volumes]
+      properties:
+        sandboxes:
+          type: integer
+          minimum: 0
+          description: Its sandboxes not deleted and not lost, whatever they are doing.
+        volumes:
+          type: integer
+          minimum: 0
+          description: >-
+            Its volumes not lost, whether a sandbox holds them or none does.
 
     RunnerFloor:
       type: object

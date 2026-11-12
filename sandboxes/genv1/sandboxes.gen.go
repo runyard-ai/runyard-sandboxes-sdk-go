@@ -2393,6 +2393,9 @@ type Runner struct {
 	// HeldFrom While it is `held`, the second address a request came from: the one `POST /v1/runners/{runnerId}/allow-address` would allow.
 	HeldFrom *string `json:"heldFrom,omitempty"`
 
+	// Holding What a runner holds now, as this server's rows say: counts, never what any of it is. One holding no sandbox and no volume can be revoked losing nothing — what a pod's runner is waited on for before its workspace is the server alone. Absent when the rows could not be read: not known is not nothing held.
+	Holding *RunnerHolding `json:"holding,omitempty"`
+
 	// Id Its hostID, unique on this server and never given to another.
 	Id       string    `json:"id"`
 	JoinedAt time.Time `json:"joinedAt"`
@@ -2536,6 +2539,15 @@ type RunnerFloor struct {
 
 	// MaxMemoryBytes The most memory one sandbox may be given.
 	MaxMemoryBytes *int64 `json:"maxMemoryBytes,omitempty"`
+}
+
+// RunnerHolding What a runner holds now, as this server's rows say: counts, never what any of it is. One holding no sandbox and no volume can be revoked losing nothing — what a pod's runner is waited on for before its workspace is the server alone. Absent when the rows could not be read: not known is not nothing held.
+type RunnerHolding struct {
+	// Sandboxes Its sandboxes not deleted and not lost, whatever they are doing.
+	Sandboxes int `json:"sandboxes"`
+
+	// Volumes Its volumes not lost, whether a sandbox holds them or none does.
+	Volumes int `json:"volumes"`
 }
 
 // RunnerName A runner's name: lowercase letters, digits and hyphens, starting and ending with a letter or a digit, at most 63 of them.

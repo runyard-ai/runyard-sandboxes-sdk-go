@@ -2393,9 +2393,6 @@ type Runner struct {
 	// HeldFrom While it is `held`, the second address a request came from: the one `POST /v1/runners/{runnerId}/allow-address` would allow.
 	HeldFrom *string `json:"heldFrom,omitempty"`
 
-	// Holding What a runner holds now, as this server's rows say: counts, never what any of it is. One holding no sandbox and no volume can be revoked losing nothing — what a pod's runner is waited on for before its workspace is the server alone. Absent when the rows could not be read: not known is not nothing held.
-	Holding *RunnerHolding `json:"holding,omitempty"`
-
 	// Id Its hostID, unique on this server and never given to another.
 	Id       string    `json:"id"`
 	JoinedAt time.Time `json:"joinedAt"`
@@ -2463,7 +2460,7 @@ type Runner struct {
 	// Version The runyard-runner it reported at enrolment.
 	Version string `json:"version"`
 
-	// WaitingMoves How many moves off this runner wait for an admin to approve it (`POST /v1/runners/{runnerId}/approve`), held at step `waiting_approval`: a pod's runner enrolled before approval was asked of every runner, or one enrolled again by a Rejoin, whose sandboxes and volumes are to move. No runner seals a transfer key to a broker key nobody approved, so none of them is tried until it is approved; then each goes on by itself. Its sandboxes keep running where they are meanwhile. The first move held is an activity record (`transfer`, `refused`, naming the runner) and a line of the server's log. Absent when none waits.
+	// WaitingMoves How many moves off this runner wait for an admin to approve it (`POST /v1/runners/{runnerId}/approve`), held at step `waiting_approval`: one enrolled again by a Rejoin, whose sandboxes and volumes are to move. No runner seals a transfer key to a broker key nobody approved, so none of them is tried until it is approved; then each goes on by itself. Its sandboxes keep running where they are meanwhile. The first move held is an activity record (`transfer`, `refused`, naming the runner) and a line of the server's log. Absent when none waits.
 	WaitingMoves *int `json:"waitingMoves,omitempty"`
 }
 
@@ -2539,15 +2536,6 @@ type RunnerFloor struct {
 
 	// MaxMemoryBytes The most memory one sandbox may be given.
 	MaxMemoryBytes *int64 `json:"maxMemoryBytes,omitempty"`
-}
-
-// RunnerHolding What a runner holds now, as this server's rows say: counts, never what any of it is. One holding no sandbox and no volume can be revoked losing nothing — what a pod's runner is waited on for before its workspace is the server alone. Absent when the rows could not be read: not known is not nothing held.
-type RunnerHolding struct {
-	// Sandboxes Its sandboxes not deleted and not lost, whatever they are doing.
-	Sandboxes int `json:"sandboxes"`
-
-	// Volumes Its volumes not lost, whether a sandbox holds them or none does.
-	Volumes int `json:"volumes"`
 }
 
 // RunnerName A runner's name: lowercase letters, digits and hyphens, starting and ending with a letter or a digit, at most 63 of them.

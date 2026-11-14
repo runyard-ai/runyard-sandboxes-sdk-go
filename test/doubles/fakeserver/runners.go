@@ -55,7 +55,15 @@ type joinToken struct {
 var (
 	runnerName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	hostID     = regexp.MustCompile(`^r-\d+$`)
+	// declared is a join token as its caller made it, as the server holds
+	// one to being made.
+	declared = regexp.MustCompile(`^rjt_([0-9a-f]{12})_[0-9a-f]{48}$`)
 )
+
+// usable says whether t enrols at now: not revoked, expired or used up.
+func usable(t genv1.JoinToken, now time.Time) bool {
+	return !t.Revoked && (t.ExpiresAt == nil || now.Before(*t.ExpiresAt)) && t.Uses < t.MaxUses
+}
 
 // Consumed is what a test says was used, for GET /v1/usage: in the hour it
 // is recorded in (Use), on Runner, by Sandbox for Principal. The fake meters
@@ -79,7 +87,9 @@ func (d *Server) Use(c Consumed) {
 
 // Join is a host joining with secret, as `runyard-runner join` does: the
 // runner it is, pending, called what its token names it. A secret that
-// cannot enrol fails the test.
+// cannot enrol fails the test. A token that approves its runners
+// (`approval: auto`) approves it at once, as the server does once the
+// runner has reported its sandbox CA, which a runner here never does.
 func (d *Server) Join(tb testing.TB, secret string) genv1.Runner {
 	tb.Helper()
 	d.mu.Lock()
@@ -90,7 +100,7 @@ func (d *Server) Join(tb testing.TB, secret string) genv1.Runner {
 		tb.Fatalf("fakeserver: no join token is %q", secret)
 	}
 	token := d.joinTokens[i]
-	if t := token.record; t.Revoked || !now.Before(t.ExpiresAt) || t.Uses >= t.MaxUses {
+	if t := token.record; !usable(t, now) {
 		tb.Fatalf("fakeserver: join token %s cannot enrol: revoked, expired or used up", t.Id)
 	}
 	if token.record.HostID != nil {
@@ -122,6 +132,9 @@ func (d *Server) Join(tb testing.TB, secret string) genv1.Runner {
 	if d.runners == nil {
 		d.runners = map[string]*genv1.Runner{}
 	}
+	if token.record.Approval == genv1.JoinTokenApprovalAuto {
+		runner.State, runner.ApprovedAt, runner.ApprovedBy = genv1.RunnerStateRunnerOnline, &now, new("join token "+token.record.Id)
+	}
 	d.runners[id] = runner
 	d.runnerOrder = append(d.runnerOrder, id)
 	return *runner
@@ -138,7 +151,7 @@ func (d *Server) nameTaken(name, except string) bool {
 	now := d.now()
 	for _, t := range d.joinTokens {
 		r := t.record
-		if r.Id != except && r.RunnerName != nil && *r.RunnerName == name && !r.Revoked && now.Before(r.ExpiresAt) && r.Uses < r.MaxUses {
+		if r.Id != except && r.RunnerName != nil && *r.RunnerName == name && usable(r, now) {
 			return true
 		}
 	}
@@ -151,24 +164,57 @@ func (d *Server) createJoinToken(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, err.Error())
 		return
 	}
-	life := time.Hour
-	if ask.ExpiresIn != nil {
-		var err error
-		if life, err = time.ParseDuration(*ask.ExpiresIn); err != nil || life < 15*time.Minute || life > 24*time.Hour {
-			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "expiresIn is a duration, 15 minutes to a day")
-			return
-		}
-	}
 	uses := 1
 	if ask.MaxUses != nil {
 		uses = *ask.MaxUses
 	}
-	if uses < 1 || uses > 1000 || (ask.HostID != nil && uses != 1) {
-		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a join token enrols 1 to 1000 hosts, and one bound to a runner enrols it once")
+	if uses < 1 || uses > 1_000_000 || (ask.HostID != nil && uses != 1) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a join token enrols 1 to 1000000 hosts, and one bound to a runner enrols it once")
 		return
 	}
+	life, never := time.Hour, false
+	switch {
+	case ask.ExpiresIn != nil && *ask.ExpiresIn == "never":
+		never = true
+		if uses == 1 {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "only a fleet's join token never expires: ask for more than one use (maxUses)")
+			return
+		}
+	case ask.ExpiresIn != nil:
+		var err error
+		if life, err = time.ParseDuration(*ask.ExpiresIn); err != nil || life < 15*time.Minute || (uses == 1 && life > 24*time.Hour) {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "expiresIn is a duration, 15 minutes to a day, longer or never only for a fleet's")
+			return
+		}
+	}
+	approval, hardware := genv1.JoinTokenApprovalManual, genv1.HardwareKeysPreferred
+	if ask.Approval != nil {
+		approval = *ask.Approval
+	}
+	if ask.HardwareKeys != nil {
+		hardware = *ask.HardwareKeys
+	}
+	if approval != genv1.JoinTokenApprovalManual && approval != genv1.JoinTokenApprovalAuto ||
+		hardware != genv1.HardwareKeysPreferred && hardware != genv1.HardwareKeysRequired {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "approval is manual or auto, and hardwareKeys preferred or required")
+		return
+	}
+	if approval == genv1.JoinTokenApprovalAuto && (ask.HostID != nil ||
+		hardware != genv1.HardwareKeysRequired && (ask.AllowedSources == nil || len(*ask.AllowedSources) == 0)) {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a join token that approves its runners is held to allowedSources or hardwareKeys: required, and is not a Rejoin")
+		return
+	}
+	id, secret := fmt.Sprintf("%012x", len(d.joinTokens)+1), ""
+	if ask.Token != nil {
+		given := declared.FindStringSubmatch(*ask.Token)
+		if given == nil {
+			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a join token given is rjt_ then 12 and 48 lowercase hex digits joined by _")
+			return
+		}
+		id, secret = given[1], *ask.Token
+	}
 	if name := ask.RunnerName; name != nil {
-		if !runnerName.MatchString(*name) || hostID.MatchString(*name) || ask.HostID != nil || (uses > 1 && len(*name) > 58) {
+		if !runnerName.MatchString(*name) || hostID.MatchString(*name) || ask.HostID != nil || (uses > 1 && len(*name) > 55) {
 			refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a runner's name is lowercase letters, digits and hyphens, not written as a hostID is, and a Rejoin keeps the runner's own")
 			return
 		}
@@ -190,14 +236,25 @@ func (d *Server) createJoinToken(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "a runner is called "+*ask.RunnerName+" already, or a join token not yet used will call one that")
 		return
 	}
+	if slices.ContainsFunc(d.joinTokens, func(t *joinToken) bool { return t.record.Id == id }) {
+		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "a join token of that id was minted here already, revoked or not")
+		return
+	}
+	if secret == "" {
+		secret = "rjt_" + id + "_" + strings.Repeat("s", 32)
+	}
 	now := d.now().UTC()
-	id := fmt.Sprintf("%012x", len(d.joinTokens)+1)
+	var expires *time.Time
+	if !never {
+		expires = new(now.Add(life))
+	}
 	token := &joinToken{
 		record: genv1.JoinToken{
 			Id: id, Name: ask.Name, RunnerName: ask.RunnerName, Labels: map[string]string{}, AllowedSources: []string{},
-			CreatedAt: now, CreatedBy: "admin@example.com", ExpiresAt: now.Add(life), MaxUses: uses, HostID: ask.HostID,
+			CreatedAt: now, CreatedBy: "admin@example.com", ExpiresAt: expires, MaxUses: uses, HostID: ask.HostID,
+			Approval: approval, HardwareKeys: hardware,
 		},
-		secret: "rjt_" + id + "_" + strings.Repeat("s", 32),
+		secret: secret,
 	}
 	if ask.Labels != nil {
 		token.record.Labels = maps.Clone(*ask.Labels)
@@ -210,7 +267,7 @@ func (d *Server) createJoinToken(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusCreated, genv1.JoinTokenCreated{
 		Id: t.Id, Name: t.Name, RunnerName: t.RunnerName, Labels: t.Labels, AllowedSources: t.AllowedSources, CreatedAt: t.CreatedAt,
 		CreatedBy: t.CreatedBy, ExpiresAt: t.ExpiresAt, MaxUses: t.MaxUses, Uses: t.Uses, HostID: t.HostID, Revoked: t.Revoked,
-		Secret: token.secret,
+		Approval: t.Approval, HardwareKeys: t.HardwareKeys, Secret: token.secret,
 	})
 }
 
@@ -238,8 +295,12 @@ func (d *Server) updateJoinToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t := &d.joinTokens[i].record
-	if t.Revoked || !d.now().Before(t.ExpiresAt) || t.Uses >= t.MaxUses {
+	if !usable(*t, d.now()) {
 		refuse(w, http.StatusConflict, genv1.ErrorCodeConflict, "join token "+t.Id+" is revoked, expired or used up, and enrols nothing more")
+		return
+	}
+	if t.Approval == genv1.JoinTokenApprovalAuto && t.HardwareKeys != genv1.HardwareKeysRequired && len(change.AllowedSources) == 0 {
+		refuse(w, http.StatusBadRequest, genv1.ErrorCodeBadRequest, "a join token that approves its runners keeps allowed addresses unless it requires keys in a TPM")
 		return
 	}
 	t.AllowedSources = slices.Clone(change.AllowedSources)

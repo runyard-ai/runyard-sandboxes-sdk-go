@@ -529,7 +529,10 @@ tags:
       runner. It joins with a **join token** an administrator mints here,
       at `POST /v1/runner/enrol` (openapi/runner.yaml), and is `pending`
       until a workspace admin approves it: in no bundle, and given no
-      sandbox.
+      sandbox. A fleet installed as code is joined with a token minted
+      `approval: auto`, which approves each runner it enrolled as the
+      runner reports its sandbox CA, and is held to allowed addresses or
+      keys in a TPM so that holding it is not all that is needed.
 
       Reading runners is reading where sandboxes run: `sandboxes.read`.
       Everything that adds one, or would, is `runners.admin`, a scope that
@@ -989,20 +992,22 @@ paths:
     get:
       operationId: listHostTunnels
       tags: [Tunnels]
-      summary: Every tunnel on this host, and the relay that serves them
+      summary: Every tunnel on this host, and the relays that serve them
       description: |
         Every sandbox's tunnels in one list, with the state of the path a
-        visitor takes to reach them: this host's relay, and the gateway it is
-        docked at. A tunnel is only as reachable as both.
+        visitor takes to reach them: the relay of the runner each sandbox is
+        on, and the gateway it is docked at. A tunnel is only as reachable as
+        both.
 
         **Paged like the other collections**, oldest first by `createdAt` and
         then by `slug`, which no two tunnels share. A position rather than an
         index, so a tunnel deleted before the page boundary does not move it.
         Without `limit` it is every tunnel, which is what a caller that does
-        not page has always had. The relay is the same on every page.
+        not page has always had. `relays` is every runner that can be
+        reached, on every page, and the runners of the tunnels on this one.
 
         A key that acts only on its `own` sandboxes is listed their tunnels,
-        and the same relay.
+        and the same relays.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -1550,8 +1555,8 @@ paths:
         the line is listed as usual, and the body can be read once it is
         back. `410` once the body is gone for good: its runner revoked or no
         longer known, or the body kept for longer than the runner keeps
-        them. A record that stands for no exchange — `lost`, `read` — has no
-        body to read, and is `404`.
+        them. A record that stands for no exchange — `lost`, `read`,
+        `exec` — has no body to read, and is `404`.
       responses:
         "200":
           description: The bodies.
@@ -5298,6 +5303,31 @@ paths:
         is a **Rejoin**: it enrols that existing runner again, as itself,
         once.
 
+        **A fleet installed as code** (Terraform, Ansible, a template's
+        cloud-init) declares its token once and gives it to every host it
+        will ever make:
+
+        - `token` is the whole token, made by the caller as this server
+          makes one, so that the code holds it rather than this answer:
+          `rjt_$(openssl rand -hex 6)_$(openssl rand -hex 24)`. Its id is
+          one no token minted here has, revoked or not, or `409`.
+        - A fleet's token (`maxUses` more than 1, up to 1,000,000) lives
+          as long as `expiresIn` says, 15 minutes or more, or never
+          expires: `expiresIn: never`. Rotating it is minting the next one
+          and revoking this one.
+        - `approval: auto` approves each runner it enrolled as the runner
+          reports its sandbox CA, rather than waiting for an admin: the
+          runner's `approvedBy` names the token, and so does its
+          `approved` event. Because nobody compares the runner's CA with
+          its host, such a token is held to more than its secret:
+          `allowedSources`, or `hardwareKeys: required`, or both, or
+          `400`. A runner it enrolled that reports its CA once the token
+          is revoked waits for an admin instead. A Rejoin, or a token that
+          imports a host, is approved by an admin.
+        - `hardwareKeys: required` refuses a runner whose key is not
+          proved to be in a TPM, at enrolment and at every renewal, as the
+          workspace's own setting does, whatever that is.
+
         `runnerName` is the name the runner it enrols is listed with, as
         the Add dialog names it: `factory-03`. A token for a fleet names
         each runner after it, numbered, `factory-01`, `factory-02`, …, and
@@ -5325,8 +5355,9 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "409":
           description: >-
-            `hostID` names a revoked runner, which nothing brings back, or
-            `runnerName` is a name a runner has or a usable token will give.
+            `hostID` names a revoked runner, which nothing brings back,
+            `runnerName` is a name a runner has or a usable token will give,
+            or `token`'s id is one a token minted here has.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -5368,7 +5399,8 @@ paths:
         it enrols from then; a runner it enrolled before keeps its own,
         which `PATCH /v1/runners/{runnerId}` changes. Only a token that
         can still enrol is changed: one revoked, expired or used up is
-        `409`. The change is an activity record of type `setting`
+        `409`. A token that approves its runners (`approval: auto`) and
+        does not require keys in a TPM keeps some: `[]` is `400`. The change is an activity record of type `setting`
         (`allowedSources`, with `joinToken`), from what to what and by
         whom; the same sources again change nothing and record nothing.
       requestBody:
@@ -5489,6 +5521,10 @@ paths:
         names the admin who clicked, after a recent sign-in. Without it, it
         is the calling key's owner. Compare the runner's CA fingerprint with
         what `runyard-runner status` prints on its host before approving.
+
+        A runner joined with a token minted `approval: auto` is approved
+        without this, as it reports its sandbox CA, unless the token was
+        revoked by then.
 
         The moves off it that waited for it (`waitingMoves`, at step
         `waiting_approval`) go on by themselves once its runners hold the
@@ -6685,6 +6721,26 @@ components:
             default and asked for explicitly. A host that cannot give it refuses
             the spec rather than booting a guest that sees the CPU extension and
             finds no device — which is the most confusing way for this to fail.
+        shares:
+          type: array
+          maxItems: 8
+          items: { $ref: "#/components/schemas/SandboxShare" }
+          description: |
+            Directories of its runner's host it is given, each mounted in the
+            guest before its entrypoint starts and written live from both
+            sides: a project's source on the host that something in the
+            sandbox edits while the host's own app reloads it.
+
+            A share is named, never a path of the host's: each runner's
+            provisioner configures which directories it serves, by name, and
+            whose they are (`GET /v1/runners`, `shares`). The sandbox is placed
+            only on a runner that serves every share it names
+            (`unplaceable`, constraint `shares`), and a runner that does not
+            refuses it (`unsupported_spec`).
+
+            What the guest's root — or any other machine given the same share
+            — writes there is on the host, and whatever on the host reads or
+            runs it trusts it: see the README, "Shares".
         sealed:
           type: boolean
           description: |
@@ -7108,6 +7164,51 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Volume" }
+
+    SandboxShare:
+      type: object
+      additionalProperties: false
+      required: [name, path]
+      description: |
+        One directory of its runner's host a sandbox is given, served by a
+        virtiofsd of its own on the host and mounted as virtio-fs, without
+        setuid or devices honoured. Nothing is cached in the guest: a change
+        made on the host, or by another machine, is what the guest reads next.
+
+        Whoever writes there in the guest, it is written on the host as the
+        share's owner, as its runner's provisioner names it. Locks
+        (`flock`, `fcntl`) are each machine's own: two machines given one
+        share do not see each other's.
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,35}$"
+          description: The share, as its runner's provisioner names it.
+          example: src
+        path:
+          type: string
+          description: >-
+            Where the guest mounts it: absolute, and not in /proc, /sys, /dev
+            or /run, which are the guest's own.
+          example: /work/src
+        readOnly:
+          type: boolean
+          description: Whether the guest is refused every change to it. Off by default.
+        uid:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+          description: >-
+            Who the owner's files belong to in the guest: the user the
+            sandbox's processes run as, for one that is not root to change
+            them. 0 by default.
+          example: 1000
+        gid:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+          description: The group the owner's files belong to in the guest. 0 by default.
+          example: 1000
 
     DiskSpec:
       type: object
@@ -9088,7 +9189,9 @@ components:
           description: >-
             Who approved it, as the approval said: a workspace admin's email
             for one approved in the console, `cli:<user>` or what `-as` named
-            for one approved on the command line. Absent while it is pending.
+            for one approved on the command line, and `join token <id>` for
+            one its join token approved (`approval: auto`). Absent while it
+            is pending.
         provides:
           type: array
           description: >-
@@ -9118,6 +9221,13 @@ components:
             (`builds.registry`), as it last reported. Absent from a runner
             that builds nothing.
           example: registry.acme.internal
+        shares:
+          type: array
+          description: >-
+            The shares its provisioner serves, by name, as it last reported:
+            what a sandbox placed on it may be given (`spec.shares`). Absent
+            when it serves none.
+          items: { type: string, example: src }
         floor: { $ref: "#/components/schemas/RunnerFloor" }
         waitingMoves:
           type: integer
@@ -9412,18 +9522,43 @@ components:
           items: { type: string }
         expiresIn:
           type: string
-          description: How long it may be used for, as a Go duration, 15 minutes to a day. An hour when left out.
+          description: >-
+            How long it may be used for, as a Go duration, 15 minutes to a
+            day; for a fleet's token (`maxUses` more than 1), 15 minutes or
+            more, or `never`. An hour when left out.
           example: 1h
         maxUses:
           type: integer
           minimum: 1
-          maximum: 1000
+          maximum: 1000000
           description: How many hosts it may enrol. 1 unless it is minted for a fleet.
+        token:
+          type: string
+          pattern: "^rjt_[0-9a-f]{12}_[0-9a-f]{48}$"
+          description: >-
+            The whole token, made by the caller as this server makes one,
+            for code that declares it: `rjt_$(openssl rand -hex 6)_$(openssl
+            rand -hex 24)`. Made here when left out.
+          example: rjt_3f9a1c0b7e2d_5b1e0c9d7a3f2e8b4c6d1a0f9e8b7c6d5a4f3e2d1c0b9a8f
+        approval: { $ref: "#/components/schemas/JoinTokenApproval" }
+        hardwareKeys:
+          allOf: [{ $ref: "#/components/schemas/HardwareKeys" }]
+          description: "`required`: a runner it enrols must prove its key is in a TPM, at enrolment and at every renewal, whatever the workspace's setting is. `preferred` when left out."
         hostID:
           type: string
           description: >-
             Binds it to this existing runner (Rejoin): it enrols that runner
             again, as itself, and nothing else, once.
+
+    JoinTokenApproval:
+      type: string
+      enum: [manual, auto]
+      x-enum-varnames: [JoinTokenApprovalManual, JoinTokenApprovalAuto]
+      description: >-
+        What a runner it enrols waits for once it has reported its sandbox
+        CA. `manual`, the default: a workspace admin's approval. `auto`:
+        none, the token approves it; only for a token held to
+        `allowedSources` or `hardwareKeys: required`.
 
     JoinTokenUpdate:
       type: object
@@ -9441,7 +9576,7 @@ components:
     JoinToken:
       type: object
       description: A join token's metadata. Never its secret.
-      required: [id, labels, allowedSources, createdAt, createdBy, expiresAt, maxUses, uses, revoked]
+      required: [id, labels, allowedSources, createdAt, createdBy, maxUses, uses, revoked, approval, hardwareKeys]
       properties:
         id: { type: string, example: 3f9a1c0b7e2d }
         name: { type: string }
@@ -9461,11 +9596,18 @@ components:
             Who minted it: an administrator's address, or `runyard-sandboxes`
             for the token a server mints for the runner on its own host.
           example: ada@example.com
-        expiresAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          description: When it stops enrolling. Absent for a fleet's token that never expires.
         maxUses: { type: integer }
         uses:
           type: integer
           description: How many enrolments it was used for.
+        approval: { $ref: "#/components/schemas/JoinTokenApproval" }
+        hardwareKeys:
+          allOf: [{ $ref: "#/components/schemas/HardwareKeys" }]
+          description: "`required`: a runner it enrols must prove its key is in a TPM, at enrolment and at every renewal, whatever the workspace's setting is."
         hostID:
           type: string
           description: The runner it is bound to, for a Rejoin token.
@@ -9862,9 +10004,13 @@ components:
         | `expired` | its `expiresAt` has passed |
         | `sandbox_not_running` | served again when the sandbox is `ready` |
         | `pending` | handed to the relay, which has not taken it yet |
-        | `relay_unreachable` | this host's relay is not answering |
-        | `gateway_unreachable` | the relay is not docked at a gateway |
+        | `relay_unreachable` | the relay of the runner its sandbox is on is not answering, or that runner cannot be reached; `message` says which, and names the runner |
+        | `gateway_unreachable` | that relay is not docked at a gateway |
         | `refused` | the gateway would not serve it; `message` says why |
+
+        The relay is the one beside the runner that holds the sandbox: each
+        runner's carries its own sandboxes' tunnels, with a key of its own,
+        and is asked through that runner.
       required: [state]
       properties:
         state:
@@ -9976,7 +10122,9 @@ components:
         broker key it was given is not the one the target's own bundle names
         (`reason` says which runners); `rotation`, a runner's new sandbox CA
         its server refused, since it is not signed by the CA the runner was
-        approved with (`runner` says which, and `reason` why).
+        approved with (`runner` says which, and `reason` why); `exec`, a
+        program the sandbox ran, as the guest's kernel recorded it (`exec`),
+        with no broker and no bodies.
 
         A record carries no body: the bodies of an exchange stay on the
         runner that saw it (`runner`), and are read with
@@ -10005,8 +10153,8 @@ components:
           description: What kind of broker it went through, when it reached one.
         type:
           type: string
-          enum: [http, upgrade, stream, read, setting, transfer, rotation]
-          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting, ActivityTypeTransfer, ActivityTypeRotation]
+          enum: [http, upgrade, stream, read, setting, transfer, rotation, exec]
+          x-enum-varnames: [ActivityTypeHttp, ActivityTypeUpgrade, ActivityTypeStream, ActivityTypeRead, ActivityTypeSetting, ActivityTypeTransfer, ActivityTypeRotation, ActivityTypeExec]
         startedAt: { type: string, format: date-time }
         endedAt: { type: string, format: date-time }
         outcome:
@@ -10041,6 +10189,59 @@ components:
           description: The runner that saw the exchange and keeps its bodies; on a `setting` of a runner's own (`name`), and on a `rotation`, that runner. Absent on any other record the server made itself (`read`, `setting`), and on one kept before bodies stayed on runners.
         read: { $ref: "#/components/schemas/BrokerActivityRead" }
         setting: { $ref: "#/components/schemas/BrokerActivitySetting" }
+        exec: { $ref: "#/components/schemas/BrokerActivityExec" }
+
+    BrokerActivityExec:
+      type: object
+      description: |
+        On a record of type `exec`, the program the sandbox ran. The guest's
+        kernel records it as the program is loaded, before it runs, and the
+        runner the sandbox is on keeps it. It is what the guest's kernel
+        said: a guest whose kernel was changed by whoever is root in it can
+        say anything.
+      required: [boot, seq, pid, ppid, uid, euid, path, cwd, argv, truncated]
+      properties:
+        boot:
+          type: string
+          description: Which boot of the machine it was, a random number its kernel chose, hex.
+          example: 9f3c2a71e4b05d86
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Its place among that boot's programs, from 1, with no gaps, so a number missing is a record missing.
+        pid:
+          type: integer
+          format: int64
+          description: The process's, as the guest's kernel numbers it rather than any pid namespace inside the guest.
+        ppid:
+          type: integer
+          format: int64
+          description: Its parent's, numbered as `pid` is.
+        uid:
+          type: integer
+          format: int64
+          description: Its real user.
+        euid:
+          type: integer
+          format: int64
+          description: The user the program runs as.
+        path:
+          type: string
+          description: The program's file.
+          example: /usr/bin/git
+        cwd:
+          type: string
+          description: The directory it ran in.
+          example: /workspace
+        argv:
+          type: array
+          items: { type: string }
+          description: Its arguments, `argv[0]` first.
+          example: [git, status]
+        truncated:
+          type: boolean
+          description: The kernel cut `path`, `cwd` or `argv` to fit a record.
 
     BrokerActivitySetting:
       type: object
@@ -10159,13 +10360,22 @@ components:
     TunnelRelay:
       type: object
       description: |
-        This host's relay: the separate service that carries visitors from the
-        gateway into sandboxes, and keeps doing so while this server restarts.
+        A runner's relay: the separate service beside it that carries visitors
+        from the gateway into its sandboxes, and keeps doing so while the
+        runner or this server restarts. Asked through that runner.
       required: [reachable, docked]
       properties:
+        runner:
+          type: string
+          description: The hostID of the runner it is beside. Absent on the summary of several.
+          example: a
+        runnerName:
+          type: string
+          description: That runner's name.
+          example: factory-03
         reachable:
           type: boolean
-          description: Whether it answers on its socket.
+          description: Whether its runner can be reached, and it answers that runner on its socket.
         docked:
           type: boolean
           description: Whether it holds its line to a gateway. Without one no tunnel is reachable.
@@ -10334,6 +10544,15 @@ components:
           required: [relay, items]
           properties:
             relay: { $ref: "#/components/schemas/TunnelRelay" }
+            relays:
+              type: array
+              description: >-
+                The relay of each runner that holds a tunnel on this page or
+                can be reached, by its runner's hostID. `relay` is all of them
+                as one: reachable and docked when each is, and otherwise why
+                the first that is not is not, naming its runner; with one
+                runner, its relay.
+              items: { $ref: "#/components/schemas/TunnelRelay" }
             items:
               type: array
               items: { $ref: "#/components/schemas/Tunnel" }
@@ -10368,7 +10587,7 @@ components:
                 the server says of what it holds meanwhile.
             constraint:
               type: string
-              enum: [volume, placement, image, brokers, floor, runner]
+              enum: [volume, placement, image, brokers, shares, floor, runner]
               description: |
                 On `unplaceable`, the constraint no runner meets, as the
                 message names it (docs/design/runners, "Scheduling"):
@@ -10379,6 +10598,7 @@ components:
                 | `placement` | have every label `placement.labels` names |
                 | `image` | pull the image's registry, or have it cached |
                 | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+                | `shares` | serve every share `spec.shares` names |
                 | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
                 | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
 

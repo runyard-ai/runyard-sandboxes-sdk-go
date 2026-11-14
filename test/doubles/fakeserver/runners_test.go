@@ -171,6 +171,56 @@ func TestTheFakeAddsListsAndRevokesRunners(t *testing.T) {
 	}
 }
 
+// A fleet installed as code mints the token its code declared, which never
+// expires and approves its runners: a host that joins with it is approved
+// at once, by the token, and the token keeps where it may be used from.
+func TestTheFakeMintsAFleetsTokenItsCodeDeclared(t *testing.T) {
+	d := New(t)
+	client := typed(t, d, "")
+	ctx := context.Background()
+	given := "rjt_f1ee70000001_" + strings.Repeat("ab", 24)
+	minted, err := client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{
+		Token: &given, ExpiresIn: new("never"), MaxUses: new(1_000_000), Approval: new(genv1.JoinTokenApprovalAuto), AllowedSources: &[]string{"203.0.113.0/24"},
+	})
+	if err != nil || minted.JSON201 == nil {
+		t.Fatalf("= %v %s", err, minted.Body)
+	}
+	token := minted.JSON201
+	if token.Id != "f1ee70000001" || token.Secret != given || token.ExpiresAt != nil || token.Approval != genv1.JoinTokenApprovalAuto || token.HardwareKeys != genv1.HardwareKeysPreferred {
+		t.Errorf("minted = %+v", token)
+	}
+	runner := d.Join(t, given)
+	if runner.State != genv1.RunnerStateRunnerOnline || runner.ApprovedAt == nil || runner.ApprovedBy == nil || *runner.ApprovedBy != "join token f1ee70000001" {
+		t.Errorf("joined = %+v", runner)
+	}
+	if plain := d.Join(t, mintedSecret(t, client, genv1.JoinTokenRequest{})); plain.State != genv1.RunnerStateRunnerPending || plain.ApprovedAt != nil {
+		t.Errorf("joined with a token that approves nothing = %+v", plain)
+	}
+	if got := statusOf(client.UpdateJoinTokenWithResponse(ctx, token.Id, genv1.JoinTokenUpdate{AllowedSources: []string{}})); got != http.StatusBadRequest {
+		t.Errorf("its sources emptied = %d", got)
+	}
+	if got := statusOf(client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{Token: &given, MaxUses: new(2)})); got != http.StatusConflict {
+		t.Errorf("minted again = %d", got)
+	}
+	required, err := client.CreateJoinTokenWithResponse(ctx, genv1.JoinTokenRequest{ExpiresIn: new("2160h"), MaxUses: new(2), Approval: new(genv1.JoinTokenApprovalAuto), HardwareKeys: new(genv1.HardwareKeysRequired)})
+	if err != nil || required.JSON201 == nil || required.JSON201.ExpiresAt == nil {
+		t.Fatalf("a fleet's for 90 days, held to keys in a TPM = %v %s", err, required.Body)
+	}
+	if got := statusOf(client.UpdateJoinTokenWithResponse(ctx, required.JSON201.Id, genv1.JoinTokenUpdate{AllowedSources: []string{}})); got != http.StatusOK {
+		t.Errorf("anywhere, for one held to keys in a TPM = %d", got)
+	}
+}
+
+// mintedSecret is the secret of a token minted as ask says.
+func mintedSecret(t *testing.T, client *genv1.ClientWithResponses, ask genv1.JoinTokenRequest) string {
+	t.Helper()
+	minted, err := client.CreateJoinTokenWithResponse(context.Background(), ask)
+	if err != nil || minted.JSON201 == nil {
+		t.Fatalf("= %v %s", err, minted.Body)
+	}
+	return minted.JSON201.Secret
+}
+
 func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
 	d := New(t)
 	client := typed(t, d, "")
@@ -183,16 +233,24 @@ func TestTheFakeRefusesWhatTheServerRefusesOfRunners(t *testing.T) {
 		ask  genv1.JoinTokenRequest
 		want int
 	}{
-		"a life that is not a duration": {genv1.JoinTokenRequest{ExpiresIn: new("a week")}, 400},
-		"a life longer than a day":      {genv1.JoinTokenRequest{ExpiresIn: new("25h")}, 400},
-		"too many uses":                 {genv1.JoinTokenRequest{MaxUses: new(1001)}, 400},
-		"a Rejoin for two":              {genv1.JoinTokenRequest{HostID: new("r-01"), MaxUses: new(2)}, 400},
-		"a name as a hostID is written": {genv1.JoinTokenRequest{RunnerName: new("r-07")}, 400},
-		"a name that is not one":        {genv1.JoinTokenRequest{RunnerName: new("Factory")}, 400},
-		"a fleet's name too long":       {genv1.JoinTokenRequest{RunnerName: new(strings.Repeat("a", 59)), MaxUses: new(2)}, 400},
-		"a Rejoin naming it anew":       {genv1.JoinTokenRequest{HostID: new("r-01"), RunnerName: new("again")}, 400},
-		"a Rejoin for nobody":           {genv1.JoinTokenRequest{HostID: new("r-99")}, 404},
-		"a name a token will give":      {genv1.JoinTokenRequest{RunnerName: new("factory-03")}, 409},
+		"a life that is not a duration":   {genv1.JoinTokenRequest{ExpiresIn: new("a week")}, 400},
+		"a life longer than a day":        {genv1.JoinTokenRequest{ExpiresIn: new("25h")}, 400},
+		"too many uses":                   {genv1.JoinTokenRequest{MaxUses: new(1_000_001)}, 400},
+		"a host's own that never expires": {genv1.JoinTokenRequest{ExpiresIn: new("never")}, 400},
+		"a fleet's for 14 minutes":        {genv1.JoinTokenRequest{ExpiresIn: new("14m"), MaxUses: new(2)}, 400},
+		"auto, held to nothing":           {genv1.JoinTokenRequest{Approval: new(genv1.JoinTokenApprovalAuto), MaxUses: new(2)}, 400},
+		"auto, a Rejoin":                  {genv1.JoinTokenRequest{Approval: new(genv1.JoinTokenApprovalAuto), HostID: new("r-01"), AllowedSources: &[]string{"203.0.113.0/24"}}, 400},
+		"an approval that is not one":     {genv1.JoinTokenRequest{Approval: new(genv1.JoinTokenApproval("sometimes"))}, 400},
+		"a setting that is not one":       {genv1.JoinTokenRequest{HardwareKeys: new(genv1.HardwareKeys("always"))}, 400},
+		"a token not made as one is":      {genv1.JoinTokenRequest{Token: new("rjt_short_secret")}, 400},
+		"a token of an id taken":          {genv1.JoinTokenRequest{Token: new("rjt_000000000001_" + strings.Repeat("ab", 24))}, 409},
+		"a Rejoin for two":                {genv1.JoinTokenRequest{HostID: new("r-01"), MaxUses: new(2)}, 400},
+		"a name as a hostID is written":   {genv1.JoinTokenRequest{RunnerName: new("r-07")}, 400},
+		"a name that is not one":          {genv1.JoinTokenRequest{RunnerName: new("Factory")}, 400},
+		"a fleet's name too long":         {genv1.JoinTokenRequest{RunnerName: new(strings.Repeat("a", 56)), MaxUses: new(2)}, 400},
+		"a Rejoin naming it anew":         {genv1.JoinTokenRequest{HostID: new("r-01"), RunnerName: new("again")}, 400},
+		"a Rejoin for nobody":             {genv1.JoinTokenRequest{HostID: new("r-99")}, 404},
+		"a name a token will give":        {genv1.JoinTokenRequest{RunnerName: new("factory-03")}, 409},
 	} {
 		if got := statusOf(client.CreateJoinTokenWithResponse(ctx, c.ask)); got != c.want {
 			t.Errorf("%s = %d, want %d", name, got, c.want)

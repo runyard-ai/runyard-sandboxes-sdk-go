@@ -45,6 +45,7 @@ const (
 
 // Defines values for BrokerActivityType.
 const (
+	ActivityTypeExec     BrokerActivityType = "exec"
 	ActivityTypeHttp     BrokerActivityType = "http"
 	ActivityTypeRead     BrokerActivityType = "read"
 	ActivityTypeRotation BrokerActivityType = "rotation"
@@ -119,6 +120,7 @@ const (
 	ErrorErrorConstraintImage     ErrorErrorConstraint = "image"
 	ErrorErrorConstraintPlacement ErrorErrorConstraint = "placement"
 	ErrorErrorConstraintRunner    ErrorErrorConstraint = "runner"
+	ErrorErrorConstraintShares    ErrorErrorConstraint = "shares"
 	ErrorErrorConstraintVolume    ErrorErrorConstraint = "volume"
 )
 
@@ -184,6 +186,12 @@ const (
 	ImageStateFailed  ImageState = "failed"
 	ImageStatePulling ImageState = "pulling"
 	ImageStateReady   ImageState = "ready"
+)
+
+// Defines values for JoinTokenApproval.
+const (
+	JoinTokenApprovalAuto   JoinTokenApproval = "auto"
+	JoinTokenApprovalManual JoinTokenApproval = "manual"
 )
 
 // Defines values for KeyReach.
@@ -446,7 +454,9 @@ type Broker struct {
 // broker key it was given is not the one the target's own bundle names
 // (`reason` says which runners); `rotation`, a runner's new sandbox CA
 // its server refused, since it is not signed by the CA the runner was
-// approved with (`runner` says which, and `reason` why).
+// approved with (`runner` says which, and `reason` why); `exec`, a
+// program the sandbox ran, as the guest's kernel recorded it (`exec`),
+// with no broker and no bodies.
 //
 // A record carries no body: the bodies of an exchange stay on the
 // runner that saw it (`runner`), and are read with
@@ -464,6 +474,13 @@ type BrokerActivity struct {
 	// BytesOut What crossed the gateway to the sandbox.
 	BytesOut int64     `json:"bytesOut"`
 	EndedAt  time.Time `json:"endedAt"`
+
+	// Exec On a record of type `exec`, the program the sandbox ran. The guest's
+	// kernel records it as the program is loaded, before it runs, and the
+	// runner the sandbox is on keeps it. It is what the guest's kernel
+	// said: a guest whose kernel was changed by whoever is root in it can
+	// say anything.
+	Exec *BrokerActivityExec `json:"exec,omitempty"`
 
 	// Id A ULID, minted where the exchange was seen.
 	Id BrokerActivityID `json:"id"`
@@ -531,6 +548,43 @@ type BrokerActivityBody struct {
 	Id       BrokerActivityID `json:"id"`
 	Request  *[]byte          `json:"request,omitempty"`
 	Response *[]byte          `json:"response,omitempty"`
+}
+
+// BrokerActivityExec On a record of type `exec`, the program the sandbox ran. The guest's
+// kernel records it as the program is loaded, before it runs, and the
+// runner the sandbox is on keeps it. It is what the guest's kernel
+// said: a guest whose kernel was changed by whoever is root in it can
+// say anything.
+type BrokerActivityExec struct {
+	// Argv Its arguments, `argv[0]` first.
+	Argv []string `json:"argv"`
+
+	// Boot Which boot of the machine it was, a random number its kernel chose, hex.
+	Boot string `json:"boot"`
+
+	// Cwd The directory it ran in.
+	Cwd string `json:"cwd"`
+
+	// Euid The user the program runs as.
+	Euid int64 `json:"euid"`
+
+	// Path The program's file.
+	Path string `json:"path"`
+
+	// Pid The process's, as the guest's kernel numbers it rather than any pid namespace inside the guest.
+	Pid int64 `json:"pid"`
+
+	// Ppid Its parent's, numbered as `pid` is.
+	Ppid int64 `json:"ppid"`
+
+	// Seq Its place among that boot's programs, from 1, with no gaps, so a number missing is a record missing.
+	Seq int64 `json:"seq"`
+
+	// Truncated The kernel cut `path`, `cwd` or `argv` to fit a record.
+	Truncated bool `json:"truncated"`
+
+	// Uid Its real user.
+	Uid int64 `json:"uid"`
 }
 
 // BrokerActivityID A ULID, minted where the exchange was seen.
@@ -1275,6 +1329,7 @@ type Error struct {
 		// | `placement` | have every label `placement.labels` names |
 		// | `image` | pull the image's registry, or have it cached |
 		// | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+		// | `shares` | serve every share `spec.shares` names |
 		// | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
 		// | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
 		Constraint *ErrorErrorConstraint `json:"constraint,omitempty"`
@@ -1296,6 +1351,7 @@ type Error struct {
 // | `placement` | have every label `placement.labels` names |
 // | `image` | pull the image's registry, or have it cached |
 // | `brokers` | reach each shared broker given, run its hardened check, or provide it |
+// | `shares` | serve every share `spec.shares` names |
 // | `floor` | allow a sandbox this size: its own ceilings, which it keeps whatever it is asked |
 // | `runner` | be approved and online: not pending, held, draining, unreachable, expired or revoked |
 type ErrorErrorConstraint string
@@ -1598,9 +1654,13 @@ type HostTunnels struct {
 	// NextCursor Pass as `cursor` to continue. Absent means the end.
 	NextCursor *string `json:"nextCursor,omitempty"`
 
-	// Relay This host's relay: the separate service that carries visitors from the
-	// gateway into sandboxes, and keeps doing so while this server restarts.
+	// Relay A runner's relay: the separate service beside it that carries visitors
+	// from the gateway into its sandboxes, and keeps doing so while the
+	// runner or this server restarts. Asked through that runner.
 	Relay TunnelRelay `json:"relay"`
+
+	// Relays The relay of each runner that holds a tunnel on this page or can be reached, by its runner's hostID. `relay` is all of them as one: reachable and docked when each is, and otherwise why the first that is not is not, naming its runner; with one runner, its relay.
+	Relays *[]TunnelRelay `json:"relays,omitempty"`
 }
 
 // HostUsagePoint One reading of the host. A field the host could not be read for is absent, and the CPU share is absent on the first reading after the server starts: it is a difference between two.
@@ -1766,12 +1826,20 @@ type Interface struct {
 
 // JoinToken A join token's metadata. Never its secret.
 type JoinToken struct {
-	AllowedSources []string  `json:"allowedSources"`
-	CreatedAt      time.Time `json:"createdAt"`
+	AllowedSources []string `json:"allowedSources"`
+
+	// Approval What a runner it enrols waits for once it has reported its sandbox CA. `manual`, the default: a workspace admin's approval. `auto`: none, the token approves it; only for a token held to `allowedSources` or `hardwareKeys: required`.
+	Approval  JoinTokenApproval `json:"approval"`
+	CreatedAt time.Time         `json:"createdAt"`
 
 	// CreatedBy Who minted it: an administrator's address, or `runyard-sandboxes` for the token a server mints for the runner on its own host.
-	CreatedBy string    `json:"createdBy"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	CreatedBy string `json:"createdBy"`
+
+	// ExpiresAt When it stops enrolling. Absent for a fleet's token that never expires.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// HardwareKeys `required`: a runner it enrols must prove its key is in a TPM, at enrolment and at every renewal, whatever the workspace's setting is.
+	HardwareKeys HardwareKeys `json:"hardwareKeys"`
 
 	// HostID The runner it is bound to, for a Rejoin token.
 	HostID  *string           `json:"hostID,omitempty"`
@@ -1788,14 +1856,25 @@ type JoinToken struct {
 	Uses int `json:"uses"`
 }
 
+// JoinTokenApproval What a runner it enrols waits for once it has reported its sandbox CA. `manual`, the default: a workspace admin's approval. `auto`: none, the token approves it; only for a token held to `allowedSources` or `hardwareKeys: required`.
+type JoinTokenApproval string
+
 // JoinTokenCreated defines model for JoinTokenCreated.
 type JoinTokenCreated struct {
-	AllowedSources []string  `json:"allowedSources"`
-	CreatedAt      time.Time `json:"createdAt"`
+	AllowedSources []string `json:"allowedSources"`
+
+	// Approval What a runner it enrols waits for once it has reported its sandbox CA. `manual`, the default: a workspace admin's approval. `auto`: none, the token approves it; only for a token held to `allowedSources` or `hardwareKeys: required`.
+	Approval  JoinTokenApproval `json:"approval"`
+	CreatedAt time.Time         `json:"createdAt"`
 
 	// CreatedBy Who minted it: an administrator's address, or `runyard-sandboxes` for the token a server mints for the runner on its own host.
-	CreatedBy string    `json:"createdBy"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	CreatedBy string `json:"createdBy"`
+
+	// ExpiresAt When it stops enrolling. Absent for a fleet's token that never expires.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// HardwareKeys `required`: a runner it enrols must prove its key is in a TPM, at enrolment and at every renewal, whatever the workspace's setting is.
+	HardwareKeys HardwareKeys `json:"hardwareKeys"`
 
 	// HostID The runner it is bound to, for a Rejoin token.
 	HostID  *string           `json:"hostID,omitempty"`
@@ -1828,8 +1907,14 @@ type JoinTokenRequest struct {
 	// AllowedSources IPs and CIDR ranges (`203.0.113.24`, `198.51.100.0/28`, IPv6 alike) it may be used from, which become the runner's. Empty is anywhere.
 	AllowedSources *[]string `json:"allowedSources,omitempty"`
 
-	// ExpiresIn How long it may be used for, as a Go duration, 15 minutes to a day. An hour when left out.
+	// Approval What a runner it enrols waits for once it has reported its sandbox CA. `manual`, the default: a workspace admin's approval. `auto`: none, the token approves it; only for a token held to `allowedSources` or `hardwareKeys: required`.
+	Approval *JoinTokenApproval `json:"approval,omitempty"`
+
+	// ExpiresIn How long it may be used for, as a Go duration, 15 minutes to a day; for a fleet's token (`maxUses` more than 1), 15 minutes or more, or `never`. An hour when left out.
 	ExpiresIn *string `json:"expiresIn,omitempty"`
+
+	// HardwareKeys `required`: a runner it enrols must prove its key is in a TPM, at enrolment and at every renewal, whatever the workspace's setting is. `preferred` when left out.
+	HardwareKeys *HardwareKeys `json:"hardwareKeys,omitempty"`
 
 	// HostID Binds it to this existing runner (Rejoin): it enrols that runner again, as itself, and nothing else, once.
 	HostID *string `json:"hostID,omitempty"`
@@ -1845,6 +1930,9 @@ type JoinTokenRequest struct {
 
 	// RunnerName The name the runner it enrols is listed with, or, for a token for a fleet, what each runner's numbered name starts with. Not for a Rejoin, which keeps the runner's name. Its hostID when left out. Not `r-` and a number, which is how hostIDs are written.
 	RunnerName *RunnerName `json:"runnerName,omitempty"`
+
+	// Token The whole token, made by the caller as this server makes one, for code that declares it: `rjt_$(openssl rand -hex 6)_$(openssl rand -hex 24)`. Made here when left out.
+	Token *string `json:"token,omitempty"`
 }
 
 // JoinTokenUpdate defines model for JoinTokenUpdate.
@@ -2357,7 +2445,7 @@ type Runner struct {
 	// ApprovedAt When it was approved. Absent while it is pending.
 	ApprovedAt *time.Time `json:"approvedAt,omitempty"`
 
-	// ApprovedBy Who approved it, as the approval said: a workspace admin's email for one approved in the console, `cli:<user>` or what `-as` named for one approved on the command line. Absent while it is pending.
+	// ApprovedBy Who approved it, as the approval said: a workspace admin's email for one approved in the console, `cli:<user>` or what `-as` named for one approved on the command line, and `join token <id>` for one its join token approved (`approval: auto`). Absent while it is pending.
 	ApprovedBy *string `json:"approvedBy,omitempty"`
 
 	// BrokerKey The public half of the key things are encrypted to for it, PEM, as it enrolled with it.
@@ -2439,6 +2527,9 @@ type Runner struct {
 
 	// RevokedBy Who revoked it, or asked for the drain that did.
 	RevokedBy *openapi_types.Email `json:"revokedBy,omitempty"`
+
+	// Shares The shares its provisioner serves, by name, as it last reported: what a sandbox placed on it may be given (`spec.shares`). Absent when it serves none.
+	Shares *[]string `json:"shares,omitempty"`
 
 	// State | state | what it means |
 	// |---|---|
@@ -3017,6 +3108,32 @@ type SandboxProcessTable struct {
 	Truncated bool `json:"truncated"`
 }
 
+// SandboxShare One directory of its runner's host a sandbox is given, served by a
+// virtiofsd of its own on the host and mounted as virtio-fs, without
+// setuid or devices honoured. Nothing is cached in the guest: a change
+// made on the host, or by another machine, is what the guest reads next.
+//
+// Whoever writes there in the guest, it is written on the host as the
+// share's owner, as its runner's provisioner names it. Locks
+// (`flock`, `fcntl`) are each machine's own: two machines given one
+// share do not see each other's.
+type SandboxShare struct {
+	// Gid The group the owner's files belong to in the guest. 0 by default.
+	Gid *int `json:"gid,omitempty"`
+
+	// Name The share, as its runner's provisioner names it.
+	Name string `json:"name"`
+
+	// Path Where the guest mounts it: absolute, and not in /proc, /sys, /dev or /run, which are the guest's own.
+	Path string `json:"path"`
+
+	// ReadOnly Whether the guest is refused every change to it. Off by default.
+	ReadOnly *bool `json:"readOnly,omitempty"`
+
+	// Uid Who the owner's files belong to in the guest: the user the sandbox's processes run as, for one that is not root to change them. 0 by default.
+	Uid *int `json:"uid,omitempty"`
+}
+
 // SandboxSocketInfo defines model for SandboxSocketInfo.
 type SandboxSocketInfo struct {
 	Family       SandboxSocketInfoFamily `json:"family"`
@@ -3221,6 +3338,23 @@ type SandboxSpec struct {
 	// other values is made again. A retry with the same
 	// `Idempotency-Key` must send the same values too, or it is a `409`.
 	Secrets *map[string]string `json:"secrets,omitempty"`
+
+	// Shares Directories of its runner's host it is given, each mounted in the
+	// guest before its entrypoint starts and written live from both
+	// sides: a project's source on the host that something in the
+	// sandbox edits while the host's own app reloads it.
+	//
+	// A share is named, never a path of the host's: each runner's
+	// provisioner configures which directories it serves, by name, and
+	// whose they are (`GET /v1/runners`, `shares`). The sandbox is placed
+	// only on a runner that serves every share it names
+	// (`unplaceable`, constraint `shares`), and a runner that does not
+	// refuses it (`unsupported_spec`).
+	//
+	// What the guest's root — or any other machine given the same share
+	// — writes there is on the host, and whatever on the host reads or
+	// runs it trusts it: see the README, "Shares".
+	Shares *[]SandboxShare `json:"shares,omitempty"`
 }
 
 // SandboxState | state | what it means | what to do |
@@ -3405,9 +3539,13 @@ type Tunnel struct {
 	// | `expired` | its `expiresAt` has passed |
 	// | `sandbox_not_running` | served again when the sandbox is `ready` |
 	// | `pending` | handed to the relay, which has not taken it yet |
-	// | `relay_unreachable` | this host's relay is not answering |
-	// | `gateway_unreachable` | the relay is not docked at a gateway |
+	// | `relay_unreachable` | the relay of the runner its sandbox is on is not answering, or that runner cannot be reached; `message` says which, and names the runner |
+	// | `gateway_unreachable` | that relay is not docked at a gateway |
 	// | `refused` | the gateway would not serve it; `message` says why |
+	//
+	// The relay is the one beside the runner that holds the sandbox: each
+	// runner's carries its own sandboxes' tunnels, with a key of its own,
+	// and is asked through that runner.
 	Status TunnelStatus `json:"status"`
 
 	// Tokens Every token minted for it, revoked ones included, oldest first.
@@ -3473,8 +3611,9 @@ type TunnelOverlay struct {
 // TunnelOverlayCorner Where the button sits, off whatever the application keeps in the default corner.
 type TunnelOverlayCorner string
 
-// TunnelRelay This host's relay: the separate service that carries visitors from the
-// gateway into sandboxes, and keeps doing so while this server restarts.
+// TunnelRelay A runner's relay: the separate service beside it that carries visitors
+// from the gateway into its sandboxes, and keeps doing so while the
+// runner or this server restarts. Asked through that runner.
 type TunnelRelay struct {
 	// Agent What the gateway's key calls this relay.
 	Agent *string `json:"agent,omitempty"`
@@ -3492,8 +3631,14 @@ type TunnelRelay struct {
 	// Namespace This host's part of that domain.
 	Namespace *string `json:"namespace,omitempty"`
 
-	// Reachable Whether it answers on its socket.
+	// Reachable Whether its runner can be reached, and it answers that runner on its socket.
 	Reachable bool `json:"reachable"`
+
+	// Runner The hostID of the runner it is beside. Absent on the summary of several.
+	Runner *string `json:"runner,omitempty"`
+
+	// RunnerName That runner's name.
+	RunnerName *string `json:"runnerName,omitempty"`
 }
 
 // TunnelRequest One request the gateway let through, or turned away, for a tunnel.
@@ -3557,9 +3702,13 @@ type TunnelSpec struct {
 // | `expired` | its `expiresAt` has passed |
 // | `sandbox_not_running` | served again when the sandbox is `ready` |
 // | `pending` | handed to the relay, which has not taken it yet |
-// | `relay_unreachable` | this host's relay is not answering |
-// | `gateway_unreachable` | the relay is not docked at a gateway |
+// | `relay_unreachable` | the relay of the runner its sandbox is on is not answering, or that runner cannot be reached; `message` says which, and names the runner |
+// | `gateway_unreachable` | that relay is not docked at a gateway |
 // | `refused` | the gateway would not serve it; `message` says why |
+//
+// The relay is the one beside the runner that holds the sandbox: each
+// runner's carries its own sandboxes' tunnels, with a key of its own,
+// and is asked through that runner.
 type TunnelStatus struct {
 	// Connections Visitors' connections open through it now, as the relay counts them.
 	Connections *int              `json:"connections,omitempty"`
@@ -26109,7 +26258,7 @@ type ServerInterface interface {
 	// Let commands and writes into a sealed sandbox
 	// (POST /v1/sandboxes/{sandboxId}/unseal)
 	UnsealSandbox(w http.ResponseWriter, r *http.Request, sandboxId SandboxID)
-	// Every tunnel on this host, and the relay that serves them
+	// Every tunnel on this host, and the relays that serve them
 	// (GET /v1/tunnels)
 	ListHostTunnels(w http.ResponseWriter, r *http.Request, params ListHostTunnelsParams)
 	// What this workspace's sandboxes have consumed
